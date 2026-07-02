@@ -1,4 +1,4 @@
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v1';
@@ -11,10 +11,10 @@ const DEFAULT_SETTINGS = {
   hideC: false,
   hideD: true,
   sortMode: 'distance',
-  altitudeMode: 'gps',
-  manualAltitudeM: 2500,
   demoMode: false,
 };
+
+let renderTimer = null;
 
 let state = {
   settings: loadSettings(),
@@ -26,6 +26,7 @@ let state = {
   gpsStatus: 'idle',
   gpsError: '',
   selectedFieldId: null,
+  view: 'main',
   computedRows: [],
   cacheStatus: 'unknown',
 };
@@ -115,12 +116,12 @@ function startGps() {
       state.gpsStatus = 'ok';
       state.gpsError = '';
       computeRows();
-      render();
+      scheduleRender();
     },
     error => {
       state.gpsStatus = 'error';
       state.gpsError = error.message;
-      render();
+      scheduleRender();
     },
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
   );
@@ -138,7 +139,6 @@ function demoPosition() {
 }
 
 function activeAltitudeM() {
-  if (state.settings.altitudeMode === 'manual') return Number(state.settings.manualAltitudeM) || null;
   return state.position?.altitudeM ?? null;
 }
 
@@ -175,60 +175,56 @@ function computeRows() {
   state.computedRows = rows;
 }
 
+function scheduleRender() {
+  if (renderTimer !== null) return;
+  renderTimer = window.setTimeout(() => {
+    renderTimer = null;
+    render();
+  }, 1000);
+}
+
 function render() {
+  const scrollY = window.scrollY;
+  const detailScroll = document.querySelector('.detail')?.scrollTop ?? null;
   computeRows();
   const selected = state.fields.find(f => f.id === state.selectedFieldId);
   app.innerHTML = `
     <div class="app-shell">
-      <header class="header">
+      <header class="header compact-header">
         <div class="title-row">
+          <button id="settingsToggle" class="icon-button" title="Settings" aria-label="Settings">⚙</button>
           <h1>🐄 Meet the Cows</h1>
-          <button id="settingsToggle" title="Refresh">↻</button>
+          <button id="refreshPack" class="icon-button" title="Refresh pack" aria-label="Refresh pack">↻</button>
         </div>
         ${renderStatus()}
       </header>
       <main class="main">
-        ${renderWarnings()}
-        ${renderControls()}
-        ${renderFieldTable()}
-        <p class="footer-note">Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.</p>
+        ${state.view === 'settings' ? renderSettingsPage() : renderMainPage()}
       </main>
       ${selected ? renderDetail(selected) : ''}
     </div>
   `;
   attachEvents();
+  requestAnimationFrame(() => {
+    if (detailScroll !== null) {
+      const detail = document.querySelector('.detail');
+      if (detail) detail.scrollTop = detailScroll;
+    } else if (state.view === 'main') {
+      window.scrollTo({ top: scrollY, behavior: 'instant' });
+    }
+  });
 }
 
 function renderStatus() {
   const pos = state.position;
   const altitude = activeAltitudeM();
-  const packName = state.packManifest?.name || 'No pack';
+  const age = pos ? `${Math.round((Date.now() - pos.timestamp) / 1000)} s` : '—';
   return `
-    <div class="status-grid">
-      <div class="status-card">
-        <div class="status-label">GPS</div>
-        <div class="status-value">${escapeHtml(gpsLabel())}</div>
-      </div>
-      <div class="status-card">
-        <div class="status-label">Altitude</div>
-        <div class="status-value">${altitude !== null ? fmtM(altitude) : 'missing'}</div>
-      </div>
-      <div class="status-card">
-        <div class="status-label">Pack</div>
-        <div class="status-value">${escapeHtml(packName)}</div>
-      </div>
-      <div class="status-card">
-        <div class="status-label">Entries</div>
-        <div class="status-value">${state.computedRows.length}/${state.fields.length}</div>
-      </div>
-      <div class="status-card">
-        <div class="status-label">Offline</div>
-        <div class="status-value">${escapeHtml(state.cacheStatus)}</div>
-      </div>
-      <div class="status-card">
-        <div class="status-label">Fix age</div>
-        <div class="status-value">${pos ? `${Math.round((Date.now() - pos.timestamp) / 1000)} s` : '—'}</div>
-      </div>
+    <div class="gps-strip">
+      <span><strong>GPS</strong> ${escapeHtml(gpsLabel())}</span>
+      <span><strong>Alt</strong> ${altitude !== null ? fmtM(altitude) : 'missing'}</span>
+      <span><strong>Fix</strong> ${age}</span>
+      <span><strong>Shown</strong> ${state.computedRows.length}/${state.fields.length}</span>
     </div>
   `;
 }
@@ -243,88 +239,94 @@ function gpsLabel() {
 function renderWarnings() {
   const items = [];
   if (state.packManifest?.isSample) items.push('Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.');
-  if (state.gpsStatus === 'error') items.push(`GPS error: ${escapeHtml(state.gpsError)}. Use demo mode or manual position only for testing.`);
-  if (state.settings.altitudeMode === 'gps' && state.position && state.position.altitudeM === null) items.push('GPS altitude is missing. Switch to manual altitude to compute required glide ratio.');
+  if (state.gpsStatus === 'error') items.push(`GPS error: ${escapeHtml(state.gpsError)}. Use demo mode only for testing.`);
+  if (state.position && state.position.altitudeM === null) items.push('GPS altitude is missing, so required glide ratio cannot be computed.');
   if (!items.length) return '';
   return items.map(i => `<div class="warning">${i}</div>`).join('');
 }
 
-function renderControls() {
-  const packs = state.packs.map(p => `<option value="${p.id}" ${p.id === state.settings.packId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+function renderMainPage() {
   return `
-    <section class="settings">
-      <div>
-        <label for="packSelect">Pack</label>
-        <select id="packSelect">${packs}</select>
+    ${renderWarnings()}
+    ${renderFieldList()}
+    <p class="footer-note">Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.</p>
+  `;
+}
+
+function renderSettingsPage() {
+  const packs = state.packs.map(p => `<option value="${p.id}" ${p.id === state.settings.packId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+  const manifest = state.packManifest;
+  return `
+    <section class="settings-page">
+      <div class="settings-head">
+        <h2>Settings</h2>
+        <button id="closeSettings">Done</button>
       </div>
-      <div>
+
+      <div class="settings-card">
+        <h3>Pack</h3>
+        <label for="packSelect">Selected pack</label>
+        <select id="packSelect">${packs}</select>
+        <dl class="meta-list">
+          <div><dt>Name</dt><dd>${escapeHtml(manifest?.name || 'No pack loaded')}</dd></div>
+          <div><dt>Version</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
+          <div><dt>Updated</dt><dd>${escapeHtml(manifest?.updatedAt || manifest?.generatedAt || manifest?.source?.updatedAt || '—')}</dd></div>
+          <div><dt>Fields</dt><dd>${state.fields.length}</dd></div>
+          <div><dt>Offline</dt><dd>${escapeHtml(state.cacheStatus)}</dd></div>
+        </dl>
+        <div class="button-row">
+          <button class="primary" id="downloadPack">Download / verify offline pack</button>
+          <button id="reloadPackSettings">Reload pack</button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h3>Nearest list</h3>
         <label for="sortMode">Sort</label>
         <select id="sortMode">
           <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>Nearest</option>
           <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>Easiest glide</option>
         </select>
-      </div>
-      <div>
         <label for="safetyMarginM">Safety arrival margin, m</label>
         <input id="safetyMarginM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.safetyMarginM}" />
-      </div>
-      <div>
-        <label for="altitudeMode">Altitude source</label>
-        <select id="altitudeMode">
-          <option value="gps" ${state.settings.altitudeMode === 'gps' ? 'selected' : ''}>iPhone GPS</option>
-          <option value="manual" ${state.settings.altitudeMode === 'manual' ? 'selected' : ''}>Manual</option>
-        </select>
-      </div>
-      <div>
-        <label for="manualAltitudeM">Manual altitude, m</label>
-        <input id="manualAltitudeM" inputmode="numeric" type="number" step="10" value="${state.settings.manualAltitudeM}" />
-      </div>
-      <div class="checkbox-row">
-        <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
-        <label for="hideC">Hide C fields</label>
-      </div>
-      <div class="checkbox-row">
-        <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
-        <label for="hideD">Hide D fields</label>
-      </div>
-      <div class="checkbox-row">
-        <input id="demoMode" type="checkbox" ${state.settings.demoMode ? 'checked' : ''} />
-        <label for="demoMode">Demo near Ubaye</label>
+        <div class="checkbox-row">
+          <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
+          <label for="hideC">Hide C fields</label>
+        </div>
+        <div class="checkbox-row">
+          <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
+          <label for="hideD">Hide D fields</label>
+        </div>
+        <div class="checkbox-row">
+          <input id="demoMode" type="checkbox" ${state.settings.demoMode ? 'checked' : ''} />
+          <label for="demoMode">Demo near Ubaye</label>
+        </div>
       </div>
     </section>
-    <div class="toolbar">
-      <button class="primary" id="downloadPack">Download / verify offline pack</button>
-      <button id="refreshPack">Reload pack</button>
-    </div>
   `;
 }
 
-function renderFieldTable() {
+function renderFieldList() {
   if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
-  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission, or turn on demo mode.</div>';
-  const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio }) => `
-    <tr data-field-id="${field.id}">
-      <td>
-        <div class="field-name">${escapeHtml(field.name)}</div>
-        <div class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Field'].filter(Boolean).join(' · '))}</div>
-      </td>
-      <td>${fmtDeg(bearingDeg)}</td>
-      <td>${fmtKm(distanceM)}</td>
-      <td>${requiredGlideRatio ? `${requiredGlideRatio.toFixed(1)}:1` : '—'}</td>
-      <td>${usableHeightM !== null ? fmtSignedM(usableHeightM) : '—'}</td>
-      <td><span class="badge badge-${String(field.difficulty || 'unknown').toLowerCase()}">${escapeHtml(field.difficulty || '?')}</span></td>
-      <td>${field.lengthM ? `${Math.round(field.lengthM)}` : '—'}</td>
-      <td>${field.widthM ? `${Math.round(field.widthM)}` : '—'}</td>
-      <td>${field.media?.length || 0}</td>
-    </tr>
+  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission, or turn on demo mode in Settings.</div>';
+  const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, requiredGlideRatio }) => `
+    <button class="field-row" data-field-id="${field.id}">
+      <span class="field-main">
+        <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
+        <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Field'].filter(Boolean).join(' · '))}</span>
+      </span>
+      <span class="field-distance">${fmtKm(distanceM)}</span>
+      <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
+      <span class="badge badge-${String(field.difficulty || 'unknown').toLowerCase()}">${escapeHtml(field.difficulty || '?')}</span>
+    </button>
   `).join('');
   return `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Name</th><th>Brg</th><th>Dist</th><th>Req</th><th>Δsafe</th><th>Diff</th><th>Len</th><th>Wid</th><th>Docs</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
+    <section class="field-list" aria-label="Nearest landing fields">
+      <div class="field-list-head">
+        <span>Name</span><span>Dist</span><span>Glide</span><span>Diff</span>
+      </div>
+      ${rows}
+    </section>
   `;
 }
 
@@ -340,7 +342,7 @@ function renderDetail(field) {
         <div class="detail-grid">
           <div class="detail-card"><span class="status-label">Bearing</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Distance</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Req glide</span><strong>${row?.requiredGlideRatio ? `${row.requiredGlideRatio.toFixed(1)}:1` : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Req glide</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Δsafe</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Elevation</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">L × W</span><strong>${field.lengthM ? Math.round(field.lengthM) : '—'} × ${field.widthM ? Math.round(field.widthM) : '—'}</strong></div>
@@ -365,27 +367,26 @@ function renderMediaItem(item) {
 }
 
 function attachEvents() {
-  document.querySelector('#settingsToggle')?.addEventListener('click', () => location.reload());
+  document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
+  document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
+  document.querySelector('#refreshPack')?.addEventListener('click', async () => { await loadSelectedPack(); render(); });
+  document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await loadSelectedPack(); render(); });
   document.querySelector('#packSelect')?.addEventListener('change', async e => {
     state.settings.packId = e.target.value;
     saveSettings();
     await loadSelectedPack();
     render();
   });
-  for (const id of ['sortMode', 'altitudeMode']) {
-    document.querySelector(`#${id}`)?.addEventListener('change', e => {
-      state.settings[id] = e.target.value;
-      saveSettings();
-      render();
-    });
-  }
-  for (const id of ['safetyMarginM', 'manualAltitudeM']) {
-    document.querySelector(`#${id}`)?.addEventListener('change', e => {
-      state.settings[id] = Number(e.target.value);
-      saveSettings();
-      render();
-    });
-  }
+  document.querySelector('#sortMode')?.addEventListener('change', e => {
+    state.settings.sortMode = e.target.value;
+    saveSettings();
+    render();
+  });
+  document.querySelector('#safetyMarginM')?.addEventListener('change', e => {
+    state.settings.safetyMarginM = Number(e.target.value);
+    saveSettings();
+    render();
+  });
   for (const id of ['hideC', 'hideD', 'demoMode']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       state.settings[id] = e.target.checked;
@@ -398,8 +399,7 @@ function attachEvents() {
     });
   }
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
-  document.querySelector('#refreshPack')?.addEventListener('click', async () => { await loadSelectedPack(); render(); });
-  document.querySelectorAll('tr[data-field-id]').forEach(row => row.addEventListener('click', () => {
+  document.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
     state.selectedFieldId = row.getAttribute('data-field-id');
     render();
   }));
@@ -443,7 +443,7 @@ async function checkCacheStatus() {
     state.cacheStatus = 'unknown';
     return;
   }
-  const cache = await caches.open('meet-the-cows-v1');
+  const cache = await caches.open('meet-the-cows-v2');
   const fieldsUrl = new URL(state.packManifest.fieldsUrl, new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL)).toString();
   state.cacheStatus = await cache.match(fieldsUrl) ? 'ready' : 'not downloaded';
 }
@@ -465,6 +465,12 @@ function bearingDegrees(lat1, lon1, lat2, lon2) {
   const y = Math.sin(lambda2 - lambda1) * Math.cos(phi2);
   const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(lambda2 - lambda1);
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+
+function shortFieldName(name) {
+  const cleaned = String(name || '').replace(/^#?\d+\s+/, '').trim();
+  return cleaned.length > 34 ? `${cleaned.slice(0, 33)}…` : cleaned;
 }
 
 function fmtKm(m) { return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`; }

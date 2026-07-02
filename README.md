@@ -128,18 +128,16 @@ The prototype uses relative paths, so it should work both at a custom domain roo
 
 The action includes `--include-vac-airfields`, so VAC-only official aerodromes can be created when they are not present in the Guide CUP.
 
-## Field columns
+## Cockpit list
 
-The cockpit list shows:
+The main page is deliberately narrow for portrait use. It shows only:
 
 - `Name`
-- `Brg`: bearing to entry
 - `Dist`: straight-line distance
-- `Req`: required glide ratio using current altitude, field elevation and safety margin
-- `Δsafe`: current altitude minus field elevation minus safety margin
+- `Glide`: rounded required glide ratio using iPhone GPS altitude, field elevation and safety margin
 - `Diff`: A/B/C/D/UNKNOWN
-- `Len`, `Wid`: runway/field length and width when available
-- `Docs`: number of attached images/PDFs
+
+Bearing, arrival height, field dimensions, notes, photos, PDFs and VAC are shown after tapping an entry. Pack selection, offline download/verify, safety margin and hide C/D filters live in Settings behind the gear icon.
 
 ## Safety disclaimer
 
