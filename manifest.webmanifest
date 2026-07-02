@@ -1,6 +1,6 @@
 {
-  "name": "Meet the Cows",
-  "short_name": "Cows",
+  "name": "Meet The Cows",
+  "short_name": "Meet The Cows",
   "description": "Offline outlanding field viewer for glider pilots.",
   "start_url": ".",
   "display": "standalone",
