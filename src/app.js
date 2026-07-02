@@ -1,0 +1,474 @@
+const APP_VERSION = '0.2.0';
+const BASE_URL = new URL('..', import.meta.url);
+const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
+const SETTINGS_KEY = 'mtc-settings-v1';
+
+/** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
+
+const DEFAULT_SETTINGS = {
+  packId: 'fr-alps',
+  safetyMarginM: 250,
+  hideC: false,
+  hideD: true,
+  sortMode: 'distance',
+  altitudeMode: 'gps',
+  manualAltitudeM: 2500,
+  demoMode: false,
+};
+
+let state = {
+  settings: loadSettings(),
+  packs: [],
+  packManifest: null,
+  currentManifestUrl: null,
+  fields: [],
+  position: null,
+  gpsStatus: 'idle',
+  gpsError: '',
+  selectedFieldId: null,
+  computedRows: [],
+  cacheStatus: 'unknown',
+};
+
+const app = document.querySelector('#app');
+
+init();
+
+async function init() {
+  render();
+  registerServiceWorker();
+  await loadPackIndex();
+  await loadSelectedPack();
+  startGps();
+  render();
+}
+
+function loadSettings() {
+  try {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+}
+
+async function loadPackIndex() {
+  try {
+    const res = await fetch(PACK_INDEX_URL, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`Pack index HTTP ${res.status}`);
+    state.packs = await res.json();
+  } catch (error) {
+    console.error(error);
+    state.packs = [{ id: 'fr-alps', name: 'France / Alps sample', manifestUrl: new URL('data/packs/fr-alps/manifest.json', BASE_URL).toString() }];
+  }
+}
+
+async function loadSelectedPack() {
+  const pack = state.packs.find(p => p.id === state.settings.packId) || state.packs[0];
+  if (!pack) return;
+  state.settings.packId = pack.id;
+  try {
+    const manifestUrl = new URL(pack.manifestUrl, BASE_URL).toString();
+    const manifestRes = await fetch(manifestUrl, { cache: 'no-cache' });
+    if (!manifestRes.ok) throw new Error(`Manifest HTTP ${manifestRes.status}`);
+    state.packManifest = await manifestRes.json();
+    state.currentManifestUrl = manifestUrl;
+    const fieldsUrl = new URL(state.packManifest.fieldsUrl, manifestUrl).toString();
+    const fieldsRes = await fetch(fieldsUrl, { cache: 'no-cache' });
+    if (!fieldsRes.ok) throw new Error(`Fields HTTP ${fieldsRes.status}`);
+    state.fields = await fieldsRes.json();
+    await checkCacheStatus();
+  } catch (error) {
+    console.error(error);
+    state.packManifest = null;
+    state.currentManifestUrl = null;
+    state.fields = [];
+  }
+}
+
+function startGps() {
+  if (state.settings.demoMode) {
+    state.position = demoPosition();
+    state.gpsStatus = 'demo';
+    computeRows();
+    return;
+  }
+  if (!('geolocation' in navigator)) {
+    state.gpsStatus = 'unavailable';
+    state.gpsError = 'Geolocation API unavailable';
+    return;
+  }
+  state.gpsStatus = 'requesting';
+  navigator.geolocation.watchPosition(
+    position => {
+      state.position = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        altitudeM: typeof position.coords.altitude === 'number' ? position.coords.altitude : null,
+        accuracyM: position.coords.accuracy,
+        altitudeAccuracyM: position.coords.altitudeAccuracy,
+        timestamp: position.timestamp,
+      };
+      state.gpsStatus = 'ok';
+      state.gpsError = '';
+      computeRows();
+      render();
+    },
+    error => {
+      state.gpsStatus = 'error';
+      state.gpsError = error.message;
+      render();
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+  );
+}
+
+function demoPosition() {
+  return {
+    latitude: 44.392,
+    longitude: 6.64,
+    altitudeM: 2600,
+    accuracyM: 5,
+    altitudeAccuracyM: 30,
+    timestamp: Date.now(),
+  };
+}
+
+function activeAltitudeM() {
+  if (state.settings.altitudeMode === 'manual') return Number(state.settings.manualAltitudeM) || null;
+  return state.position?.altitudeM ?? null;
+}
+
+function computeRows() {
+  if (!state.position) {
+    state.computedRows = [];
+    return;
+  }
+  const altitudeM = activeAltitudeM();
+  const safetyMarginM = Number(state.settings.safetyMarginM) || 0;
+  let rows = state.fields.map(field => {
+    const distanceM = haversineMeters(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
+    const bearingDeg = bearingDegrees(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
+    const usableHeightM = altitudeM !== null && field.elevationM !== null
+      ? altitudeM - field.elevationM - safetyMarginM
+      : null;
+    const requiredGlideRatio = usableHeightM && usableHeightM > 0 ? distanceM / usableHeightM : null;
+    return { field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio };
+  });
+  rows = rows.filter(row => {
+    if (state.settings.hideD && row.field.difficulty === 'D') return false;
+    if (state.settings.hideC && row.field.difficulty === 'C') return false;
+    return true;
+  });
+  rows.sort((a, b) => {
+    if (state.settings.sortMode === 'glide') {
+      if (a.requiredGlideRatio === null && b.requiredGlideRatio === null) return a.distanceM - b.distanceM;
+      if (a.requiredGlideRatio === null) return 1;
+      if (b.requiredGlideRatio === null) return -1;
+      return a.requiredGlideRatio - b.requiredGlideRatio;
+    }
+    return a.distanceM - b.distanceM;
+  });
+  state.computedRows = rows;
+}
+
+function render() {
+  computeRows();
+  const selected = state.fields.find(f => f.id === state.selectedFieldId);
+  app.innerHTML = `
+    <div class="app-shell">
+      <header class="header">
+        <div class="title-row">
+          <h1>🐄 Meet the Cows</h1>
+          <button id="settingsToggle" title="Refresh">↻</button>
+        </div>
+        ${renderStatus()}
+      </header>
+      <main class="main">
+        ${renderWarnings()}
+        ${renderControls()}
+        ${renderFieldTable()}
+        <p class="footer-note">Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.</p>
+      </main>
+      ${selected ? renderDetail(selected) : ''}
+    </div>
+  `;
+  attachEvents();
+}
+
+function renderStatus() {
+  const pos = state.position;
+  const altitude = activeAltitudeM();
+  const packName = state.packManifest?.name || 'No pack';
+  return `
+    <div class="status-grid">
+      <div class="status-card">
+        <div class="status-label">GPS</div>
+        <div class="status-value">${escapeHtml(gpsLabel())}</div>
+      </div>
+      <div class="status-card">
+        <div class="status-label">Altitude</div>
+        <div class="status-value">${altitude !== null ? fmtM(altitude) : 'missing'}</div>
+      </div>
+      <div class="status-card">
+        <div class="status-label">Pack</div>
+        <div class="status-value">${escapeHtml(packName)}</div>
+      </div>
+      <div class="status-card">
+        <div class="status-label">Entries</div>
+        <div class="status-value">${state.computedRows.length}/${state.fields.length}</div>
+      </div>
+      <div class="status-card">
+        <div class="status-label">Offline</div>
+        <div class="status-value">${escapeHtml(state.cacheStatus)}</div>
+      </div>
+      <div class="status-card">
+        <div class="status-label">Fix age</div>
+        <div class="status-value">${pos ? `${Math.round((Date.now() - pos.timestamp) / 1000)} s` : '—'}</div>
+      </div>
+    </div>
+  `;
+}
+
+function gpsLabel() {
+  if (state.gpsStatus === 'ok') return `OK ±${Math.round(state.position?.accuracyM || 0)}m`;
+  if (state.gpsStatus === 'demo') return 'DEMO';
+  if (state.gpsStatus === 'error') return `Error`;
+  return state.gpsStatus;
+}
+
+function renderWarnings() {
+  const items = [];
+  if (state.packManifest?.isSample) items.push('Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.');
+  if (state.gpsStatus === 'error') items.push(`GPS error: ${escapeHtml(state.gpsError)}. Use demo mode or manual position only for testing.`);
+  if (state.settings.altitudeMode === 'gps' && state.position && state.position.altitudeM === null) items.push('GPS altitude is missing. Switch to manual altitude to compute required glide ratio.');
+  if (!items.length) return '';
+  return items.map(i => `<div class="warning">${i}</div>`).join('');
+}
+
+function renderControls() {
+  const packs = state.packs.map(p => `<option value="${p.id}" ${p.id === state.settings.packId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+  return `
+    <section class="settings">
+      <div>
+        <label for="packSelect">Pack</label>
+        <select id="packSelect">${packs}</select>
+      </div>
+      <div>
+        <label for="sortMode">Sort</label>
+        <select id="sortMode">
+          <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>Nearest</option>
+          <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>Easiest glide</option>
+        </select>
+      </div>
+      <div>
+        <label for="safetyMarginM">Safety arrival margin, m</label>
+        <input id="safetyMarginM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.safetyMarginM}" />
+      </div>
+      <div>
+        <label for="altitudeMode">Altitude source</label>
+        <select id="altitudeMode">
+          <option value="gps" ${state.settings.altitudeMode === 'gps' ? 'selected' : ''}>iPhone GPS</option>
+          <option value="manual" ${state.settings.altitudeMode === 'manual' ? 'selected' : ''}>Manual</option>
+        </select>
+      </div>
+      <div>
+        <label for="manualAltitudeM">Manual altitude, m</label>
+        <input id="manualAltitudeM" inputmode="numeric" type="number" step="10" value="${state.settings.manualAltitudeM}" />
+      </div>
+      <div class="checkbox-row">
+        <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
+        <label for="hideC">Hide C fields</label>
+      </div>
+      <div class="checkbox-row">
+        <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
+        <label for="hideD">Hide D fields</label>
+      </div>
+      <div class="checkbox-row">
+        <input id="demoMode" type="checkbox" ${state.settings.demoMode ? 'checked' : ''} />
+        <label for="demoMode">Demo near Ubaye</label>
+      </div>
+    </section>
+    <div class="toolbar">
+      <button class="primary" id="downloadPack">Download / verify offline pack</button>
+      <button id="refreshPack">Reload pack</button>
+    </div>
+  `;
+}
+
+function renderFieldTable() {
+  if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
+  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission, or turn on demo mode.</div>';
+  const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio }) => `
+    <tr data-field-id="${field.id}">
+      <td>
+        <div class="field-name">${escapeHtml(field.name)}</div>
+        <div class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Field'].filter(Boolean).join(' · '))}</div>
+      </td>
+      <td>${fmtDeg(bearingDeg)}</td>
+      <td>${fmtKm(distanceM)}</td>
+      <td>${requiredGlideRatio ? `${requiredGlideRatio.toFixed(1)}:1` : '—'}</td>
+      <td>${usableHeightM !== null ? fmtSignedM(usableHeightM) : '—'}</td>
+      <td><span class="badge badge-${String(field.difficulty || 'unknown').toLowerCase()}">${escapeHtml(field.difficulty || '?')}</span></td>
+      <td>${field.lengthM ? `${Math.round(field.lengthM)}` : '—'}</td>
+      <td>${field.widthM ? `${Math.round(field.widthM)}` : '—'}</td>
+      <td>${field.media?.length || 0}</td>
+    </tr>
+  `).join('');
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Brg</th><th>Dist</th><th>Req</th><th>Δsafe</th><th>Diff</th><th>Len</th><th>Wid</th><th>Docs</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderDetail(field) {
+  const row = state.computedRows.find(r => r.field.id === field.id);
+  const media = (field.media || []).map(item => renderMediaItem(item)).join('') || '<p class="footer-note">No media attached.</p>';
+  return `
+    <div class="detail-backdrop" id="detailBackdrop">
+      <article class="detail" role="dialog" aria-modal="true">
+        <button id="closeDetail">Close</button>
+        <h2>${escapeHtml(field.name)}</h2>
+        <div class="detail-meta">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Outlanding', field.rawDifficulty].filter(Boolean).join(' · '))}</div>
+        <div class="detail-grid">
+          <div class="detail-card"><span class="status-label">Bearing</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Distance</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Req glide</span><strong>${row?.requiredGlideRatio ? `${row.requiredGlideRatio.toFixed(1)}:1` : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Δsafe</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Elevation</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">L × W</span><strong>${field.lengthM ? Math.round(field.lengthM) : '—'} × ${field.widthM ? Math.round(field.widthM) : '—'}</strong></div>
+        </div>
+        <h3>Notes</h3>
+        <div class="notes">${escapeHtml(field.notes || 'No notes.')}</div>
+        <h3>Photos / docs / VAC</h3>
+        <div class="media-grid">${media}</div>
+        <p class="footer-note">Source: ${escapeHtml(field.source?.name || 'unknown')} ${field.source?.importedAt ? `· imported ${escapeHtml(field.source.importedAt)}` : ''}</p>
+      </article>
+    </div>
+  `;
+}
+
+function renderMediaItem(item) {
+  const caption = item.caption || item.source || item.type;
+  const mediaUrl = new URL(item.url, state.currentManifestUrl || BASE_URL).toString();
+  if (item.type === 'pdf') {
+    return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">Open PDF</a> · ${escapeHtml(caption)}</div></div>`;
+  }
+  return `<div class="media-card"><img src="${mediaUrl}" alt="${escapeHtml(caption)}" loading="lazy" /><div class="caption">${escapeHtml(caption)}</div></div>`;
+}
+
+function attachEvents() {
+  document.querySelector('#settingsToggle')?.addEventListener('click', () => location.reload());
+  document.querySelector('#packSelect')?.addEventListener('change', async e => {
+    state.settings.packId = e.target.value;
+    saveSettings();
+    await loadSelectedPack();
+    render();
+  });
+  for (const id of ['sortMode', 'altitudeMode']) {
+    document.querySelector(`#${id}`)?.addEventListener('change', e => {
+      state.settings[id] = e.target.value;
+      saveSettings();
+      render();
+    });
+  }
+  for (const id of ['safetyMarginM', 'manualAltitudeM']) {
+    document.querySelector(`#${id}`)?.addEventListener('change', e => {
+      state.settings[id] = Number(e.target.value);
+      saveSettings();
+      render();
+    });
+  }
+  for (const id of ['hideC', 'hideD', 'demoMode']) {
+    document.querySelector(`#${id}`)?.addEventListener('change', e => {
+      state.settings[id] = e.target.checked;
+      if (id === 'demoMode' && e.target.checked) {
+        state.position = demoPosition();
+        state.gpsStatus = 'demo';
+      }
+      saveSettings();
+      render();
+    });
+  }
+  document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
+  document.querySelector('#refreshPack')?.addEventListener('click', async () => { await loadSelectedPack(); render(); });
+  document.querySelectorAll('tr[data-field-id]').forEach(row => row.addEventListener('click', () => {
+    state.selectedFieldId = row.getAttribute('data-field-id');
+    render();
+  }));
+  document.querySelector('#closeDetail')?.addEventListener('click', () => { state.selectedFieldId = null; render(); });
+  document.querySelector('#detailBackdrop')?.addEventListener('click', e => {
+    if (e.target.id === 'detailBackdrop') { state.selectedFieldId = null; render(); }
+  });
+}
+
+async function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    try { await navigator.serviceWorker.register(new URL('service-worker.js', BASE_URL)); } catch (e) { console.warn(e); }
+  }
+}
+
+async function downloadOfflinePack() {
+  if (!navigator.serviceWorker?.controller) {
+    alert('Service worker not ready yet. Reload once, then try again.');
+    return;
+  }
+  state.cacheStatus = 'downloading';
+  render();
+  const urls = new Set([new URL('.', BASE_URL).toString(), new URL('index.html', BASE_URL).toString(), new URL('styles.css', BASE_URL).toString(), new URL('src/app.js', BASE_URL).toString(), new URL('manifest.webmanifest', BASE_URL).toString(), new URL('data/packs/index.json', BASE_URL).toString()]);
+  if (state.packManifest) {
+    urls.add(new URL(state.packManifest.fieldsUrl, new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL)).toString());
+    urls.add(new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL).toString());
+    for (const field of state.fields) {
+      for (const media of field.media || []) urls.add(new URL(media.url, state.currentManifestUrl || BASE_URL).toString());
+    }
+  }
+  const channel = new MessageChannel();
+  const done = new Promise(resolve => channel.port1.onmessage = resolve);
+  navigator.serviceWorker.controller.postMessage({ type: 'CACHE_URLS', urls: Array.from(urls) }, [channel.port2]);
+  const event = await done;
+  state.cacheStatus = event.data?.ok ? 'ready' : 'incomplete';
+  render();
+}
+
+async function checkCacheStatus() {
+  if (!('caches' in window) || !state.packManifest) {
+    state.cacheStatus = 'unknown';
+    return;
+  }
+  const cache = await caches.open('meet-the-cows-v1');
+  const fieldsUrl = new URL(state.packManifest.fieldsUrl, new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL)).toString();
+  state.cacheStatus = await cache.match(fieldsUrl) ? 'ready' : 'not downloaded';
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = deg => deg * Math.PI / 180;
+  const phi1 = toRad(lat1), phi2 = toRad(lat2);
+  const dPhi = toRad(lat2 - lat1), dLambda = toRad(lon2 - lon1);
+  const a = Math.sin(dPhi/2) ** 2 + Math.cos(phi1) * Math.cos(phi2) * Math.sin(dLambda/2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function bearingDegrees(lat1, lon1, lat2, lon2) {
+  const toRad = deg => deg * Math.PI / 180;
+  const toDeg = rad => rad * 180 / Math.PI;
+  const phi1 = toRad(lat1), phi2 = toRad(lat2);
+  const lambda1 = toRad(lon1), lambda2 = toRad(lon2);
+  const y = Math.sin(lambda2 - lambda1) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(lambda2 - lambda1);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function fmtKm(m) { return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`; }
+function fmtM(m) { return `${Math.round(m)} m`; }
+function fmtSignedM(m) { return `${m >= 0 ? '+' : ''}${Math.round(m)} m`; }
+function fmtDeg(d) { return `${Math.round(d).toString().padStart(3, '0')}°`; }
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }

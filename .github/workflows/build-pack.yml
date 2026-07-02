@@ -1,0 +1,55 @@
+name: Build data pack
+
+on:
+  workflow_dispatch:
+    inputs:
+      cupx_url:
+        description: "CUPX URL"
+        required: true
+        default: "https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx"
+      pack_id:
+        description: "Pack ID"
+        required: true
+        default: "fr-alps"
+      pack_name:
+        description: "Pack name"
+        required: true
+        default: "France / Alps"
+      include_vac_airfields:
+        description: "Create VAC-only airfield entries from airport source"
+        required: true
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  build-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build pack
+        env:
+          SIA_VAC_ROOT: ${{ vars.SIA_VAC_ROOT }}
+          SIA_VAC_DATE: ${{ vars.SIA_VAC_DATE }}
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ inputs.include_vac_airfields }}" = "true" ]; then
+            EXTRA_ARGS="--include-vac-airfields"
+          fi
+          python scripts/build_pack.py \
+            --cupx "${{ inputs.cupx_url }}" \
+            --pack-id "${{ inputs.pack_id }}" \
+            --pack-name "${{ inputs.pack_name }}" \
+            $EXTRA_ARGS
+          python scripts/smoke_test_pack.py
+      - name: Commit generated pack
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/packs
+          git commit -m "Build ${{ inputs.pack_name }} pack" || echo "No changes"
+          git push
