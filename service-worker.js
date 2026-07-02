@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meet-the-cows-badge-colors-v6';
+const CACHE_NAME = 'meet-the-cows-latest-v7';
 const SCOPE = self.registration.scope;
 const u = path => new URL(path, SCOPE).toString();
 const APP_SHELL = [
