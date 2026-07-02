@@ -1,7 +1,8 @@
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.3.2';
+const CACHE_NAME = 'meet-the-cows-manual-alt-v4';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
-const SETTINGS_KEY = 'mtc-settings-v1';
+const SETTINGS_KEY = 'mtc-settings-v2';
 
 /** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
 
@@ -10,8 +11,10 @@ const DEFAULT_SETTINGS = {
   safetyMarginM: 250,
   hideC: false,
   hideD: true,
-  sortMode: 'distance',
+  sortMode: 'glide',
   demoMode: false,
+  useManualAltitude: false,
+  manualAltitudeM: 2500,
 };
 
 let renderTimer = null;
@@ -146,7 +149,17 @@ function demoPosition() {
 }
 
 function activeAltitudeM() {
+  if (state.settings.useManualAltitude) {
+    const manual = Number(state.settings.manualAltitudeM);
+    return Number.isFinite(manual) ? manual : null;
+  }
   return state.position?.altitudeM ?? null;
+}
+
+function altitudeLabel() {
+  const altitude = activeAltitudeM();
+  if (altitude === null) return 'missing';
+  return `${fmtM(altitude)}${state.settings.useManualAltitude ? ' manual' : ''}`;
 }
 
 function computeRows() {
@@ -238,7 +251,7 @@ function renderStatus() {
   return `
     <div class="gps-strip">
       <span><strong>GPS</strong> ${escapeHtml(gpsLabel())}</span>
-      <span><strong>Alt</strong> ${altitude !== null ? fmtM(altitude) : 'missing'}</span>
+      <span><strong>Alt</strong> ${altitudeLabel()}</span>
       <span><strong>Fix</strong> ${age}</span>
       <span><strong>Shown</strong> ${state.computedRows.length}/${state.fields.length}</span>
     </div>
@@ -256,7 +269,7 @@ function renderWarnings() {
   const items = [];
   if (state.packManifest?.isSample) items.push('Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.');
   if (state.gpsStatus === 'error') items.push(`GPS error: ${escapeHtml(state.gpsError)}. Use demo mode only for testing.`);
-  if (state.position && state.position.altitudeM === null) items.push('GPS altitude is missing, so required glide ratio cannot be computed.');
+  if (state.position && state.position.altitudeM === null && !state.settings.useManualAltitude) items.push('GPS altitude is missing, so required glide ratio cannot be computed. Add a manual altitude in Settings for ground testing.');
   if (!items.length) return '';
   return items.map(i => `<div class="warning">${i}</div>`).join('');
 }
@@ -300,11 +313,18 @@ function renderSettingsPage() {
         <h3>Nearest list</h3>
         <label for="sortMode">Sort</label>
         <select id="sortMode">
-          <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>Nearest</option>
-          <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>Easiest glide</option>
+          <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>Best glide ratio</option>
+          <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>Nearest distance</option>
         </select>
         <label for="safetyMarginM">Safety arrival margin, m</label>
         <input id="safetyMarginM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.safetyMarginM}" />
+        <div class="checkbox-row">
+          <input id="useManualAltitude" type="checkbox" ${state.settings.useManualAltitude ? 'checked' : ''} />
+          <label for="useManualAltitude">Use manual altitude for testing</label>
+        </div>
+        <label for="manualAltitudeM">Manual altitude, m</label>
+        <input id="manualAltitudeM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.manualAltitudeM}" ${state.settings.useManualAltitude ? '' : 'disabled'} />
+        <p class="settings-note">Manual altitude is only for ground testing. In flight, leave it off and use iPhone GPS altitude.</p>
         <div class="checkbox-row">
           <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
           <label for="hideC">Hide C fields</label>
@@ -405,9 +425,15 @@ function attachEvents() {
     saveSettings();
     render();
   });
-  for (const id of ['hideC', 'hideD', 'demoMode']) {
+  document.querySelector('#manualAltitudeM')?.addEventListener('change', e => {
+    state.settings.manualAltitudeM = Number(e.target.value);
+    saveSettings();
+    render();
+  });
+  for (const id of ['hideC', 'hideD', 'demoMode', 'useManualAltitude']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       state.settings[id] = e.target.checked;
+      if (id === 'useManualAltitude') computeRows();
       if (id === 'demoMode') {
         if (e.target.checked) {
           state.position = demoPosition();
@@ -469,7 +495,7 @@ async function checkCacheStatus() {
     state.cacheStatus = 'unknown';
     return;
   }
-  const cache = await caches.open('meet-the-cows-v3');
+  const cache = await caches.open(CACHE_NAME);
   const fieldsUrl = new URL(state.packManifest.fieldsUrl, new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL)).toString();
   state.cacheStatus = await cache.match(fieldsUrl) ? 'ready' : 'not downloaded';
 }

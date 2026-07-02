@@ -143,6 +143,9 @@ a { color: var(--accent); }
 .checkbox-row { display: flex; gap: 10px; align-items: center; min-height: 38px; }
 .checkbox-row input { width: auto; transform: scale(1.2); }
 .checkbox-row label { margin: 0; color: var(--text); font-size: 15px; }
+.settings-card input:disabled { opacity: .55; }
+.settings-note { margin: -4px 0 2px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+
 .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .meta-list { display: grid; gap: 6px; margin: 2px 0 0; }
 .meta-list div { display: grid; grid-template-columns: 92px minmax(0,1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
