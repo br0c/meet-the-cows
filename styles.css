@@ -116,11 +116,23 @@ a { color: var(--accent); }
 .field-glide::after { content: ''; }
 .field-glide.missing::after { content: ''; }
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); font-weight: 900; justify-self: end; }
-.badge-a { color: var(--good); border-color: #15803d; }
-.badge-b { color: var(--good); border-color: #15803d; }
-.badge-c { color: #fed7aa; border-color: #ea580c; }
-.badge-d { color: var(--bad); border-color: #dc2626; }
-.badge-unknown { color: var(--muted); }
+.badge-a,
+.badge-b {
+  color: #052e16;
+  background: #86efac;
+  border-color: #22c55e;
+}
+.badge-c {
+  color: #431407;
+  background: #fdba74;
+  border-color: #f97316;
+}
+.badge-d {
+  color: #450a0a;
+  background: #fca5a5;
+  border-color: #ef4444;
+}
+.badge-unknown { color: var(--muted); background: transparent; }
 
 .settings-page { display: grid; gap: 12px; }
 .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

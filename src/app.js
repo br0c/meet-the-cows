@@ -1,5 +1,5 @@
-const APP_VERSION = '0.3.2';
-const CACHE_NAME = 'meet-the-cows-manual-alt-v4';
+const APP_VERSION = '0.3.4';
+const CACHE_NAME = 'meet-the-cows-badge-colors-v6';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
@@ -342,6 +342,27 @@ function renderSettingsPage() {
   `;
 }
 
+
+function difficultyLabel(field) {
+  const value = String(field?.difficulty || field?.rawDifficulty || '').trim();
+  const normalized = value.toLowerCase().replace(/[{}\s_-]+/g, '');
+  if (['a', 'facile', 'easy', 'aerodrome'].includes(normalized)) return 'A';
+  if (['b', 'normal', 'terrain'].includes(normalized)) return 'B';
+  if (['c', 'difficile', 'hard'].includes(normalized)) return 'C';
+  if (['d', 'tresdifficile', 'trèsdifficile', 'veryhard', 'verydifficult'].includes(normalized)) return 'D';
+  if (['altiport', 'velisurface', 'vélisurface'].includes(normalized)) return value || '?';
+  return value || '?';
+}
+
+function difficultyBadgeClass(field) {
+  const label = difficultyLabel(field).toUpperCase();
+  if (label === 'A') return 'badge-a';
+  if (label === 'B') return 'badge-b';
+  if (label === 'C') return 'badge-c';
+  if (label === 'D') return 'badge-d';
+  return 'badge-unknown';
+}
+
 function renderFieldList() {
   if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
   if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission, or turn on demo mode in Settings.</div>';
@@ -353,7 +374,7 @@ function renderFieldList() {
       </span>
       <span class="field-distance">${fmtKm(distanceM)}</span>
       <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
-      <span class="badge badge-${String(field.difficulty || 'unknown').toLowerCase()}">${escapeHtml(field.difficulty || '?')}</span>
+      <span class="badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
     </button>
   `).join('');
   return `
