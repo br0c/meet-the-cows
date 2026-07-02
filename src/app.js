@@ -1,4 +1,4 @@
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.3.1';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v1';
@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS = {
 };
 
 let renderTimer = null;
+let gpsWatchId = null;
 
 let state = {
   settings: loadSettings(),
@@ -29,6 +30,7 @@ let state = {
   view: 'main',
   computedRows: [],
   cacheStatus: 'unknown',
+  detailScrollTop: 0,
 };
 
 const app = document.querySelector('#app');
@@ -91,6 +93,10 @@ async function loadSelectedPack() {
 }
 
 function startGps() {
+  if (gpsWatchId !== null && 'geolocation' in navigator) {
+    navigator.geolocation.clearWatch(gpsWatchId);
+    gpsWatchId = null;
+  }
   if (state.settings.demoMode) {
     state.position = demoPosition();
     state.gpsStatus = 'demo';
@@ -103,12 +109,13 @@ function startGps() {
     return;
   }
   state.gpsStatus = 'requesting';
-  navigator.geolocation.watchPosition(
+  gpsWatchId = navigator.geolocation.watchPosition(
     position => {
+      const altitude = typeof position.coords.altitude === 'number' && Number.isFinite(position.coords.altitude) ? position.coords.altitude : null;
       state.position = {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
-        altitudeM: typeof position.coords.altitude === 'number' ? position.coords.altitude : null,
+        altitudeM: altitude,
         accuracyM: position.coords.accuracy,
         altitudeAccuracyM: position.coords.altitudeAccuracy,
         timestamp: position.timestamp,
@@ -116,12 +123,12 @@ function startGps() {
       state.gpsStatus = 'ok';
       state.gpsError = '';
       computeRows();
-      scheduleRender();
+      if (!state.selectedFieldId) scheduleRender();
     },
     error => {
       state.gpsStatus = 'error';
       state.gpsError = error.message;
-      scheduleRender();
+      if (!state.selectedFieldId) scheduleRender();
     },
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
   );
@@ -152,11 +159,19 @@ function computeRows() {
   let rows = state.fields.map(field => {
     const distanceM = haversineMeters(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
     const bearingDeg = bearingDegrees(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
-    const usableHeightM = altitudeM !== null && field.elevationM !== null
-      ? altitudeM - field.elevationM - safetyMarginM
+    const fieldElevationM = Number.isFinite(field.elevationM) ? field.elevationM : null;
+    const usableHeightM = altitudeM !== null && fieldElevationM !== null
+      ? altitudeM - fieldElevationM - safetyMarginM
       : null;
-    const requiredGlideRatio = usableHeightM && usableHeightM > 0 ? distanceM / usableHeightM : null;
-    return { field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio };
+    const requiredGlideRatio = usableHeightM !== null && usableHeightM > 0 ? distanceM / usableHeightM : null;
+    const glideReason = requiredGlideRatio !== null
+      ? ''
+      : altitudeM === null
+        ? 'GPS altitude missing'
+        : fieldElevationM === null
+          ? 'Field elevation missing'
+          : `Below safe arrival by ${Math.abs(Math.round(usableHeightM))} m`;
+    return { field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio, glideReason };
   });
   rows = rows.filter(row => {
     if (state.settings.hideD && row.field.difficulty === 'D') return false;
@@ -185,7 +200,8 @@ function scheduleRender() {
 
 function render() {
   const scrollY = window.scrollY;
-  const detailScroll = document.querySelector('.detail')?.scrollTop ?? null;
+  const activeDetail = document.querySelector('.detail');
+  if (activeDetail) state.detailScrollTop = activeDetail.scrollTop;
   computeRows();
   const selected = state.fields.find(f => f.id === state.selectedFieldId);
   app.innerHTML = `
@@ -206,9 +222,9 @@ function render() {
   `;
   attachEvents();
   requestAnimationFrame(() => {
-    if (detailScroll !== null) {
-      const detail = document.querySelector('.detail');
-      if (detail) detail.scrollTop = detailScroll;
+    const detail = document.querySelector('.detail');
+    if (detail) {
+      detail.scrollTop = state.detailScrollTop || 0;
     } else if (state.view === 'main') {
       window.scrollTo({ top: scrollY, behavior: 'instant' });
     }
@@ -309,8 +325,8 @@ function renderSettingsPage() {
 function renderFieldList() {
   if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
   if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission, or turn on demo mode in Settings.</div>';
-  const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, requiredGlideRatio }) => `
-    <button class="field-row" data-field-id="${field.id}">
+  const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, requiredGlideRatio, glideReason }) => `
+    <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
       <span class="field-main">
         <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
         <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Field'].filter(Boolean).join(' · '))}</span>
@@ -332,6 +348,7 @@ function renderFieldList() {
 
 function renderDetail(field) {
   const row = state.computedRows.find(r => r.field.id === field.id);
+  const glideNote = row?.glideReason ? `<p class="inline-note">Glide not shown: ${escapeHtml(row.glideReason)}.</p>` : '';
   const media = (field.media || []).map(item => renderMediaItem(item)).join('') || '<p class="footer-note">No media attached.</p>';
   return `
     <div class="detail-backdrop" id="detailBackdrop">
@@ -347,6 +364,7 @@ function renderDetail(field) {
           <div class="detail-card"><span class="status-label">Elevation</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">L × W</span><strong>${field.lengthM ? Math.round(field.lengthM) : '—'} × ${field.widthM ? Math.round(field.widthM) : '—'}</strong></div>
         </div>
+        ${glideNote}
         <h3>Notes</h3>
         <div class="notes">${escapeHtml(field.notes || 'No notes.')}</div>
         <h3>Photos / docs / VAC</h3>
@@ -390,9 +408,15 @@ function attachEvents() {
   for (const id of ['hideC', 'hideD', 'demoMode']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       state.settings[id] = e.target.checked;
-      if (id === 'demoMode' && e.target.checked) {
-        state.position = demoPosition();
-        state.gpsStatus = 'demo';
+      if (id === 'demoMode') {
+        if (e.target.checked) {
+          state.position = demoPosition();
+          state.gpsStatus = 'demo';
+        } else {
+          state.position = null;
+          state.gpsStatus = 'idle';
+        }
+        startGps();
       }
       saveSettings();
       render();
@@ -401,11 +425,13 @@ function attachEvents() {
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
   document.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
     state.selectedFieldId = row.getAttribute('data-field-id');
+    state.detailScrollTop = 0;
     render();
   }));
-  document.querySelector('#closeDetail')?.addEventListener('click', () => { state.selectedFieldId = null; render(); });
+  document.querySelector('.detail')?.addEventListener('scroll', e => { state.detailScrollTop = e.currentTarget.scrollTop; }, { passive: true });
+  document.querySelector('#closeDetail')?.addEventListener('click', () => { state.selectedFieldId = null; state.detailScrollTop = 0; render(); });
   document.querySelector('#detailBackdrop')?.addEventListener('click', e => {
-    if (e.target.id === 'detailBackdrop') { state.selectedFieldId = null; render(); }
+    if (e.target.id === 'detailBackdrop') { state.selectedFieldId = null; state.detailScrollTop = 0; render(); }
   });
 }
 
@@ -443,7 +469,7 @@ async function checkCacheStatus() {
     state.cacheStatus = 'unknown';
     return;
   }
-  const cache = await caches.open('meet-the-cows-v2');
+  const cache = await caches.open('meet-the-cows-v3');
   const fieldsUrl = new URL(state.packManifest.fieldsUrl, new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL)).toString();
   state.cacheStatus = await cache.match(fieldsUrl) ? 'ready' : 'not downloaded';
 }
