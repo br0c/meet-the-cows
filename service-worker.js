@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meet-the-cows-manual-alt-v4';
+const CACHE_NAME = 'meet-the-cows-difficulty-colors-v1';
 const SCOPE = self.registration.scope;
 const u = path => new URL(path, SCOPE).toString();
 const APP_SHELL = [

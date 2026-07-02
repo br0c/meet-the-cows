@@ -117,9 +117,9 @@ a { color: var(--accent); }
 .field-glide.missing::after { content: ''; }
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); font-weight: 900; justify-self: end; }
 .badge-a { color: var(--good); border-color: #15803d; }
-.badge-b { color: #fed7aa; border-color: #ea580c; }
-.badge-c { color: var(--bad); border-color: #dc2626; }
-.badge-d { color: #f9a8d4; border-color: #be185d; }
+.badge-b { color: var(--good); border-color: #15803d; }
+.badge-c { color: #fed7aa; border-color: #ea580c; }
+.badge-d { color: var(--bad); border-color: #dc2626; }
 .badge-unknown { color: var(--muted); }
 
 .settings-page { display: grid; gap: 12px; }
