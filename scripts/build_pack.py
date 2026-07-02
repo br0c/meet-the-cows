@@ -38,6 +38,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -59,6 +60,53 @@ DIFFICULTY_MAP = {
 }
 MEDIA_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
 ICAO_FR_RE = re.compile(r"^LF[A-Z0-9]{2}$")
+
+
+class Progress:
+    def __init__(self, total: int, label: str, width: int = 28) -> None:
+        self.total = max(int(total), 0)
+        self.label = label
+        self.width = width
+        self.current = 0
+        self.started = time.monotonic()
+        self.last_render = 0.0
+        self.extra = ""
+        self.render(force=True)
+
+    def update(self, current: int | None = None, *, step: int = 0, extra: str = "", force: bool = False) -> None:
+        if current is not None:
+            self.current = max(0, min(int(current), self.total or int(current)))
+        elif step:
+            self.current = max(0, min(self.current + step, self.total or self.current + step))
+        if extra:
+            self.extra = extra
+        now = time.monotonic()
+        if force or now - self.last_render >= 0.25 or self.current >= self.total:
+            self.render(force=force)
+
+    def render(self, *, force: bool = False) -> None:
+        self.last_render = time.monotonic()
+        if self.total:
+            ratio = min(1.0, self.current / self.total)
+            filled = int(self.width * ratio)
+            bar = "█" * filled + "░" * (self.width - filled)
+            pct = int(ratio * 100)
+            elapsed = max(0.1, time.monotonic() - self.started)
+            rate = self.current / elapsed
+            remaining = int((self.total - self.current) / rate) if rate > 0 and self.current < self.total else 0
+            eta = f" ETA {remaining}s" if remaining else ""
+            message = f"\r{self.label} [{bar}] {self.current}/{self.total} {pct:3d}%{eta} {self.extra}"
+        else:
+            message = f"\r{self.label}: {self.current} {self.extra}"
+        print(message[:220], end="", file=sys.stderr, flush=True)
+
+    def done(self, extra: str = "") -> None:
+        if self.total:
+            self.current = self.total
+        if extra:
+            self.extra = extra
+        self.render(force=True)
+        print("", file=sys.stderr, flush=True)
 
 
 def main() -> None:
@@ -195,11 +243,28 @@ def main() -> None:
 def read_bytes(url_or_path: str, raw_dir: Path) -> bytes:
     if re.match(r"^https?://", url_or_path):
         target = raw_dir / Path(urllib.parse.urlparse(url_or_path).path).name
+        request = urllib.request.Request(url_or_path, headers={"User-Agent": "MeetTheCows/0.4"})
         print(f"Downloading {url_or_path}", file=sys.stderr)
-        request = urllib.request.Request(url_or_path, headers={"User-Agent": "MeetTheCows/0.2"})
+        chunks: list[bytes] = []
         with urllib.request.urlopen(request, timeout=120) as response:
-            data = response.read()
+            content_length = response.headers.get("Content-Length")
+            total = int(content_length) if content_length and content_length.isdigit() else 0
+            progress = Progress(total, f"Download {target.name}") if total else None
+            downloaded = 0
+            while True:
+                chunk = response.read(1024 * 256)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                downloaded += len(chunk)
+                if progress:
+                    progress.update(downloaded, extra=f"{downloaded / 1024 / 1024:.1f} MB")
+            if progress:
+                progress.done(f"{downloaded / 1024 / 1024:.1f} MB")
+        data = b"".join(chunks)
         target.write_bytes(data)
+        if not total:
+            print(f"Downloaded {target.name}: {len(data) / 1024 / 1024:.1f} MB", file=sys.stderr)
         return data
     return Path(url_or_path).read_bytes()
 
@@ -682,25 +747,39 @@ def import_vac_pdfs(
     candidate_codes = set(by_code.keys()) | extra_codes
     if airport_index:
         candidate_codes |= set(airport_index.keys())
-    candidate_codes = {code for code in candidate_codes if ICAO_FR_RE.match(code)}
+    candidate_codes = sorted(code for code in candidate_codes if ICAO_FR_RE.match(code))
+    if max_vac:
+        print(f"VAC import limited to {max_vac} successful downloads", file=sys.stderr)
 
-    for code in sorted(candidate_codes):
+    progress = Progress(len(candidate_codes), "VAC PDFs")
+    misses = 0
+    errors = 0
+
+    for index, code in enumerate(candidate_codes, start=1):
         if max_vac and downloaded >= max_vac:
+            progress.update(index - 1, extra=f"downloaded {downloaded}, created {created_airfields}, skipped limit", force=True)
             break
         url = f"{vac_root}/AD-2.{code}.pdf"
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.2"})
+            request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.4"})
             with urllib.request.urlopen(request, timeout=30) as response:
                 content_type = response.headers.get("Content-Type", "").lower()
                 if response.status != 200 or ("pdf" not in content_type and not url.lower().endswith(".pdf")):
+                    misses += 1
+                    progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
                     continue
                 data = response.read()
         except urllib.error.HTTPError as error:
-            if error.code not in {403, 404}:
-                print(f"VAC {code}: HTTP {error.code}", file=sys.stderr)
+            if error.code in {403, 404}:
+                misses += 1
+            else:
+                errors += 1
+                progress.update(index, extra=f"{code}: HTTP {error.code} | ok {downloaded}, miss {misses}, err {errors}", force=True)
+            progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
             continue
         except Exception as error:
-            print(f"VAC {code}: {error}", file=sys.stderr)
+            errors += 1
+            progress.update(index, extra=f"{code}: {error} | ok {downloaded}, miss {misses}, err {errors}", force=True)
             continue
 
         target = docs_dir / f"{code}.pdf"
@@ -719,17 +798,20 @@ def import_vac_pdfs(
             for field in by_code[code]:
                 field["media"].append(dict(media))
                 field.setdefault("docs", {})["vac"] = media["url"]
+            progress.update(index, extra=f"{code}: attached | ok {downloaded}, miss {misses}, err {errors}")
             continue
 
         airport = airport_index.get(code)
         if not airport:
-            print(f"VAC {code}: downloaded but no coordinates available; not adding list entry", file=sys.stderr)
+            progress.update(index, extra=f"{code}: downloaded but no coordinates | ok {downloaded}, miss {misses}, err {errors}", force=True)
             continue
         new_field = make_vac_airfield_entry(airport, runway_index.get(code), frequency_index.get(code, []), media, pack_id)
         fields.append(new_field)
         by_code.setdefault(code, []).append(new_field)
         created_airfields += 1
+        progress.update(index, extra=f"{code}: created airfield | ok {downloaded}, created {created_airfields}, miss {misses}, err {errors}")
 
+    progress.done(f"downloaded {downloaded}, created {created_airfields}, miss {misses}, err {errors}")
     return {"downloaded": downloaded, "createdAirfields": created_airfields}
 
 
