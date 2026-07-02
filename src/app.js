@@ -1,10 +1,10 @@
-const APP_VERSION = '0.3.4';
-const CACHE_NAME = 'meet-the-cows-badge-colors-v6';
+const APP_VERSION = '0.3.5';
+const CACHE_NAME = 'meet-the-cows-vac-frequency-v7';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
 
-/** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
+/** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
 
 const DEFAULT_SETTINGS = {
   packId: 'fr-alps',
@@ -403,7 +403,8 @@ function renderDetail(field) {
           <div class="detail-card"><span class="status-label">Req glide</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Δsafe</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Elevation</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">L × W</span><strong>${field.lengthM ? Math.round(field.lengthM) : '—'} × ${field.widthM ? Math.round(field.widthM) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Length</span><strong>${field.lengthM ? `${Math.round(field.lengthM)} m` : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Radio</span><strong>${escapeHtml(formatFrequency(field))}</strong></div>
         </div>
         ${glideNote}
         <h3>Notes</h3>
@@ -414,6 +415,15 @@ function renderDetail(field) {
       </article>
     </div>
   `;
+}
+
+function formatFrequency(field) {
+  if (field.frequency) return field.frequency;
+  const freqs = Array.isArray(field.frequencies) ? field.frequencies : [];
+  if (!freqs.length) return '—';
+  const first = freqs[0];
+  const mhz = typeof first.mhz === 'number' ? first.mhz.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') : '';
+  return [mhz, first.type || first.description].filter(Boolean).join(' ' ) || '—';
 }
 
 function renderMediaItem(item) {

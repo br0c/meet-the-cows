@@ -44,6 +44,8 @@ from typing import Any, Iterable
 DEFAULT_CUPX_URL = "https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx"
 OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 OURAIRPORTS_RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv"
+OURAIRPORTS_FREQUENCIES_URL = "https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv"
+BASE_AIRAC_DATE = dt.date(2024, 1, 25)
 
 DIFFICULTY_MAP = {
     "aerodrome": "A",
@@ -65,12 +67,13 @@ def main() -> None:
     parser.add_argument("--pack-id", default="fr-alps")
     parser.add_argument("--pack-name", default="France / Alps")
     parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory")
-    parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", ""), help="SIA VAC AD PDF directory URL ending in /AD")
-    parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", ""), help="SIA VAC update/AIRAC date to show in attribution")
+    parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
+    parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
     parser.add_argument("--include-vac-airfields", action="store_true", help="Create VAC-only airfield entries when an LFxx VAC exists but the airfield is absent from the CUP")
     parser.add_argument("--airports-csv", default=os.environ.get("AIRPORTS_CSV", OURAIRPORTS_AIRPORTS_URL), help="Airport CSV URL/path with at least ident,name,latitude_deg,longitude_deg,elevation_ft; defaults to OurAirports")
     parser.add_argument("--runways-csv", default=os.environ.get("RUNWAYS_CSV", OURAIRPORTS_RUNWAYS_URL), help="Optional runway CSV URL/path, defaults to OurAirports runways.csv")
+    parser.add_argument("--frequencies-csv", default=os.environ.get("FREQUENCIES_CSV", OURAIRPORTS_FREQUENCIES_URL), help="Optional frequency CSV URL/path, defaults to OurAirports airport-frequencies.csv")
     parser.add_argument("--vac-codes", default="", help="Optional comma-separated ICAO codes or path/URL to a text file of ICAO codes to try. Use to limit/extend VAC candidates.")
     parser.add_argument("--keep-raw", action="store_true", help="Keep downloaded raw files in .cache")
     args = parser.parse_args()
@@ -93,9 +96,21 @@ def main() -> None:
     fields = parse_cup(cup_text, args.pack_id)
     copied_media = copy_referenced_pictures(fields, pictures, media_dir)
 
+    frequency_index: dict[str, list[dict[str, Any]]] = {}
+    if args.frequencies_csv and args.include_vac_airfields:
+        frequency_index = load_frequency_index(args.frequencies_csv, raw_dir)
+        apply_frequency_index(fields, frequency_index)
+
     vac_count = 0
     vac_created_airfields = 0
-    if args.vac_root:
+    resolved_vac_root = ""
+    resolved_vac_date = args.vac_date
+    if args.vac_root and args.vac_root.lower() != "none":
+        resolved_vac_root, inferred_vac_date = resolve_vac_root(args.vac_root, raw_dir)
+        if resolved_vac_date.lower() == "auto":
+            resolved_vac_date = inferred_vac_date or ""
+
+    if resolved_vac_root:
         airport_index: dict[str, dict[str, Any]] = {}
         runway_index: dict[str, dict[str, Any]] = {}
         if args.include_vac_airfields:
@@ -104,12 +119,13 @@ def main() -> None:
         extra_codes = parse_vac_codes(args.vac_codes, raw_dir)
         vac_result = import_vac_pdfs(
             fields=fields,
-            vac_root=args.vac_root,
+            vac_root=resolved_vac_root,
             docs_dir=docs_dir,
-            vac_date=args.vac_date,
+            vac_date=resolved_vac_date,
             max_vac=args.max_vac,
             airport_index=airport_index,
             runway_index=runway_index,
+            frequency_index=frequency_index,
             extra_codes=extra_codes,
             pack_id=args.pack_id,
         )
@@ -139,14 +155,19 @@ def main() -> None:
             },
             {
                 "name": "Service de l’Information Aéronautique (SIA) VAC",
-                "url": args.vac_root or "not imported",
-                "updatedAt": args.vac_date or None,
+                "url": resolved_vac_root or "not imported",
+                "updatedAt": resolved_vac_date or None,
                 "licence": "Licence Ouverte for SIA public digital products, subject to attribution and no misrepresentation.",
             },
             {
                 "name": "OurAirports airport/runway coordinates",
                 "url": args.airports_csv if args.include_vac_airfields else "not used",
                 "note": "Public-domain coordinates used only to place VAC-only airfield entries; verify official SIA documents.",
+            },
+            {
+                "name": "OurAirports airport radio frequencies",
+                "url": args.frequencies_csv if frequency_index else "not used",
+                "note": "Non-authoritative radio frequency helper data; verify official VAC/current publications.",
             },
         ],
         "notices": [
@@ -283,6 +304,7 @@ def parse_cup(cup_text: str, pack_id: str) -> list[dict[str, Any]]:
         notes = clean(row.get("desc")) or clean(row.get("comment")) or ""
         raw_difficulty, difficulty = extract_difficulty(notes, row)
         media_refs = parse_media_refs(row)
+        frequencies = extract_frequencies_from_row(row, notes)
         kind = "airfield" if raw_difficulty in {"aerodrome", "terrain", "altiport", "velisurface"} or ICAO_FR_RE.match(code.upper() or "") else "outlanding"
         field_id = stable_id(country or "xx", code, name, lat, lon)
         if field_id in seen:
@@ -302,6 +324,8 @@ def parse_cup(cup_text: str, pack_id: str) -> list[dict[str, Any]]:
             "lengthM": length_m,
             "widthM": width_m,
             "runwayDirectionDeg": direction_deg,
+            "frequency": format_frequency_short(frequencies),
+            "frequencies": frequencies,
             "notes": strip_difficulty_tags(notes),
             "source": {
                 "name": "planeur-net / Guide des Aires de Sécurité",
@@ -415,6 +439,47 @@ def copy_referenced_pictures(fields: list[dict[str, Any]], pictures: dict[str, b
     return copied
 
 
+
+def extract_frequencies_from_row(row: dict[str, Any], notes: str) -> list[dict[str, Any]]:
+    text_parts = [notes]
+    for key in ("freq", "frequency", "frequence", "fréquence", "radio", "userdata", "comment", "desc"):
+        value = clean(row.get(key))
+        if value:
+            text_parts.append(value)
+    return extract_frequencies_from_text(" ".join(text_parts), source="CUP notes")
+
+
+def extract_frequencies_from_text(text: str, *, source: str) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"(?<!\d)(1[1-3][0-9])[\.,](\d{1,3})(?!\d)", text or ""):
+        mhz = float(f"{match.group(1)}.{match.group(2).ljust(3, '0')[:3]}")
+        if not 118.0 <= mhz <= 137.0:
+            continue
+        key = f"{mhz:.3f}"
+        if key in seen:
+            continue
+        seen.add(key)
+        # Try to pick up a nearby label such as AFIS/TWR/A/A.
+        window = text[max(0, match.start() - 24): min(len(text), match.end() + 24)].upper()
+        freq_type = ""
+        for candidate in ("AFIS", "TWR", "TOUR", "A/A", "AUTO", "INFO", "APP", "ATIS", "ATF", "CTAF", "UNICOM"):
+            if candidate in window:
+                freq_type = candidate
+                break
+        found.append({"mhz": round(mhz, 3), "type": freq_type, "source": source})
+    return found
+
+
+def format_frequency_short(frequencies: list[dict[str, Any]]) -> str:
+    if not frequencies:
+        return ""
+    first = frequencies[0]
+    mhz = first.get("mhz")
+    mhz_text = f"{float(mhz):.3f}".rstrip("0").rstrip(".") if isinstance(mhz, (int, float)) else ""
+    return " ".join(part for part in (mhz_text, clean(first.get("type"))) if part)
+
+
 def load_airport_index(airports_csv: str, raw_dir: Path) -> dict[str, dict[str, Any]]:
     print(f"Loading airport source {airports_csv}", file=sys.stderr)
     text = read_text(airports_csv, raw_dir)
@@ -473,6 +538,61 @@ def load_runway_index(runways_csv: str, raw_dir: Path) -> dict[str, dict[str, An
     return longest
 
 
+
+def load_frequency_index(frequencies_csv: str, raw_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    if not frequencies_csv:
+        return {}
+    print(f"Loading frequency source {frequencies_csv}", file=sys.stderr)
+    text = read_text(frequencies_csv, raw_dir)
+    reader = csv.DictReader(io.StringIO(text))
+    by_airport: dict[str, list[dict[str, Any]]] = {}
+    for row in reader:
+        airport_ident = clean(row.get("airport_ident")).upper()
+        if not ICAO_FR_RE.match(airport_ident):
+            continue
+        mhz = parse_float(clean(row.get("frequency_mhz")))
+        if mhz is None or not 118.0 <= mhz <= 137.0:
+            continue
+        entry = {
+            "mhz": round(mhz, 3),
+            "type": clean(row.get("type")),
+            "description": clean(row.get("description")),
+            "source": "OurAirports airport-frequencies.csv",
+        }
+        by_airport.setdefault(airport_ident, []).append(entry)
+    for code, freqs in by_airport.items():
+        freqs.sort(key=frequency_sort_key)
+    print(f"Loaded radio frequencies for {len(by_airport)} LFxx airports", file=sys.stderr)
+    return by_airport
+
+
+def frequency_sort_key(freq: dict[str, Any]) -> tuple[int, float]:
+    preferred = ["AFIS", "TWR", "CTAF", "ATF", "A/A", "UNICOM", "INFO", "RDO", "APP", "ATIS", "GND"]
+    value = " ".join([clean(freq.get("type")), clean(freq.get("description"))]).upper()
+    rank = next((i for i, token in enumerate(preferred) if token in value), len(preferred))
+    return rank, float(freq.get("mhz") or 999)
+
+
+def apply_frequency_index(fields: list[dict[str, Any]], frequency_index: dict[str, list[dict[str, Any]]]) -> None:
+    for field in fields:
+        code = clean(field.get("code")).upper()
+        if not ICAO_FR_RE.match(code):
+            continue
+        indexed = frequency_index.get(code) or []
+        if not indexed:
+            continue
+        existing = list(field.get("frequencies") or [])
+        seen = {f"{float(item.get('mhz')):.3f}" for item in existing if isinstance(item.get("mhz"), (int, float))}
+        for item in indexed:
+            key = f"{float(item.get('mhz')):.3f}"
+            if key not in seen:
+                existing.append(dict(item))
+                seen.add(key)
+        existing.sort(key=frequency_sort_key)
+        field["frequencies"] = existing
+        field["frequency"] = format_frequency_short(existing)
+
+
 def parse_vac_codes(vac_codes: str, raw_dir: Path) -> set[str]:
     if not vac_codes:
         return set()
@@ -484,6 +604,63 @@ def parse_vac_codes(vac_codes: str, raw_dir: Path) -> set[str]:
     return codes
 
 
+
+def resolve_vac_root(vac_root: str, raw_dir: Path) -> tuple[str, str]:
+    value = (vac_root or "").strip()
+    if not value:
+        return "", ""
+    if value.lower() != "auto":
+        return value.rstrip("/"), infer_vac_date_from_root(value)
+
+    print("Auto-detecting current SIA VAC eAIP root", file=sys.stderr)
+    for cycle_date in candidate_airac_dates():
+        folder = f"eAIP_{cycle_date.strftime('%d_%b_%Y').upper()}"
+        root = f"https://www.sia.aviation-civile.gouv.fr/media/dvd/{folder}/Atlas-VAC/PDF_AIPparSSection/VAC/AD"
+        test_url = f"{root}/AD-2.LFMR.pdf"
+        if url_looks_available(test_url):
+            inferred = cycle_date.isoformat()
+            print(f"Detected SIA VAC root: {root}", file=sys.stderr)
+            return root, inferred
+    print("Could not auto-detect SIA VAC root. Pass --vac-root explicitly.", file=sys.stderr)
+    return "", ""
+
+
+def candidate_airac_dates() -> list[dt.date]:
+    today = dt.date.today()
+    dates: list[dt.date] = []
+    d = BASE_AIRAC_DATE
+    while d < today - dt.timedelta(days=365):
+        d += dt.timedelta(days=28)
+    while d <= today + dt.timedelta(days=56):
+        dates.append(d)
+        d += dt.timedelta(days=28)
+    # Try most recent/current first, then the next cycle in case SIA pre-published it.
+    dates.sort(key=lambda x: abs((today - x).days))
+    return dates
+
+
+def url_looks_available(url: str) -> bool:
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.3"})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            content_type = response.headers.get("Content-Type", "").lower()
+            return response.status == 200 and ("pdf" in content_type or url.lower().endswith(".pdf"))
+    except Exception:
+        return False
+
+
+def infer_vac_date_from_root(vac_root: str) -> str:
+    match = re.search(r"eAIP_(\d{2})_([A-Z]{3})_(\d{4})", vac_root.upper())
+    if not match:
+        return ""
+    day, month_text, year = match.groups()
+    month_lookup = {m.upper(): i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+    month = month_lookup.get(month_text)
+    if not month:
+        return ""
+    return dt.date(int(year), month, int(day)).isoformat()
+
+
 def import_vac_pdfs(
     *,
     fields: list[dict[str, Any]],
@@ -493,6 +670,7 @@ def import_vac_pdfs(
     max_vac: int,
     airport_index: dict[str, dict[str, Any]],
     runway_index: dict[str, dict[str, Any]],
+    frequency_index: dict[str, list[dict[str, Any]]],
     extra_codes: set[str],
     pack_id: str,
 ) -> dict[str, int]:
@@ -547,7 +725,7 @@ def import_vac_pdfs(
         if not airport:
             print(f"VAC {code}: downloaded but no coordinates available; not adding list entry", file=sys.stderr)
             continue
-        new_field = make_vac_airfield_entry(airport, runway_index.get(code), media, pack_id)
+        new_field = make_vac_airfield_entry(airport, runway_index.get(code), frequency_index.get(code, []), media, pack_id)
         fields.append(new_field)
         by_code.setdefault(code, []).append(new_field)
         created_airfields += 1
@@ -558,11 +736,13 @@ def import_vac_pdfs(
 def make_vac_airfield_entry(
     airport: dict[str, Any],
     runway: dict[str, Any] | None,
+    frequencies: list[dict[str, Any]],
     media: dict[str, Any],
     pack_id: str,
 ) -> dict[str, Any]:
     code = airport["code"]
     runway = runway or {}
+    frequencies = sorted([dict(freq) for freq in frequencies], key=frequency_sort_key)
     field_id = stable_id("FR", code, airport["name"], airport["latitude"], airport["longitude"])
     notes = "Official aerodrome entry created from SIA VAC import. Coordinates/dimensions are from the airport source, not from the VAC PDF. Verify the attached official VAC."
     return {
@@ -579,6 +759,8 @@ def make_vac_airfield_entry(
         "lengthM": runway.get("lengthM"),
         "widthM": runway.get("widthM"),
         "runwayDirectionDeg": runway.get("runwayDirectionDeg"),
+        "frequency": format_frequency_short(frequencies),
+        "frequencies": frequencies,
         "notes": notes,
         "source": {
             "name": "SIA VAC + OurAirports coordinates",

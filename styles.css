@@ -8,8 +8,8 @@
   --line: #334155;
   --accent: #38bdf8;
   --good: #86efac;
-  --warn: #fcd34d;
-  --bad: #fca5a5;
+  --warn: #f59e0b;
+  --bad: #ef4444;
 }
 
 * { box-sizing: border-box; }
@@ -123,14 +123,14 @@ a { color: var(--accent); }
   border-color: #22c55e;
 }
 .badge-c {
-  color: #431407;
-  background: #fdba74;
-  border-color: #f97316;
+  color: #111827;
+  background: #f59e0b;
+  border-color: #ffedd5;
 }
 .badge-d {
-  color: #450a0a;
-  background: #fca5a5;
-  border-color: #ef4444;
+  color: #ffffff;
+  background: #dc2626;
+  border-color: #fecaca;
 }
 .badge-unknown { color: var(--muted); background: transparent; }
 
