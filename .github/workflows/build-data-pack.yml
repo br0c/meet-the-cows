@@ -1,0 +1,97 @@
+name: Build data pack
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 03:17 UTC
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-pack
+  cancel-in-progress: false
+
+jobs:
+  build-fr-alps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      PACK_ID: fr-alps
+      PACK_NAME: France / Alps
+      RELEASE_TAG: data-latest
+      RELEASE_TITLE: Latest data pack
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Build pack
+        env:
+          OPENAIP_API_KEY: ${{ secrets.OPENAIP_API_KEY }}
+        run: |
+          rm -rf "data/packs/${PACK_ID}" ".cache/${PACK_ID}" "dist/packs"
+
+          python scripts/build_pack.py \
+            --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
+            --pack-id "${PACK_ID}" \
+            --pack-name "${PACK_NAME}" \
+            --countries FR CH IT \
+            --airfield-source openaip \
+            --include-streckenflug \
+            --streckenflug-countries FR CH IT \
+            --streckenflug-workers 8 \
+            --vac-root auto \
+            --vac-date auto \
+            --include-vac-airfields
+
+      - name: Package pack
+        run: |
+          mkdir -p dist/packs
+
+          (cd data/packs && zip -r "../../dist/packs/${PACK_ID}.zip" "${PACK_ID}")
+
+          shasum -a 256 "dist/packs/${PACK_ID}.zip" > "dist/packs/${PACK_ID}.zip.sha256"
+
+          python scripts/make_pack_index.py \
+            --repo "${GITHUB_REPOSITORY}" \
+            --release-tag "${RELEASE_TAG}" \
+            --pack-id "${PACK_ID}" \
+            --pack-name "${PACK_NAME}" \
+            --zip "dist/packs/${PACK_ID}.zip" \
+            --output "dist/packs/packs.json"
+
+          ls -lh dist/packs
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" \
+              --title "${RELEASE_TITLE}" \
+              --notes "Rolling release for offline data packs."
+          fi
+
+          gh release upload "${RELEASE_TAG}" \
+            "dist/packs/${PACK_ID}.zip" \
+            "dist/packs/${PACK_ID}.zip.sha256" \
+            "dist/packs/packs.json" \
+            --clobber
+
+      - name: Show release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "${RELEASE_TAG}" --json tagName,url,assets
