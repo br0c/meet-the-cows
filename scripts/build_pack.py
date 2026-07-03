@@ -91,6 +91,8 @@ GLIDER_KEYWORDS = (
     "aliante", "volo a vela",
 )
 DEDUPE_DISTANCE_M = 350.0
+PACK_IMAGE_MAX_LONG_EDGE = 2560
+PACK_IMAGE_JPEG_QUALITY = 85
 
 
 
@@ -206,9 +208,10 @@ def main() -> None:
         if resolved_vac_date.lower() == "auto":
             resolved_vac_date = inferred_vac_date or ""
 
+    airport_index: dict[str, dict[str, Any]] = {}
+    runway_index: dict[str, dict[str, Any]] = {}
+    extra_codes: set[str] = set()
     if resolved_vac_root:
-        airport_index: dict[str, dict[str, Any]] = {}
-        runway_index: dict[str, dict[str, Any]] = {}
         if args.include_vac_airfields:
             if args.airfield_source == "openaip":
                 airport_index, runway_index, openaip_frequency_index = load_openaip_airfields(
@@ -231,36 +234,55 @@ def main() -> None:
         if airport_index:
             add_airfield_entries_from_index(fields, airport_index, runway_index, frequency_index, args.pack_id, args.vac_candidate_mode)
         extra_codes = parse_vac_codes(args.vac_codes, raw_dir)
-        vac_result = import_vac_pdfs(
-            fields=fields,
-            vac_root=resolved_vac_root,
-            docs_dir=docs_dir,
-            vac_date=resolved_vac_date,
-            max_vac=args.max_vac,
-            airport_index=airport_index,
-            runway_index=runway_index,
-            frequency_index=frequency_index,
-            extra_codes=extra_codes,
-            pack_id=args.pack_id,
-        )
-        vac_count = vac_result["downloaded"]
-        vac_created_airfields = vac_result["createdAirfields"]
 
     streckenflug_count = 0
     streckenflug_media_count = 0
-    if args.include_streckenflug:
-        streckenflug_fields = load_streckenflug_fields(
-            args.streckenflug_url,
-            raw_dir,
-            workers=args.streckenflug_workers,
-            media_dir=media_dir,
-            pack_id=args.pack_id,
-            countries=args.streckenflug_countries,
-            max_detail=args.streckenflug_max_detail,
-            include_images=not args.no_streckenflug_images,
-        )
-        streckenflug_count = len(streckenflug_fields)
-        streckenflug_media_count = count_media_items(streckenflug_fields)
+    streckenflug_fields: list[dict[str, Any]] = []
+
+    # VAC import and streckenflug import are independent network-heavy tasks after
+    # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
+    # remote source while the other could already be downloading.
+    futures: dict[Any, str] = {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        if resolved_vac_root:
+            futures[executor.submit(
+                import_vac_pdfs,
+                fields=fields,
+                vac_root=resolved_vac_root,
+                docs_dir=docs_dir,
+                vac_date=resolved_vac_date,
+                max_vac=args.max_vac,
+                airport_index=airport_index,
+                runway_index=runway_index,
+                frequency_index=frequency_index,
+                extra_codes=extra_codes,
+                pack_id=args.pack_id,
+            )] = "vac"
+        if args.include_streckenflug:
+            futures[executor.submit(
+                load_streckenflug_fields,
+                args.streckenflug_url,
+                raw_dir,
+                workers=args.streckenflug_workers,
+                media_dir=media_dir,
+                pack_id=args.pack_id,
+                countries=args.streckenflug_countries,
+                max_detail=args.streckenflug_max_detail,
+                include_images=not args.no_streckenflug_images,
+            )] = "streckenflug"
+
+        for future in as_completed(futures):
+            task = futures[future]
+            if task == "vac":
+                vac_result = future.result()
+                vac_count = vac_result["downloaded"]
+                vac_created_airfields = vac_result["createdAirfields"]
+            elif task == "streckenflug":
+                streckenflug_fields = future.result()
+                streckenflug_count = len(streckenflug_fields)
+                streckenflug_media_count = count_media_items(streckenflug_fields)
+
+    if streckenflug_fields:
         fields.extend(streckenflug_fields)
 
     fields = consolidate_duplicate_fields(fields)
@@ -584,11 +606,19 @@ def copy_referenced_pictures(fields: list[dict[str, Any]], pictures: dict[str, b
             if not blob:
                 continue
             field_dir.mkdir(parents=True, exist_ok=True)
-            target_name = safe_filename(ref)
-            target = field_dir / target_name
-            target.write_bytes(blob)
+            original_name = safe_filename(ref)
+            source_ext = Path(original_name).suffix.lower()
+            if source_ext == ".pdf":
+                target_name = original_name
+                target = field_dir / target_name
+                target.write_bytes(blob)
+                kind = "pdf"
+            else:
+                target_name = f"{Path(original_name).stem}.jpg"
+                target = field_dir / target_name
+                write_optimized_jpeg_image(blob, target)
+                kind = "image"
             copied += 1
-            kind = "pdf" if target.suffix.lower() == ".pdf" else "image"
             field["media"].append({
                 "type": kind,
                 "url": f"media/{field['id']}/{target_name}",
@@ -596,7 +626,6 @@ def copy_referenced_pictures(fields: list[dict[str, Any]], pictures: dict[str, b
                 "source": "Guide des Aires de Sécurité",
             })
     return copied
-
 
 
 def extract_frequencies_from_row(row: dict[str, Any], notes: str) -> list[dict[str, Any]]:
@@ -1480,21 +1509,34 @@ def load_streckenflug_fields(
 ) -> list[dict[str, Any]]:
     """Scrape the public streckenflug.at landout list and JSON detail endpoint.
 
-    The map page itself only contains placeholders. Real field details, feedback and
-    full-resolution photo URLs are returned by:
-
-      json.php?inc=map&task=landeplatz&id=<streckenflug id>
-
-    `workers` parallelises detail JSON and image downloads. Keep the default low and
-    use a modest value such as 4 for full builds so the upstream site is not hammered.
+    The list page supports a server-side side_land=<country> filter. Use that first
+    so a FR/CH/IT build fetches only those countries instead of probing the full EU
+    list and throwing most detail calls away afterwards.
     """
-    country_filter = {str(c).upper() for c in countries}
-    print(f"Loading streckenflug.at list {list_url}", file=sys.stderr)
-    list_html = read_text(list_url, raw_dir)
-    candidates = extract_streckenflug_links(list_html, list_url, country_filter)
+    country_filter = {str(c).upper() for c in countries if str(c).strip()}
+    countries_to_fetch = sorted(country_filter) if country_filter else [""]
+
+    candidates: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for country in countries_to_fetch:
+        country_url = streckenflug_country_list_url(list_url, country)
+        label = country or "all countries"
+        print(f"Loading streckenflug.at list {label}: {country_url}", file=sys.stderr)
+        list_html = read_text(country_url, raw_dir)
+        country_items = extract_streckenflug_links(list_html, country_url, {country} if country else country_filter)
+        for item in country_items:
+            source_id = clean(item.get("streckenflugId"))
+            if not source_id or source_id in seen:
+                continue
+            if country and not clean(item.get("country")):
+                item["country"] = country
+            seen.add(source_id)
+            candidates.append(item)
+        print(f"streckenflug.at {label}: {len(country_items)} ids from public list", file=sys.stderr)
+
     if max_detail:
         candidates = candidates[:max_detail]
-    print(f"streckenflug.at: {len(candidates)} candidate ids from public list", file=sys.stderr)
+    print(f"streckenflug.at: {len(candidates)} candidate ids after country filtering", file=sys.stderr)
 
     if not candidates:
         return []
@@ -1546,17 +1588,20 @@ def load_streckenflug_fields(
     return fields
 
 
+def streckenflug_country_list_url(list_url: str, country: str) -> str:
+    if not country:
+        return list_url
+    parsed = urllib.parse.urlparse(list_url)
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    query["side_land"] = [country.upper()]
+    if "side_kontinent" not in query:
+        query["side_kontinent"] = ["EU"]
+    # Keep blank fields stable; urlencode with doseq preserves the legacy endpoint shape.
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query, doseq=True)))
+
+
 def extract_streckenflug_links(page: str, base_url: str, countries: set[str]) -> list[dict[str, str]]:
-    """Extract streckenflug ids from either the list table or the map select.
-
-    The map/list HTML has historically appeared in two shapes:
-    - detail links containing iID=<id>
-    - a giant <option value="<id>">L - Name</option> select
-
-    We support both and dedupe by source id. Country filtering is best-effort here;
-    final filtering is done after fetching JSON detail because the option list does
-    not reliably include country metadata.
-    """
+    """Extract streckenflug ids from either the list table or the map select."""
     country_map = {
         "FRANCE": "FR", "FRANKREICH": "FR",
         "SWITZERLAND": "CH", "SCHWEIZ": "CH", "SUISSE": "CH",
@@ -1567,20 +1612,24 @@ def extract_streckenflug_links(page: str, base_url: str, countries: set[str]) ->
     items: list[dict[str, str]] = []
     seen: set[str] = set()
 
-    # Older/list view: <a href="index.php?iID=339&inc=map">Achensee</a>
+    # List view: rows contain iID links and country/category columns.
+    row_pattern = re.compile(r"<tr\b[^>]*>(?P<row>.*?)</tr>", re.I | re.S)
     link_pattern = re.compile(r'<a\b[^>]*href=["\'](?P<href>[^"\']*iID=(?P<id>\d+)[^"\']*)["\'][^>]*>(?P<name>.*?)</a>', re.I | re.S)
-    for match in link_pattern.finditer(page):
-        source_id = match.group("id")
+    for row_match in row_pattern.finditer(page):
+        row = row_match.group("row")
+        link = link_pattern.search(row)
+        if not link:
+            continue
+        source_id = link.group("id")
         if source_id in seen:
             continue
-        href = html.unescape(match.group("href"))
-        name = strip_html(match.group("name"))
+        name = normalize_streckenflug_option_name(strip_html(link.group("name")))
         if not name:
             continue
-        tail = strip_html(page[match.end(): match.end() + 700])
+        row_text = strip_html(row)
         detected_country = ""
         for label, code in country_map.items():
-            if re.search(rf"\b{re.escape(label)}\b", tail, flags=re.I):
+            if re.search(rf"\b{re.escape(label)}\b", row_text, flags=re.I):
                 detected_country = code
                 break
         if countries and detected_country and detected_country not in countries:
@@ -1588,12 +1637,36 @@ def extract_streckenflug_links(page: str, base_url: str, countries: set[str]) ->
         seen.add(source_id)
         items.append({
             "streckenflugId": source_id,
-            "name": normalize_streckenflug_option_name(name),
-            "url": urllib.parse.urljoin(base_url, href),
+            "name": name,
+            "url": urllib.parse.urljoin(base_url, html.unescape(link.group("href"))),
             "country": detected_country,
         })
 
-    # Map view: <option value="339" style="...">L - Achensee</option>
+    # Fallback for older pages without rows: scan iID links and nearby text.
+    for match in link_pattern.finditer(page):
+        source_id = match.group("id")
+        if source_id in seen:
+            continue
+        name = normalize_streckenflug_option_name(strip_html(match.group("name")))
+        if not name:
+            continue
+        nearby = strip_html(page[match.start(): match.end() + 700])
+        detected_country = ""
+        for label, code in country_map.items():
+            if re.search(rf"\b{re.escape(label)}\b", nearby, flags=re.I):
+                detected_country = code
+                break
+        if countries and detected_country and detected_country not in countries:
+            continue
+        seen.add(source_id)
+        items.append({
+            "streckenflugId": source_id,
+            "name": name,
+            "url": urllib.parse.urljoin(base_url, html.unescape(match.group("href"))),
+            "country": detected_country,
+        })
+
+    # Map view fallback: <option value="339" style="...">L - Achensee</option>
     option_pattern = re.compile(r'<option\b[^>]*\bvalue=["\'](?P<id>\d+)["\'][^>]*>(?P<name>.*?)</option>', re.I | re.S)
     for match in option_pattern.finditer(page):
         source_id = match.group("id")
@@ -1607,10 +1680,9 @@ def extract_streckenflug_links(page: str, base_url: str, countries: set[str]) ->
             "streckenflugId": source_id,
             "name": name,
             "url": f"https://landout.streckenflug.at/index.php?inc=map&iID={source_id}",
-            "country": "",
+            "country": next(iter(countries), "") if len(countries) == 1 else "",
         })
     return items
-
 
 def normalize_streckenflug_option_name(value: str) -> str:
     value = normalize_space(value)
@@ -1795,11 +1867,10 @@ def download_streckenflug_images(
     media: list[dict[str, Any]] = []
     for index, url in enumerate(urls, start=1):
         try:
-            data, content_type = download_url_bytes(url, referer=source_url)
-            ext = image_extension_from_response(data, content_type)
-            target_name = f"streckenflug_{safe_filename(source_id)}_{index:02d}{ext}"
+            data, _content_type = download_url_bytes(url, referer=source_url)
+            target_name = f"streckenflug_{safe_filename(source_id)}_{index:02d}.jpg"
             target = field_dir / target_name
-            target.write_bytes(data)
+            write_optimized_jpeg_image(data, target)
             item = {
                 "type": "image",
                 "url": f"media/{field_id}/{target_name}",
@@ -1813,7 +1884,6 @@ def download_streckenflug_images(
         except Exception as error:
             print(f"streckenflug.at image download failed for {field_id}: {error}", file=sys.stderr)
     return media
-
 
 def download_url_bytes(url: str, *, referer: str = "") -> tuple[bytes, str]:
     request = urllib.request.Request(url, headers={
@@ -1834,6 +1904,37 @@ def image_extension_from_response(data: bytes, content_type: str) -> str:
     if "gif" in content_type or data.startswith(b"GIF"):
         return ".gif"
     return ".jpg"
+
+def write_optimized_jpeg_image(data: bytes, target: Path) -> None:
+    """Write a phone-optimised JPEG: max 2560 px long edge, RGB, q85, no metadata."""
+    try:
+        from PIL import Image, ImageOps  # type: ignore
+    except ModuleNotFoundError as error:
+        raise RuntimeError("Pillow is required for image resizing. Run: python -m pip install -r requirements.txt") from error
+
+    with Image.open(io.BytesIO(data)) as image:
+        image = ImageOps.exif_transpose(image)
+        if image.mode not in {"RGB", "L"}:
+            # Flatten transparency against white before converting to JPEG.
+            if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+                rgba = image.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                image = Image.alpha_composite(background, rgba).convert("RGB")
+            else:
+                image = image.convert("RGB")
+        elif image.mode == "L":
+            image = image.convert("RGB")
+
+        width, height = image.size
+        longest = max(width, height)
+        if longest > PACK_IMAGE_MAX_LONG_EDGE:
+            scale = PACK_IMAGE_MAX_LONG_EDGE / float(longest)
+            new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+            resample = getattr(Image, "Resampling", Image).LANCZOS
+            image = image.resize(new_size, resample)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        image.save(target, format="JPEG", quality=PACK_IMAGE_JPEG_QUALITY, optimize=True, progressive=True)
 
 
 def parse_first_metric_length(value: object) -> float | None:
