@@ -91,6 +91,7 @@ GLIDER_KEYWORDS = (
     "aliante", "volo a vela",
 )
 DEDUPE_DISTANCE_M = 350.0
+DEDUPE_STRONG_NAME_DISTANCE_M = 800.0
 PACK_IMAGE_MAX_LONG_EDGE = 2560
 PACK_IMAGE_JPEG_QUALITY = 85
 
@@ -1820,32 +1821,205 @@ STRECKENFLUG_GERMAN_PHRASES: list[tuple[str, str]] = [
     (r"\bEine Landung auf der Wiese in Buchau würde ich unter diese[mn] Umständen nicht mehr in Betracht ziehen\b", "I would no longer consider landing on the meadow in Buchau under these circumstances"),
     (r"\bist ebenfalls dieser Meinung\b", "shares this opinion"),
     (r"\bwir würden die Wiese aus dem SIP streichen\b", "we would remove the meadow from the SIP"),
+    (r"\bDie Wiese hat im kurzen Endteil\s+(\d+)\s+eine Hochspannungsleitung\b", r"The meadow has a high-voltage power line on short final \1"),
+    (r"\bsollte also nur\s+(\d+)\s+angeflogen werden\b", r"should therefore only be approached on \1"),
+    (r"\bFeld im August\s+(\d{4})\s+besucht\b", r"Field visited in August \1"),
+    (r"\bNeben dem markierte[nr] Abschnitt hat es ab und zu ein paar Steine\b", "Next to the marked section there are occasionally a few stones"),
+    (r"\bdie jedoch überrollt werden können\b", "which can be rolled over"),
+    (r"\bZufahrt von\s+([NSEW])\s+möglich\b", r"Access from \1 possible"),
+    (r"\bWichtiges Feld falls man von Süden kommend den Sprung auf die Hochebene nicht mehr schafft\b", "Important field if arriving from the south and unable to climb onto the plateau"),
+    (r"\bHeute absolut unlandbar\b", "Today absolutely not landable"),
+    (r"\bEs sind zwei Wiesen durch ca\.\s*1m hohen Zaun.*?abgetrennt\b", "There are two meadows separated by an approximately 1 m high fence"),
+    (r"\bSüdlicher Teil war sehr gut landbar\b", "Southern part was very landable"),
+    (r"\bNördlicher Teil zu kurz\b", "Northern part too short"),
+    (r"\bliegt optimal in der Windrichtung\b", "lies well aligned with the wind direction"),
+    (r"\bkann bei Talwind sowie bei Südwind ohne Probleme angeflogen werden\b", "can be approached without problems in valley wind and southerly wind"),
+    (r"\bZu beachten ist dass\b", "Note that"),
+    (r"\bFelder mit Hagposten unterteilt sind\b", "fields are divided by hail-posts"),
+    (r"\bHochspannungsstromleitungen östlich der Autobahn zusammengelegt\b", "high-voltage power lines east of the motorway have been consolidated"),
+    (r"\bHier noch ein Bild von der nördliche[nr] Talseite\b", "Additional picture from the northern side of the valley"),
+    (r"\bSchön flaches Feld\b", "Nice flat field"),
+    (r"\bnur wenig Bodenwellen\b", "only slight undulations"),
+    (r"\betwas schwieriger Anflug\b", "somewhat difficult approach"),
+    (r"\bgrundsätzlich gut geeignet\b", "generally suitable"),
+    (r"\bnicht nachvollziehbar\b", "not understandable"),
+    (r"\bbezieht sich ev\.? auf ein anderes Feld\b", "may refer to another field"),
+    (r"\bÖstliches Feld\b", "Eastern field"),
+    (r"\bWestliches Feld\b", "Western field"),
+    (r"\bin der ersten Hälfte wellig\b", "wavy in the first half"),
+    (r"\bdaher bei Getreidebau schlecht\b", "therefore poor when planted with grain"),
+    (r"\bdeutlich besser\b", "clearly better"),
+    (r"\bRichtung\s+([A-Z])\b", r"Direction \1"),
+    (r"\bVorsicht Baumreihe im Anflug\b", "caution: tree line on approach"),
+    (r"\bFeld ist eben und bretthart\b", "Field is flat and very hard"),
+    (r"\bNur kleinere Steine zwischendrin\b", "Only small stones here and there"),
+    (r"\bGut landbar\b", "Good landing option"),
+    (r"\bim südlichen Teil läuft ein Graben durch\b", "a ditch runs through the southern part"),
+    (r"\bNur die nördliche Hälfte entlang des Weges nutzen\b", "Use only the northern half along the track"),
+    (r"\bZufahrt zum Feld an der Nordspitze\b", "Access to the field at the northern tip"),
+    (r"\bBesichtigungs-Video:\s*https?://\S+\b", ""),
+    (r"\bBesichtigt am\b", "Inspected on"),
+    (r"\bBesichtigung\s+am\b", "Inspection on"),
+    (r"\bBesichtigung\s+(\d)", r"Inspection \1"),
+    (r"\bFeld unverändert gut\b", "Field unchanged and good"),
+    (r"\bAm\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\s+dort gelandet\b", r"Landed there on \1"),
+    (r"\bLanderichtung\s+([0-9/]+)\b", r"Landing direction \1."),
+    (r"\bLanderichtung\b", "Landing direction"),
+    (r"\bDurch Windräder sehr leicht auffindbar\b", "Very easy to find thanks to wind turbines"),
+    (r"\bAnflug ohne Hindernisse und Landung problemlos\b", "Approach without obstacles and landing uncomplicated"),
+    (r"\bMehrere Möglichkeiten\b", "Several options"),
+    (r"\bMein Feld mit den Windrädern lag östlich der kleinen Straße\b", "My field with the wind turbines was east of the small road"),
+    (r"\bLandung im August\s+(\d{4})\b", r"Landing in August \1"),
+    (r"\bauf Getreidefeld\b", "on a grain field"),
+    (r"\bWiese steigt deutlich von Süd nach Nord an\b", "The meadow climbs noticeably from south to north"),
+    (r"\bLandung nur von Süd nach Nord möglich\b", "Landing possible only from south to north"),
+    (r"\bStromleitung quert\b", "power line crosses"),
+    (r"\bAufsetzen nach\b", "Touch down after"),
+    (r"\bAusrollen darunter hindurch\b", "roll out underneath it"),
+    (r"\bMuss besichtigt werden\b", "Must be inspected"),
+    (r"\bSteigt gegen\s+([A-Z]+)\s+an\b", r"Climbs toward \1"),
+    (r"\bMomentan Getreide auf dem Feld\b", "Currently grain on the field"),
+    (r"\bNur von Osten her anfliegbar\b", "Approachable only from the east"),
+    (r"\bhoch anfliegen\b", "approach high"),
+    (r"\bFrisch gemäht\b", "Freshly mowed"),
+    (r"\bSüdlichen Teil der Wiese benützen\b", "Use the southern part of the meadow"),
+    (r"\bWestliches Feld\b", "Western field"),
+    (r"\bNördliches Feld\b", "Northern field"),
+    (r"\bHindernisse im Anflug\b", "Obstacles on approach"),
+    (r"\bim Anflug\b", "on approach"),
+    (r"\bAufsetzen erst nach Querweg empfehlenswert\b", "Touchdown recommended only after the crossing track"),
+    (r"\bvorsicht Leitungen\b", "caution: lines"),
+    (r"\bBahnlinie mit Fahrleitung beachten\b", "watch the railway line with overhead wire"),
+    (r"\bBei Alternative Ost\b", "For the eastern alternative"),
+    (r"\btalaufwärts\b", "up-valley"),
+    (r"\bratsam\b", "advisable"),
     (r"\bWiese\b", "meadow"),
+    (r"\bWiesen\b", "meadows"),
+    (r"\bFeld\b", "field"),
+    (r"\bFelder\b", "fields"),
     (r"\blandbar\b", "landable"),
+    (r"\bunlandbar\b", "not landable"),
     (r"\bEinschränkungen\b", "limitations"),
     (r"\bAnflugbereich\b", "approach area"),
     (r"\bAnflug\b", "approach"),
     (r"\bEndanflug\b", "final approach"),
     (r"\bBebauung\b", "buildings"),
+    (r"\bAussenlandefeld\b", "outlanding field"),
+    (r"\bAußenlandefeld\b", "outlanding field"),
+    (r"\bLandefeld\b", "landing field"),
+    (r"\bLandefelder\b", "landing fields"),
+    (r"\bLandung\b", "landing"),
+    (r"\bLandungen\b", "landings"),
+    (r"\blanden\b", "land"),
+    (r"\bgelandet\b", "landed"),
+    (r"\bangeflogen\b", "approached"),
+    (r"\bAngeflogen\b", "Approached"),
+    (r"\banfliegbar\b", "approachable"),
+    (r"\bAufsetzen\b", "touchdown"),
+    (r"\bAusrollen\b", "rollout"),
+    (r"\bHochspannungsleitung\b", "high-voltage power line"),
+    (r"\bHochspannungsstromleitungen\b", "high-voltage power lines"),
+    (r"\bStrommasten\b", "power pylons"),
+    (r"\bMasten\b", "pylons"),
     (r"\bZaun\b", "fence"),
+    (r"\bZäune\b", "fences"),
+    (r"\bPfosten\b", "posts"),
     (r"\bBaumreihe\b", "tree line"),
+    (r"\bBäume\b", "trees"),
+    (r"\bHecken\b", "hedges"),
     (r"\bStromleitung\b", "power line"),
+    (r"\bLeitung\b", "line"),
+    (r"\bLeitungen\b", "lines"),
     (r"\bbeachten\b", "watch"),
+    (r"\bAchtung\b", "caution"),
+    (r"\bVorsicht\b", "caution"),
     (r"\bVieh\b", "livestock"),
     (r"\bmöglich\b", "possible"),
+    (r"\bZufahrt\b", "access"),
+    (r"\bSteine\b", "stones"),
+    (r"\bGetreidefeld\b", "grain field"),
+    (r"\bGetreide\b", "grain"),
+    (r"\bBewuchs\b", "vegetation"),
+    (r"\bBodenwellen\b", "undulations"),
+    (r"\bwellig\b", "wavy"),
+    (r"\büberrollt\b", "rolled over"),
+    (r"\büberrollbar\b", "rollable"),
+    (r"\bGräben\b", "ditches"),
+    (r"\bHälfte\b", "half"),
+    (r"\bTeil\b", "part"),
+    (r"\bAbschnitt\b", "section"),
+    (r"\bGemäht\b", "mowed"),
+    (r"\bgemäht\b", "mowed"),
+    (r"\bFläche\b", "area"),
+    (r"\bFlächen\b", "areas"),
+    (r"\bGefälle\b", "slope"),
+    (r"\bOberfläche\b", "surface"),
+    (r"\bBewässerungsstangen\b", "irrigation poles"),
+    (r"\bBewässerungsrohre\b", "irrigation pipes"),
+    (r"\bBewässerung\b", "irrigation"),
+    (r"\bHagposten\b", "hail-posts"),
+    (r"\bWindrichtung\b", "wind direction"),
+    (r"\bTalwind\b", "valley wind"),
+    (r"\bSüdwind\b", "southerly wind"),
+    (r"\bGelände\b", "terrain"),
+    (r"\bHindernisse\b", "obstacles"),
+    (r"\bHindernis\b", "obstacle"),
     (r"\bsüdlichen\b", "southern"),
+    (r"\bsüdlich\b", "south"),
+    (r"\bSüdlicher\b", "Southern"),
+    (r"\bsüdlicher\b", "southern"),
     (r"\bnördlich\b", "northern"),
+    (r"\bnördliche\b", "northern"),
+    (r"\bNördlicher\b", "Northern"),
+    (r"\bnördlicher\b", "northern"),
     (r"\bnordöstlich\b", "northeast"),
+    (r"\böstlich\b", "east"),
+    (r"\böstlichen\b", "eastern"),
+    (r"\böstliche\b", "eastern"),
+    (r"\bsüdöstlich\b", "southeast"),
+    (r"\bwestlich\b", "west"),
+    (r"\bwestliche\b", "western"),
+    (r"\bSüden\b", "south"),
+    (r"\bOsten\b", "east"),
+    (r"\bWesten\b", "west"),
+    (r"\bNord\b", "north"),
+    (r"\bSüd\b", "south"),
     (r"\bSee\b", "lake"),
     (r"\bUfer\b", "shore"),
     (r"\bStraße\b", "road"),
+    (r"\bStrasse\b", "road"),
+    (r"\bWeg\b", "track"),
+    (r"\bQuerweg\b", "crossing track"),
+    (r"\bBahnlinie\b", "railway line"),
+    (r"\bAutobahn\b", "motorway"),
     (r"\bGraben\b", "ditch"),
     (r"\bNotfälle\b", "emergencies"),
     (r"\bKategorie\b", "category"),
     (r"\bBesichtigung\b", "inspection"),
     (r"\bbeschrieben\b", "described"),
+    (r"\bunverändert\b", "unchanged"),
     (r"\bfreie[nr]?\b", "clear"),
+    (r"\bfrisch\b", "freshly"),
+    (r"\bhohe[rsn]?\b", "high"),
     (r"\blänger\b", "longer"),
+    (r"\bkurz\b", "short"),
+    (r"\bsehr gut\b", "very good"),
+    (r"\bgut\b", "good"),
+    (r"\bweiterhin\b", "still"),
+    (r"\baber\b", "but"),
+    (r"\bund\b", "and"),
+    (r"\bnur\b", "only"),
+    (r"\bnicht\b", "not"),
+    (r"\bohne\b", "without"),
+    (r"\bmit\b", "with"),
+    (r"\bmöglichkeit\b", "possibility"),
+    (r"\bMöglichkeit\b", "possibility"),
+    (r"\bMöglichkeiten\b", "possibilities"),
+    (r"\bmöglich\b", "possible"),
+    (r"\bmögliche\b", "possible"),
+    (r"\bkönnen\b", "can"),
+    (r"\bkönnte\b", "could"),
+    (r"\bwürde\b", "would"),
 ]
 
 
@@ -1876,16 +2050,36 @@ def build_streckenflug_notes_from_json(data: dict[str, Any]) -> str:
         obstacles.append("power/other lines")
     if obstacles:
         parts.append("Reported hazards: " + ", ".join(obstacles))
-    feedback_text = translate_streckenflug_text(streckenflug_html_text(clean(data.get("feedback"))))
-    if feedback_text:
-        parts.append("Feedback: " + feedback_text)
+    feedback_entries = extract_streckenflug_feedback_entries(clean(data.get("feedback")))
+    if feedback_entries:
+        parts.append("Feedback:\n" + "\n".join(f"- {entry}" for entry in feedback_entries[:4]))
     return "\n".join(parts).strip()
+
+
+def extract_streckenflug_feedback_entries(value: str) -> list[str]:
+    if not value:
+        return []
+    entries: list[str] = []
+    pattern = re.compile(
+        r"<p\b[^>]*>\s*<b>(?P<header>.*?)</b>\s*</p>\s*<p\b[^>]*>(?P<body>.*?)</p>",
+        flags=re.I | re.S,
+    )
+    for match in pattern.finditer(value):
+        header = tidy_streckenflug_text(strip_html(match.group("header")))
+        body = translate_streckenflug_text(streckenflug_html_text(match.group("body")))
+        if not body:
+            continue
+        entries.append(f"{header}: {body}" if header else body)
+    if entries:
+        return entries
+    fallback = translate_streckenflug_text(streckenflug_html_text(value))
+    return [fallback] if fallback else []
 
 
 def streckenflug_html_text(value: str) -> str:
     value = re.sub(r"<\s*(?:br|/p|/div|hr)\b[^>]*>", ". ", value, flags=re.I)
     value = strip_html(value)
-    value = re.sub(r"https?://(?:www\.)?landout\.streckenflug\.at/\S+", "", value, flags=re.I)
+    value = re.sub(r"https?://\S+", "", value, flags=re.I)
     return tidy_streckenflug_text(value)
 
 
@@ -1896,6 +2090,8 @@ def translate_streckenflug_text(value: str) -> str:
     translated = text
     for pattern, replacement in STRECKENFLUG_GERMAN_PHRASES:
         translated = re.sub(pattern, replacement, translated, flags=re.I)
+    translated = re.sub(r"https?://\S+", "", translated, flags=re.I)
+    translated = re.sub(r"\bInspection video:\s*(?:[.;]\s*)?$", "", translated, flags=re.I)
     return tidy_streckenflug_text(translated)
 
 
@@ -2226,21 +2422,9 @@ def consolidate_duplicate_fields(fields: list[dict[str, Any]]) -> list[dict[str,
         else:
             no_code.extend(items)
 
-    # Pass 2: similar name + nearby coordinates.
-    used: set[int] = set()
-    for i, field in enumerate(no_code):
-        if i in used:
-            continue
-        group = [field]
-        used.add(i)
-        for j in range(i + 1, len(no_code)):
-            if j in used:
-                continue
-            other = no_code[j]
-            if are_duplicate_fields(field, other):
-                group.append(other)
-                used.add(j)
-        groups.append(group)
+    # Pass 2: similar name + nearby coordinates. Use connected components rather
+    # than a first-item grouping so A~B and B~C does not leave C stranded.
+    groups.extend(group_duplicate_fields(no_code))
 
     result: list[dict[str, Any]] = []
     merged_count = 0
@@ -2255,20 +2439,57 @@ def consolidate_duplicate_fields(fields: list[dict[str, Any]]) -> list[dict[str,
     return result
 
 
+def group_duplicate_fields(fields: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    if not fields:
+        return []
+    parent = list(range(len(fields)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(a: int, b: int) -> None:
+        root_a = find(a)
+        root_b = find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    for i, field in enumerate(fields):
+        for j in range(i + 1, len(fields)):
+            if are_duplicate_fields(field, fields[j]):
+                union(i, j)
+
+    by_root: dict[int, list[dict[str, Any]]] = {}
+    for index, field in enumerate(fields):
+        by_root.setdefault(find(index), []).append(field)
+    return list(by_root.values())
+
+
 def are_duplicate_fields(a: dict[str, Any], b: dict[str, Any]) -> bool:
     code_a = clean(a.get("code")).upper()
     code_b = clean(b.get("code")).upper()
     if code_a and code_b and code_a == code_b:
         return True
     distance = distance_m(a.get("latitude"), a.get("longitude"), b.get("latitude"), b.get("longitude"))
-    if distance is None or distance > DEDUPE_DISTANCE_M:
+    if distance is None:
         return False
     name_a = normalize_name_for_match(clean(a.get("name")))
     name_b = normalize_name_for_match(clean(b.get("name")))
     if not name_a or not name_b:
         return False
     if name_a == name_b:
-        return True
+        return distance <= DEDUPE_STRONG_NAME_DISTANCE_M
+    base_a = normalize_name_for_match(clean(a.get("name")), strip_direction_tokens=True)
+    base_b = normalize_name_for_match(clean(b.get("name")), strip_direction_tokens=True)
+    strong_name_match = bool(base_a and base_b and (base_a == base_b or token_similarity(base_a, base_b) >= 0.85))
+    if strong_name_match:
+        if has_conflicting_direction_tokens(clean(a.get("name")), clean(b.get("name"))):
+            return False
+        return distance <= DEDUPE_STRONG_NAME_DISTANCE_M
+    if distance > DEDUPE_DISTANCE_M:
+        return False
     if name_a in name_b or name_b in name_a:
         return True
     return token_similarity(name_a, name_b) >= 0.62
@@ -2342,12 +2563,60 @@ def field_quality_score(field: dict[str, Any]) -> tuple[int, int, int, int, int]
 
 
 def choose_best_name(group: list[dict[str, Any]], base: dict[str, Any]) -> str:
-    names = [clean(f.get("name")) for f in group if clean(f.get("name"))]
-    if not names:
+    candidates = [(field, clean(field.get("name"))) for field in group if clean(field.get("name"))]
+    if not candidates:
         return clean(base.get("name"))
-    # Avoid Guide numbering prefixes such as '#34 #34 Motte du Caire LF0431'.
-    cleaned = [re.sub(r"^#?\d+\s+", "", n).strip() for n in names]
-    return max(cleaned, key=lambda n: (not re.match(r"^#?\d+", n), -len(n), n))
+    field, name = max(candidates, key=lambda item: name_quality_score(item[0], item[1]))
+    return clean_display_name(name)
+
+
+def name_quality_score(field: dict[str, Any], name: str) -> tuple[int, int, int, int, int, int, str]:
+    source_name = clean((field.get("source") or {}).get("name")).lower()
+    openaip_score = 0
+    source_score = 0
+    if "openaip" in source_name:
+        openaip_score = 1
+        source_score = 100
+    elif "sia" in source_name:
+        source_score = 90
+    elif "guide" in source_name or "planeur-net" in source_name:
+        source_score = 70
+    elif "streckenflug" in source_name:
+        source_score = 50
+
+    cleaned = clean_display_name(name)
+    typo_penalty = 1 if re.search(r"\bcair\b", cleaned, flags=re.I) else 0
+    code_penalty = 1 if re.search(r"\b(?:LF|LS|LI)[A-Z0-9]{2,4}\b", cleaned, flags=re.I) else 0
+    number_penalty = 1 if re.match(r"^#?\d+\b", cleaned) else 0
+    numeric_suffix_penalty = 1 if re.search(r"\b\d+\b", cleaned) else 0
+    return openaip_score, -typo_penalty, -code_penalty, -number_penalty, -numeric_suffix_penalty, source_score, cleaned
+
+
+def clean_display_name(name: str) -> str:
+    value = re.sub(r"^(?:#?\d+\s+)+", "", clean(name)).strip()
+    value = re.sub(r"\s+\b(?:LF|LS|LI)[A-Z0-9]{2,4}\b\s*$", "", value, flags=re.I).strip()
+    return normalize_display_name(value)
+
+
+def normalize_display_name(name: str) -> str:
+    words = []
+    lowercase_words = {"de", "du", "des", "la", "le", "les", "sur", "en", "au", "aux", "d", "l"}
+    word_index = 0
+    for word in re.split(r"(\s+|-)", name.strip()):
+        if not word or word.isspace() or word == "-":
+            words.append(word)
+            continue
+        lower = word.lower()
+        if lower == "sued":
+            words.append("Sud")
+        elif lower in lowercase_words and word_index > 0:
+            words.append(lower)
+        elif word.isupper() or word.islower() or word.istitle():
+            words.append(lower.capitalize())
+        else:
+            words.append(word)
+        word_index += 1
+    return "".join(words)
 
 
 def choose_best_code(group: list[dict[str, Any]]) -> str:
@@ -2475,14 +2744,34 @@ def merge_sources(group: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def normalize_name_for_match(value: str) -> str:
+def normalize_name_for_match(value: str, *, strip_direction_tokens: bool = False) -> str:
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = value.lower()
     value = re.sub(r"\b(lf|ls|li)\d*[a-z0-9]{2,4}\b", " ", value)
     value = re.sub(r"^#?\d+\s+", " ", value)
     value = re.sub(r"\b(aerodrome|airfield|terrain|ulm|altisurface|altiport|de|du|des|la|le|les|sur|en|st|saint)\b", " ", value)
+    if strip_direction_tokens:
+        value = re.sub(r"\b(?:north|nord|n|south|sud|sued|s|east|est|e|west|ouest|o|w|[1234])\b", " ", value)
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return " ".join(value.split())
+
+
+def has_conflicting_direction_tokens(a: str, b: str) -> bool:
+    directions_a = direction_tokens_for_match(a)
+    directions_b = direction_tokens_for_match(b)
+    return bool(directions_a and directions_b and directions_a.isdisjoint(directions_b))
+
+
+def direction_tokens_for_match(value: str) -> set[str]:
+    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    words = set(re.findall(r"[a-z0-9]+", value.lower()))
+    aliases = {
+        "north": "north", "nord": "north", "n": "north",
+        "south": "south", "sud": "south", "sued": "south", "s": "south",
+        "east": "east", "est": "east", "e": "east",
+        "west": "west", "ouest": "west", "o": "west", "w": "west",
+    }
+    return {aliases[word] for word in words if word in aliases}
 
 
 def token_similarity(a: str, b: str) -> float:
