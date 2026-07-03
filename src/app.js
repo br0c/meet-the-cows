@@ -1,4 +1,4 @@
-const APP_VERSION = '0.3.8-beta';
+const APP_VERSION = '0.3.9-beta';
 const CACHE_NAME = 'meet-the-cows-0-3-8-beta-v1';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
@@ -412,7 +412,7 @@ function renderDetail(field) {
           <div class="detail-card"><span class="status-label">Δsafe</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Elevation</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Length</span><strong>${field.lengthM ? `${Math.round(field.lengthM)} m` : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Radio</span><strong>${escapeHtml(formatFrequency(field))}</strong></div>
+          <div class="detail-card"><span class="status-label">Frequency</span><strong>${escapeHtml(formatFrequency(field))}</strong></div>
         </div>
         ${glideNote}
         <h3>Notes</h3>
@@ -427,12 +427,12 @@ function renderDetail(field) {
 
 
 function formatFrequency(field) {
-  if (field.radio) return field.radio;
   if (field.frequency) return field.frequency;
+  if (field.radio) return field.radio;
   const freqs = Array.isArray(field.frequencies) ? field.frequencies : [];
   if (!freqs.length) return '—';
   const first = freqs[0];
-  const mhz = typeof first.mhz === 'number' ? first.mhz.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') : '';
+  const mhz = typeof first.mhz === 'number' ? first.mhz.toFixed(3) : '';
   return [mhz, first.type || first.description].filter(Boolean).join(' ') || '—';
 }
 

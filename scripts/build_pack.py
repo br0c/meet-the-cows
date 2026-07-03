@@ -86,6 +86,8 @@ GLIDER_KEYWORDS = (
     "segelflug", "segelfluggelände", "segelflugplatz",
     "aliante", "volo a vela",
 )
+DEDUPE_DISTANCE_M = 350.0
+
 
 
 class Progress:
@@ -146,6 +148,7 @@ def main() -> None:
     parser.add_argument("--openaip-base-url", default=os.environ.get("OPENAIP_API_BASE_URL", OPENAIP_API_BASE_URL), help="OpenAIP Core API base URL")
     parser.add_argument("--openaip-airports", default="", help="Optional local JSON/GeoJSON export or URL to use instead of the API. May be repeated as comma-separated paths.")
     parser.add_argument("--openaip-include-types", default=os.environ.get("OPENAIP_INCLUDE_TYPES", "1,2,6,11,13"), help="Comma-separated OpenAIP airport type numbers to include as glider-relevant. Default: 1 Glider Site, 2 Airfield Civil, 6 Ultra Light Flying Site, 11 Landing Strip, 13 Altiport. Use '1' for strict glider-site-only imports.")
+    parser.add_argument("--dedupe-distance-m", type=float, default=float(os.environ.get("DEDUPE_DISTANCE_M", "350")), help="Merge fields with matching/similar codes or names inside this radius. Default 350 m.")
     parser.add_argument("--vac-candidate-mode", choices=["glider", "pack", "all"], default="glider", help="Which official VAC candidates to try: glider OpenAIP/pack airfields, existing pack only, or every airport from the coordinate source")
     parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory")
     parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
@@ -158,6 +161,8 @@ def main() -> None:
     parser.add_argument("--vac-codes", default="", help="Optional comma-separated ICAO codes or path/URL to a text file of ICAO codes to try. Use to limit/extend VAC candidates.")
     parser.add_argument("--keep-raw", action="store_true", help="Keep downloaded raw files in .cache")
     args = parser.parse_args()
+    global DEDUPE_DISTANCE_M
+    DEDUPE_DISTANCE_M = float(args.dedupe_distance_m)
 
     root = Path.cwd()
     out_dir = root / args.out
@@ -231,6 +236,7 @@ def main() -> None:
         vac_count = vac_result["downloaded"]
         vac_created_airfields = vac_result["createdAirfields"]
 
+    fields = consolidate_duplicate_fields(fields)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
     fields_path = out_dir / "fields.json"
     fields_path.write_text(json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1424,6 +1430,307 @@ def make_vac_airfield_entry(
         "docs": {"vac": media["url"]},
     }
 
+
+
+def consolidate_duplicate_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge the same physical landing place imported from multiple sources.
+
+    This is deliberately conservative: merge exact matching codes first, then merge
+    same/similar names within DEDUPE_DISTANCE_M. The goal is one cockpit entry per
+    landing place while preserving source notes/media and preferring more current
+    structured data such as OpenAIP/SIA frequencies.
+    """
+    remaining = list(fields)
+    groups: list[list[dict[str, Any]]] = []
+
+    # Pass 1: exact code match, including non-standard codes such as LF0431.
+    by_code: dict[str, list[dict[str, Any]]] = {}
+    no_code: list[dict[str, Any]] = []
+    for field in remaining:
+        code = clean(field.get("code")).upper()
+        if code:
+            by_code.setdefault(code, []).append(field)
+        else:
+            no_code.append(field)
+    for code, items in by_code.items():
+        if len(items) > 1:
+            groups.append(items)
+        else:
+            no_code.extend(items)
+
+    # Pass 2: similar name + nearby coordinates.
+    used: set[int] = set()
+    for i, field in enumerate(no_code):
+        if i in used:
+            continue
+        group = [field]
+        used.add(i)
+        for j in range(i + 1, len(no_code)):
+            if j in used:
+                continue
+            other = no_code[j]
+            if are_duplicate_fields(field, other):
+                group.append(other)
+                used.add(j)
+        groups.append(group)
+
+    result: list[dict[str, Any]] = []
+    merged_count = 0
+    for group in groups:
+        if len(group) == 1:
+            result.append(group[0])
+            continue
+        merged_count += len(group) - 1
+        result.append(merge_field_group(group))
+    if merged_count:
+        print(f"Consolidated {merged_count} duplicate field entries", file=sys.stderr)
+    return result
+
+
+def are_duplicate_fields(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    code_a = clean(a.get("code")).upper()
+    code_b = clean(b.get("code")).upper()
+    if code_a and code_b and code_a == code_b:
+        return True
+    distance = distance_m(a.get("latitude"), a.get("longitude"), b.get("latitude"), b.get("longitude"))
+    if distance is None or distance > DEDUPE_DISTANCE_M:
+        return False
+    name_a = normalize_name_for_match(clean(a.get("name")))
+    name_b = normalize_name_for_match(clean(b.get("name")))
+    if not name_a or not name_b:
+        return False
+    if name_a == name_b:
+        return True
+    if name_a in name_b or name_b in name_a:
+        return True
+    return token_similarity(name_a, name_b) >= 0.62
+
+
+def merge_field_group(group: list[dict[str, Any]]) -> dict[str, Any]:
+    # Best base: official/current airfield sources > OpenAIP > SIA VAC > Guide, but
+    # keep Guide photos/notes/media. If all else equal, pick the most complete record.
+    base = max(group, key=field_quality_score)
+    merged = json.loads(json.dumps(base))
+
+    merged["name"] = choose_best_name(group, base)
+    merged["code"] = choose_best_code(group) or clean(base.get("code"))
+    merged["country"] = choose_best_value(group, "country") or infer_country_from_icao(merged.get("code", "")) or clean(base.get("country"))
+    merged["kind"] = choose_kind(group)
+    merged["difficulty"] = choose_difficulty(group)
+    merged["rawDifficulty"] = choose_raw_difficulty(group, merged.get("difficulty"))
+
+    for key in ("latitude", "longitude"):
+        value = choose_source_preferred_number(group, key)
+        if value is not None:
+            merged[key] = round(float(value), 7)
+    for key in ("elevationM", "lengthM", "widthM", "runwayDirectionDeg"):
+        value = choose_source_preferred_number(group, key)
+        if value is not None:
+            merged[key] = value
+
+    all_freqs: list[dict[str, Any]] = []
+    for field in group:
+        all_freqs.extend(list(field.get("frequencies") or []))
+        # Keep compatibility with older generated fields that only had a string.
+        for key in ("frequency", "radio"):
+            text = clean(field.get(key))
+            all_freqs.extend(extract_frequencies_from_text(text, source=clean((field.get("source") or {}).get("name")) or "existing field"))
+    all_freqs = merge_frequency_lists_by_source(*[all_freqs])
+    if all_freqs:
+        merged["frequencies"] = all_freqs
+        merged["frequency"] = format_frequency_short(all_freqs)
+        merged["radio"] = merged["frequency"]
+
+    merged["media"] = merge_media_lists(*(field.get("media") or [] for field in group))
+    docs: dict[str, Any] = {}
+    for field in group:
+        docs.update(field.get("docs") or {})
+    if docs:
+        merged["docs"] = docs
+
+    notes = merge_notes(group)
+    if notes:
+        merged["notes"] = notes
+    merged["source"] = merge_sources(group)
+    merged["id"] = stable_id(merged.get("country") or "xx", merged.get("code") or "", merged.get("name") or "field", merged.get("latitude") or 0, merged.get("longitude") or 0)
+    merged.pop("_mediaRefs", None)
+    return merged
+
+
+def field_quality_score(field: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    source_name = clean((field.get("source") or {}).get("name")).lower()
+    source_score = 0
+    if "openaip" in source_name:
+        source_score += 40
+    if "sia" in source_name or any((m.get("source") or "").lower().find("sia") >= 0 for m in field.get("media", []) if isinstance(m, dict)):
+        source_score += 30
+    if "guide" in source_name or "planeur-net" in source_name:
+        source_score += 20
+    completeness = sum(1 for k in ("code", "latitude", "longitude", "elevationM", "lengthM", "frequency") if field.get(k) not in (None, "", []))
+    media_count = len(field.get("media") or [])
+    freq_count = len(field.get("frequencies") or [])
+    kind_score = 1 if field.get("kind") == "airfield" else 0
+    return source_score, completeness, freq_count, media_count, kind_score
+
+
+def choose_best_name(group: list[dict[str, Any]], base: dict[str, Any]) -> str:
+    names = [clean(f.get("name")) for f in group if clean(f.get("name"))]
+    if not names:
+        return clean(base.get("name"))
+    # Avoid Guide numbering prefixes such as '#34 #34 Motte du Caire LF0431'.
+    cleaned = [re.sub(r"^#?\d+\s+", "", n).strip() for n in names]
+    return max(cleaned, key=lambda n: (not re.match(r"^#?\d+", n), -len(n), n))
+
+
+def choose_best_code(group: list[dict[str, Any]]) -> str:
+    codes = [clean(f.get("code")).upper() for f in group if clean(f.get("code"))]
+    if not codes:
+        return ""
+    # Prefer real ICAO/non-standard LF/LS/LI codes over synthetic OpenAIP fallback IDs.
+    real = [c for c in codes if re.match(r"^(LF|LS|LI)[A-Z0-9]{2,4}$", c)]
+    return sorted(real or codes, key=lambda c: (len(c), c))[0]
+
+
+def choose_best_value(group: list[dict[str, Any]], key: str) -> Any:
+    for field in sorted(group, key=field_quality_score, reverse=True):
+        value = field.get(key)
+        if value not in (None, "", []):
+            return value
+    return None
+
+
+def choose_source_preferred_number(group: list[dict[str, Any]], key: str) -> float | int | None:
+    for field in sorted(group, key=field_quality_score, reverse=True):
+        value = field.get(key)
+        if isinstance(value, (int, float)):
+            return value
+    return None
+
+
+def choose_kind(group: list[dict[str, Any]]) -> str:
+    return "airfield" if any(f.get("kind") == "airfield" for f in group) else "outlanding"
+
+
+def choose_difficulty(group: list[dict[str, Any]]) -> str:
+    # Keep the most conservative difficulty among A/B/C/D.
+    order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    values = [clean(f.get("difficulty")).upper() for f in group if clean(f.get("difficulty")).upper() in order]
+    return max(values, key=lambda v: order[v]) if values else "UNKNOWN"
+
+
+def choose_raw_difficulty(group: list[dict[str, Any]], difficulty: str) -> str:
+    for field in group:
+        raw = clean(field.get("rawDifficulty"))
+        if raw:
+            return raw
+    return difficulty or ""
+
+
+def merge_frequency_lists_by_source(*lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Same MHz can appear from Guide, OpenAIP and SIA. Keep the best source label.
+    by_mhz: dict[str, dict[str, Any]] = {}
+    for freqs in lists:
+        for item in freqs or []:
+            mhz = item.get("mhz")
+            if not isinstance(mhz, (int, float)):
+                continue
+            key = f"{float(mhz):.3f}"
+            current = by_mhz.get(key)
+            candidate = dict(item)
+            candidate["mhz"] = round(float(mhz), 3)
+            if current is None or frequency_source_score(candidate) > frequency_source_score(current):
+                by_mhz[key] = candidate
+    return sorted(by_mhz.values(), key=frequency_sort_key)
+
+
+def frequency_source_score(freq: dict[str, Any]) -> int:
+    source = clean(freq.get("source")).lower()
+    score = 0
+    if "sia" in source or "aip" in source:
+        score += 50
+    if "openaip" in source:
+        score += 40
+    if "guide" in source or "cup" in source or "planeur" in source:
+        score += 10
+    if clean(freq.get("type")):
+        score += 2
+    if clean(freq.get("description")):
+        score += 1
+    return score
+
+
+def merge_media_lists(*media_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for media_list in media_lists:
+        for item in media_list or []:
+            url = clean(item.get("url"))
+            if not url or url in seen:
+                continue
+            merged.append(dict(item))
+            seen.add(url)
+    return merged
+
+
+def merge_notes(group: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for field in group:
+        note = clean(field.get("notes"))
+        if not note:
+            continue
+        key = normalize_name_for_match(note[:300])
+        if key in seen:
+            continue
+        parts.append(note)
+        seen.add(key)
+    if not parts:
+        return ""
+    return "\n\n---\n\n".join(parts)
+
+
+def merge_sources(group: list[dict[str, Any]]) -> dict[str, Any]:
+    names: list[str] = []
+    for field in group:
+        name = clean((field.get("source") or {}).get("name"))
+        if name and name not in names:
+            names.append(name)
+    return {
+        "name": " + ".join(names) if names else "merged sources",
+        "importedAt": dt.date.today().isoformat(),
+        "mergedDuplicates": len(group),
+        "sources": [field.get("source") for field in group if field.get("source")],
+    }
+
+
+def normalize_name_for_match(value: str) -> str:
+    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    value = value.lower()
+    value = re.sub(r"\b(lf|ls|li)\d*[a-z0-9]{2,4}\b", " ", value)
+    value = re.sub(r"^#?\d+\s+", " ", value)
+    value = re.sub(r"\b(aerodrome|airfield|terrain|ulm|altisurface|altiport|de|du|des|la|le|les|sur|en|st|saint)\b", " ", value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return " ".join(value.split())
+
+
+def token_similarity(a: str, b: str) -> float:
+    set_a = set(a.split())
+    set_b = set(b.split())
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+
+def distance_m(lat1: Any, lon1: Any, lat2: Any, lon2: Any) -> float | None:
+    try:
+        from math import asin, cos, radians, sin, sqrt
+        phi1, phi2 = radians(float(lat1)), radians(float(lat2))
+        dphi = radians(float(lat2) - float(lat1))
+        dlambda = radians(float(lon2) - float(lon1))
+        a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
+        return 6371000 * 2 * asin(sqrt(a))
+    except Exception:
+        return None
 
 def index_fields_by_code(fields: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     by_code: dict[str, list[dict[str, Any]]] = {}
