@@ -10,3 +10,8 @@ __pycache__/
 *.pyc
 .cache/
 data/packs/
+
+# Generated offline data packs
+.cache/
+data/packs/
+dist/packs/
