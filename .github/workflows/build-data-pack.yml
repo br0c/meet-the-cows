@@ -1,18 +1,13 @@
-name: Deploy app and data pack to Pages
+name: Build data pack and deploy Pages
 
 on:
   push:
     branches: [main]
     paths:
-      - "index.html"
-      - "manifest.webmanifest"
-      - "service-worker.js"
-      - "styles.css"
-      - "src/**"
-      - "icons/**"
-      - "scripts/**"
+      - "scripts/build_pack.py"
+      - "scripts/smoke_test_pack.py"
       - "requirements.txt"
-      - ".github/workflows/deploy-pages.yml"
+      - ".github/workflows/build-data-pack.yml"
   workflow_dispatch:
   schedule:
     # Daily at 03:17 UTC
@@ -22,9 +17,10 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 
 concurrency:
-  group: pages-data-pack
+  group: pages-deploy
   cancel-in-progress: false
 
 jobs:
@@ -72,6 +68,12 @@ jobs:
 
       - name: Smoke test pack
         run: python scripts/smoke_test_pack.py
+
+      - name: Cache generated data pack for app-only deploys
+        uses: actions/cache/save@v4
+        with:
+          path: data/packs/${{ env.PACK_ID }}
+          key: pages-pack-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Assemble Pages site
         run: |

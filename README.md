@@ -97,9 +97,10 @@ The exact sources used by a deployed pack are listed in that pack's `manifest.js
 
 ## Deployment
 
-GitHub Pages deployment is handled by `.github/workflows/deploy-pages.yml`.
+GitHub Pages deployment is split so app-only changes do not rebuild the data pack:
 
-The workflow builds the data pack, assembles the static app and pack files into a Pages artifact, uploads it, and deploys with `actions/deploy-pages`.
+- `.github/workflows/deploy-app.yml` deploys app-shell changes using the latest already-built pack.
+- `.github/workflows/build-data-pack.yml` rebuilds the data pack, assembles the full static site, and deploys it. It runs manually, on schedule, and when the data-build scripts change.
 
 ## Contributing
 
