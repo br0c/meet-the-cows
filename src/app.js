@@ -1,5 +1,5 @@
-const APP_VERSION = '0.3.9-beta';
-const CACHE_NAME = 'meet-the-cows-0-3-8-beta-v1';
+const APP_VERSION = '0.3.10-beta';
+const CACHE_NAME = 'meet-the-cows-0-3-10-beta-v1';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
@@ -411,7 +411,7 @@ function renderDetail(field) {
           <div class="detail-card"><span class="status-label">Req glide</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Δsafe</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">Elevation</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Length</span><strong>${field.lengthM ? `${Math.round(field.lengthM)} m` : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">Runway</span><strong>${escapeHtml(formatRunwayDimensions(field))}</strong></div>
           <div class="detail-card"><span class="status-label">Frequency</span><strong>${escapeHtml(formatFrequency(field))}</strong></div>
         </div>
         ${glideNote}
@@ -425,6 +425,17 @@ function renderDetail(field) {
   `;
 }
 
+
+
+function formatRunwayDimensions(field) {
+  const length = Number(field.lengthM);
+  const width = Number(field.widthM);
+  if (Number.isFinite(length) && length > 0 && Number.isFinite(width) && width > 0) {
+    return `${Math.round(length)} × ${Math.round(width)} m`;
+  }
+  if (Number.isFinite(length) && length > 0) return `${Math.round(length)} m`;
+  return '—';
+}
 
 function formatFrequency(field) {
   if (field.frequency) return field.frequency;

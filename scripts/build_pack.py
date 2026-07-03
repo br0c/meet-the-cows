@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import html
 from collections import Counter
 import io
 import json
@@ -48,6 +49,7 @@ OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/ai
 OURAIRPORTS_RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv"
 OURAIRPORTS_FREQUENCIES_URL = "https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv"
 OPENAIP_API_BASE_URL = "https://api.core.openaip.net/api"
+STRECKENFLUG_LIST_URL = "https://landout.streckenflug.at/index.php?id=&inc=landeplatz&task=list&side_buch=&side_kontinent=EU&side_region=&side_land=&side_art=&side_oberflaeche=&side_kategorie=&side_checked="
 BASE_AIRAC_DATE = dt.date(2024, 1, 25)
 
 DIFFICULTY_MAP = {
@@ -149,6 +151,10 @@ def main() -> None:
     parser.add_argument("--openaip-airports", default="", help="Optional local JSON/GeoJSON export or URL to use instead of the API. May be repeated as comma-separated paths.")
     parser.add_argument("--openaip-include-types", default=os.environ.get("OPENAIP_INCLUDE_TYPES", "1,2,6,11,13"), help="Comma-separated OpenAIP airport type numbers to include as glider-relevant. Default: 1 Glider Site, 2 Airfield Civil, 6 Ultra Light Flying Site, 11 Landing Strip, 13 Altiport. Use '1' for strict glider-site-only imports.")
     parser.add_argument("--dedupe-distance-m", type=float, default=float(os.environ.get("DEDUPE_DISTANCE_M", "350")), help="Merge fields with matching/similar codes or names inside this radius. Default 350 m.")
+    parser.add_argument("--include-streckenflug", action="store_true", help="Scrape the public streckenflug.at landout list/detail pages and merge additional fields. Does not require the logged-in CUPX download.")
+    parser.add_argument("--streckenflug-url", default=os.environ.get("STRECKENFLUG_URL", STRECKENFLUG_LIST_URL), help="Public streckenflug.at list URL to scrape")
+    parser.add_argument("--streckenflug-countries", nargs="+", default=os.environ.get("STRECKENFLUG_COUNTRIES", "FR CH IT").split(), help="Countries to keep from streckenflug.at, default FR CH IT")
+    parser.add_argument("--streckenflug-max-detail", type=int, default=int(os.environ.get("STRECKENFLUG_MAX_DETAIL", "0")), help="Debug limit for streckenflug detail pages; 0 means no limit")
     parser.add_argument("--vac-candidate-mode", choices=["glider", "pack", "all"], default="glider", help="Which official VAC candidates to try: glider OpenAIP/pack airfields, existing pack only, or every airport from the coordinate source")
     parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory")
     parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
@@ -236,6 +242,18 @@ def main() -> None:
         vac_count = vac_result["downloaded"]
         vac_created_airfields = vac_result["createdAirfields"]
 
+    streckenflug_count = 0
+    if args.include_streckenflug:
+        streckenflug_fields = load_streckenflug_fields(
+            args.streckenflug_url,
+            raw_dir,
+            pack_id=args.pack_id,
+            countries=args.streckenflug_countries,
+            max_detail=args.streckenflug_max_detail,
+        )
+        streckenflug_count = len(streckenflug_fields)
+        fields.extend(streckenflug_fields)
+
     fields = consolidate_duplicate_fields(fields)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
     fields_path = out_dir / "fields.json"
@@ -252,6 +270,7 @@ def main() -> None:
         "mediaCount": copied_media + vac_count,
         "vacCount": vac_count,
         "vacOnlyAirfieldsCreated": vac_created_airfields,
+        "streckenflugCount": streckenflug_count,
         "sources": [
             {
                 "name": "planeur-net / Guide des Aires de Sécurité",
@@ -269,6 +288,12 @@ def main() -> None:
                 "url": args.openaip_base_url if args.airfield_source == "openaip" else (args.airports_csv if args.include_vac_airfields else "not used"),
                 "countries": [str(c).upper() for c in args.countries],
                 "note": "Used to discover glider-relevant official airfields and coordinates; verify official country AIP/VAC documents.",
+            },
+            {
+                "name": "streckenflug.at Landout Database",
+                "url": args.streckenflug_url if args.include_streckenflug else "not used",
+                "countries": [str(c).upper() for c in args.streckenflug_countries] if args.include_streckenflug else [],
+                "note": "Public list/detail pages scraped when enabled. Additional landout source; verify against current local knowledge before flight.",
             },
             {
                 "name": "Radio frequency sources",
@@ -294,7 +319,7 @@ def main() -> None:
 
     print(
         f"Built {args.pack_name}: {len(fields)} entries, {copied_media} photos, "
-        f"{vac_count} VAC PDFs, {vac_created_airfields} VAC-only airfields"
+        f"{vac_count} VAC PDFs, {vac_created_airfields} VAC-only airfields, {streckenflug_count} streckenflug fields"
     )
 
 
@@ -1430,6 +1455,260 @@ def make_vac_airfield_entry(
         "docs": {"vac": media["url"]},
     }
 
+
+
+def load_streckenflug_fields(
+    list_url: str,
+    raw_dir: Path,
+    *,
+    pack_id: str,
+    countries: Sequence[str],
+    max_detail: int = 0,
+) -> list[dict[str, Any]]:
+    """Scrape the public streckenflug.at landout list/detail pages.
+
+    This deliberately avoids the logged-in CUPX download because that export can filter
+    away C/D fields. We only import entries that have usable coordinates on their public
+    detail page; the normal duplicate-consolidation pass then merges them with CUPX/OpenAIP.
+    """
+    countries = {str(c).upper() for c in countries}
+    print(f"Loading streckenflug.at list {list_url}", file=sys.stderr)
+    list_html = read_text(list_url, raw_dir)
+    links = extract_streckenflug_links(list_html, list_url, countries)
+    if max_detail:
+        links = links[:max_detail]
+    print(f"streckenflug.at: {len(links)} candidate detail pages after country filter", file=sys.stderr)
+    progress = Progress(len(links), "streckenflug.at details")
+    fields: list[dict[str, Any]] = []
+    for index, item in enumerate(links, start=1):
+        try:
+            detail_html = read_text(item["url"], raw_dir)
+            field = parse_streckenflug_detail(detail_html, item, pack_id)
+            if field:
+                fields.append(field)
+                progress.update(index, extra=f"+{len(fields)} {field.get('name','')[:32]}")
+            else:
+                progress.update(index, extra=f"skip {item.get('name','')[:32]}")
+        except Exception as error:
+            progress.update(index, extra=f"err {item.get('name','')[:24]}: {error}", force=True)
+    progress.done(f"imported {len(fields)}")
+    return fields
+
+
+def extract_streckenflug_links(page: str, base_url: str, countries: set[str]) -> list[dict[str, str]]:
+    country_map = {
+        "FRANCE": "FR", "FRANKREICH": "FR",
+        "SWITZERLAND": "CH", "SCHWEIZ": "CH", "SUISSE": "CH",
+        "ITALY": "IT", "ITALIA": "IT", "ITALIEN": "IT",
+    }
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    # The public list contains detail links like index.php?iID=1078&inc=map.
+    pattern = re.compile(r'<a\b[^>]*href=["\'](?P<href>[^"\']*iID=\d+[^"\']*)["\'][^>]*>(?P<name>.*?)</a>', re.I | re.S)
+    for match in pattern.finditer(page):
+        href = html.unescape(match.group("href"))
+        name = strip_html(match.group("name"))
+        if not name:
+            continue
+        detail_url = urllib.parse.urljoin(base_url, href)
+        if detail_url in seen:
+            continue
+        seen.add(detail_url)
+        tail = strip_html(page[match.end(): match.end() + 500])
+        detected_country = ""
+        for label, code in country_map.items():
+            if re.search(rf"\b{re.escape(label)}\b", tail, flags=re.I):
+                detected_country = code
+                break
+        if countries and detected_country and detected_country not in countries:
+            continue
+        # If no country can be detected from the row, keep it; the detail parser may know.
+        links.append({"name": name, "url": detail_url, "country": detected_country})
+    return links
+
+
+def parse_streckenflug_detail(page: str, item: dict[str, str], pack_id: str) -> dict[str, Any] | None:
+    text = normalize_space(strip_html(page))
+    name = choose_streckenflug_name(page, item.get("name", ""))
+    lat, lon = extract_lat_lon_from_text(text)
+    if lat is None or lon is None:
+        return None
+    country = extract_country_from_text(text) or item.get("country") or infer_country_from_lon_lat(lon, lat) or ""
+    code = extract_airfield_code_from_text(text)
+    elevation_m = extract_labelled_length(text, ["Elevation", "Elev", "Altitude", "Höhe", "Hoehe", "Altitudine"])
+    length_m, width_m = extract_streckenflug_dimensions(text)
+    raw_difficulty, difficulty = extract_streckenflug_difficulty(text)
+    field_type = extract_streckenflug_type(text)
+    kind = "airfield" if "airfield" in field_type.lower() or "airstrip" in field_type.lower() or ICAO_RE.match(code or "") else "outlanding"
+    notes = build_streckenflug_notes(text, item.get("url", ""))
+    freqs = extract_frequencies_from_text(text, source="streckenflug.at detail")
+    field_id = stable_id(country or "xx", code, name, lat, lon)
+    return {
+        "id": field_id,
+        "kind": kind,
+        "name": name,
+        "code": code,
+        "country": country,
+        "latitude": round(float(lat), 7),
+        "longitude": round(float(lon), 7),
+        "elevationM": elevation_m,
+        "difficulty": difficulty,
+        "rawDifficulty": raw_difficulty,
+        "lengthM": length_m,
+        "widthM": width_m,
+        "runwayDirectionDeg": None,
+        "frequency": format_frequency_short(freqs),
+        "radio": format_frequency_short(freqs),
+        "frequencies": freqs,
+        "notes": notes,
+        "source": {"name": "streckenflug.at Landout Database", "url": item.get("url", ""), "importedAt": dt.date.today().isoformat(), "packId": pack_id},
+        "media": [],
+    }
+
+
+def strip_html(value: str) -> str:
+    value = re.sub(r"<script\b.*?</script>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<style\b.*?</style>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<[^>]+>", " ", value)
+    return html.unescape(value)
+
+
+def normalize_space(value: str) -> str:
+    return re.sub(r"\s+", " ", value or " ").strip()
+
+
+def choose_streckenflug_name(page: str, fallback: str) -> str:
+    for pattern in (r"<h1[^>]*>(.*?)</h1>", r"<h2[^>]*>(.*?)</h2>", r"<title[^>]*>(.*?)</title>"):
+        match = re.search(pattern, page, flags=re.I | re.S)
+        if match:
+            candidate = normalize_space(strip_html(match.group(1)))
+            candidate = re.sub(r"\s*[-|].*$", "", candidate).strip()
+            if candidate and len(candidate) <= 80 and "landout" not in candidate.lower():
+                return candidate
+    return normalize_space(fallback)
+
+
+def extract_lat_lon_from_text(text: str) -> tuple[float | None, float | None]:
+    # Decimal coordinates, with common German/English labels.
+    labelled = re.search(r"(?:Lat(?:itude)?|Breite)\D+(-?\d{1,2}[.,]\d+)\D+(?:Lon(?:gitude)?|Lng|Länge|Laenge)\D+(-?\d{1,3}[.,]\d+)", text, flags=re.I)
+    if labelled:
+        return parse_decimal(labelled.group(1)), parse_decimal(labelled.group(2))
+    pair = re.search(r"\b([NS])\s*(\d{1,2}(?:[.,]\d+)?)\D+([EW])\s*(\d{1,3}(?:[.,]\d+)?)\b", text, flags=re.I)
+    if pair:
+        lat = parse_decimal(pair.group(2)); lon = parse_decimal(pair.group(4))
+        if lat is not None and pair.group(1).upper() == "S": lat = -lat
+        if lon is not None and pair.group(3).upper() == "W": lon = -lon
+        return lat, lon
+    # DMS-ish forms: 46° 12' 34" N 7° 12' 34" E
+    dms = re.search(r"(\d{1,2})\D+(\d{1,2})\D+(\d{1,2}(?:[.,]\d+)?)\D*([NS])\D+(\d{1,3})\D+(\d{1,2})\D+(\d{1,2}(?:[.,]\d+)?)\D*([EW])", text, flags=re.I)
+    if dms:
+        lat = dms_to_decimal(dms.group(1), dms.group(2), dms.group(3), dms.group(4))
+        lon = dms_to_decimal(dms.group(5), dms.group(6), dms.group(7), dms.group(8))
+        return lat, lon
+    # Last resort: two decimal coordinates in plausible Europe ranges.
+    nums = [parse_decimal(n) for n in re.findall(r"-?\d{1,3}[.,]\d{4,}", text)]
+    nums = [n for n in nums if n is not None]
+    for i in range(len(nums) - 1):
+        lat, lon = nums[i], nums[i+1]
+        if lat is not None and lon is not None and 35 <= lat <= 55 and -10 <= lon <= 20:
+            return lat, lon
+    return None, None
+
+
+def parse_decimal(value: str) -> float | None:
+    try:
+        return float((value or "").replace(",", "."))
+    except Exception:
+        return None
+
+
+def dms_to_decimal(deg: str, minute: str, second: str, hemi: str) -> float | None:
+    try:
+        value = float(deg) + float(minute) / 60 + float(second.replace(",", ".")) / 3600
+        return -value if hemi.upper() in {"S", "W"} else value
+    except Exception:
+        return None
+
+
+def extract_country_from_text(text: str) -> str:
+    aliases = {
+        "France": "FR", "Frankreich": "FR",
+        "Switzerland": "CH", "Schweiz": "CH", "Suisse": "CH",
+        "Italy": "IT", "Italia": "IT", "Italien": "IT",
+    }
+    for label, code in aliases.items():
+        if re.search(rf"\b{re.escape(label)}\b", text, flags=re.I):
+            return code
+    return ""
+
+
+def infer_country_from_lon_lat(lon: float, lat: float) -> str:
+    # Rough fallback only, used when the scraped page omits a country label.
+    if 41 <= lat <= 52 and -5 <= lon <= 10:
+        return "FR"
+    if 45 <= lat <= 48.5 and 5 <= lon <= 11:
+        return "CH"
+    if 36 <= lat <= 47.5 and 6 <= lon <= 19:
+        return "IT"
+    return ""
+
+
+def extract_airfield_code_from_text(text: str) -> str:
+    # Keep non-standard LFnnnn glider/ULM codes too.
+    match = re.search(r"\b((?:LF|LS|LI)[A-Z0-9]{2,4})\b", text, flags=re.I)
+    return match.group(1).upper() if match else ""
+
+
+def extract_labelled_length(text: str, labels: Sequence[str]) -> float | None:
+    label_pattern = "|".join(re.escape(label) for label in labels)
+    match = re.search(rf"(?:{label_pattern})\D+(\d{{2,5}}(?:[.,]\d+)?)\s*(m|ft)?", text, flags=re.I)
+    if match:
+        return parse_length(" ".join(part for part in match.groups() if part))
+    return None
+
+
+def extract_streckenflug_dimensions(text: str) -> tuple[float | None, float | None]:
+    # Prefer explicit L x W expressions.
+    match = re.search(r"(\d{2,5})\s*[x×]\s*(\d{1,4})\s*m?", text, flags=re.I)
+    if match:
+        return float(match.group(1)), float(match.group(2))
+    length = extract_labelled_length(text, ["Length", "Länge", "Laenge", "Runway", "Piste", "RWY", "Landeplatzlänge"])
+    width = extract_labelled_length(text, ["Width", "Breite", "Runway width", "Pistenbreite"])
+    return length, width
+
+
+def extract_streckenflug_difficulty(text: str) -> tuple[str, str]:
+    match = re.search(r"\b([ABCDU])\s*-\s*(Good option|Caution|Only for emergencies|no longer landable|Unknown)", text, flags=re.I)
+    if match:
+        raw = f"streckenflug-{match.group(1).upper()}"
+        value = match.group(1).upper()
+        return raw, "UNKNOWN" if value == "U" else value
+    if re.search(r"Good option", text, flags=re.I): return "streckenflug-A", "A"
+    if re.search(r"Caution", text, flags=re.I): return "streckenflug-B", "B"
+    if re.search(r"Only for emergencies", text, flags=re.I): return "streckenflug-C", "C"
+    if re.search(r"no longer landable", text, flags=re.I): return "streckenflug-D", "D"
+    return "streckenflug-unknown", "UNKNOWN"
+
+
+def extract_streckenflug_type(text: str) -> str:
+    for label in ("Airstrip (Ultralight)", "Airfield", "Landout Field"):
+        if label.lower() in text.lower():
+            return label
+    return "Landout Field"
+
+
+def build_streckenflug_notes(text: str, url: str) -> str:
+    text = normalize_space(text)
+    # Keep notes bounded; the detail pages can include lots of navigation/menu text.
+    interesting = []
+    for marker in ("Comment", "Kommentar", "Remarks", "Bemerkung", "Description", "Beschreibung", "Obstacles", "Hindernisse"):
+        m = re.search(rf"{marker}\s*:?\s*(.{{0,800}})", text, flags=re.I)
+        if m:
+            interesting.append(m.group(1).strip())
+    note = " | ".join(dict.fromkeys(interesting)) or text[:700]
+    if url:
+        note = f"streckenflug.at source: {url}\n{note}"
+    return note[:1500]
 
 
 def consolidate_duplicate_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
