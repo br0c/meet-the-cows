@@ -3,6 +3,14 @@ name: Deploy GitHub Pages
 on:
   push:
     branches: [main]
+    paths:
+      - "index.html"
+      - "manifest.webmanifest"
+      - "service-worker.js"
+      - "styles.css"
+      - "src/**"
+      - "data/packs/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -12,7 +20,7 @@ permissions:
 
 concurrency:
   group: github-pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
