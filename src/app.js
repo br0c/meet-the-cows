@@ -1,5 +1,5 @@
-const APP_VERSION = '0.3.13-beta';
-const CACHE_NAME = 'meet-the-cows-0-3-13-beta-v1';
+const APP_VERSION = '0.3.14-beta';
+const CACHE_NAME = 'meet-the-cows-0.3.14-beta';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('packs/packs.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
@@ -319,7 +319,7 @@ function renderSettingsPage() {
           <div><dt>Progress</dt><dd>${escapeHtml(state.cacheProgress || '—')}</dd></div>
         </dl>
         <div class="button-row">
-          <button class="primary" id="downloadPack">Download / verify offline pack</button>
+          <button class="primary" id="downloadPack">Download / verify media & docs</button>
           <button id="reloadPackSettings">Reload pack</button>
         </div>
       </div>
@@ -526,23 +526,12 @@ async function registerServiceWorker() {
   }
 }
 
-function buildOfflineUrls() {
-  const urls = new Set([
-    new URL('.', BASE_URL).toString(),
-    new URL('index.html', BASE_URL).toString(),
-    new URL('styles.css', BASE_URL).toString(),
-    new URL('src/app.js', BASE_URL).toString(),
-    new URL('manifest.webmanifest', BASE_URL).toString(),
-    new URL('service-worker.js', BASE_URL).toString(),
-    PACK_INDEX_URL,
-  ]);
+function buildOfflineMediaUrls() {
+  const urls = new Set();
   if (state.packManifest && state.currentManifestUrl) {
-    urls.add(state.currentManifestUrl);
-    urls.add(new URL(state.packManifest.fieldsUrl || 'fields.json', state.currentManifestUrl).toString());
     for (const field of state.fields) {
       for (const media of field.media || []) {
         if (media?.url) urls.add(new URL(media.url, state.currentManifestUrl).toString());
-        if (media?.thumbnailUrl) urls.add(new URL(media.thumbnailUrl, state.currentManifestUrl).toString());
       }
     }
   }
@@ -555,10 +544,17 @@ async function downloadOfflinePack() {
     return;
   }
 
-  const urls = buildOfflineUrls();
+  const urls = buildOfflineMediaUrls();
+  if (!urls.length) {
+    state.cacheStatus = state.packManifest ? 'ready' : 'unknown';
+    state.cacheProgress = state.packManifest ? 'No media/docs to cache' : 'No pack loaded';
+    render();
+    return;
+  }
+
   const cache = await caches.open(CACHE_NAME);
   state.cacheStatus = 'downloading';
-  state.cacheProgress = `0/${urls.length}`;
+  state.cacheProgress = `0/${urls.length} media/docs`;
   render();
 
   let ok = 0;
@@ -571,19 +567,22 @@ async function downloadOfflinePack() {
       await cache.put(url, response.clone());
       ok += 1;
     } catch (error) {
-      console.warn('Offline cache failed', url, error);
-      failed += 1;
+      if (await cache.match(url)) {
+        ok += 1;
+        console.warn('Offline cache kept existing entry', url, error);
+      } else {
+        console.warn('Offline cache failed', url, error);
+        failed += 1;
+      }
     }
 
-    if (i % 5 === 0 || i === urls.length - 1) {
-      state.cacheProgress = `${i + 1}/${urls.length} cached · ${failed} failed`;
-      render();
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
+    state.cacheProgress = `${ok}/${urls.length} media/docs cached · ${failed} failed`;
+    render();
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
 
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
-  state.cacheProgress = `${ok}/${urls.length} cached · ${failed} failed`;
+  state.cacheProgress = `${ok}/${urls.length} media/docs cached · ${failed} failed`;
   render();
 }
 
@@ -593,8 +592,19 @@ async function checkCacheStatus() {
     return;
   }
   const cache = await caches.open(CACHE_NAME);
-  const fieldsUrl = new URL(state.packManifest.fieldsUrl || 'fields.json', state.currentManifestUrl).toString();
-  state.cacheStatus = await cache.match(fieldsUrl) ? 'ready' : 'not downloaded';
+  const urls = buildOfflineMediaUrls();
+  if (!urls.length) {
+    state.cacheStatus = 'ready';
+    state.cacheProgress = 'No media/docs to cache';
+    return;
+  }
+
+  let cached = 0;
+  for (const url of urls) {
+    if (await cache.match(url)) cached += 1;
+  }
+  state.cacheStatus = cached === urls.length ? 'ready' : cached > 0 ? 'incomplete' : 'not downloaded';
+  state.cacheProgress = `${cached}/${urls.length} media/docs cached`;
 }
 
 function haversineMeters(lat1, lon1, lat2, lon2) {

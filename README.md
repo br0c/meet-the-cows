@@ -166,19 +166,31 @@ For iPhone testing, serve over HTTPS or deploy to GitHub Pages. Browser geolocat
 
 ## Deploy to GitHub Pages
 
-1. Create a GitHub repo named `meet-the-cows`.
-2. Upload this folder.
-3. In the repo settings, enable GitHub Pages from the `main` branch root.
-4. Open `https://<your-user>.github.io/meet-the-cows/`.
+Generated pack files are not committed. The Pages workflow builds the pack, assembles a static artifact, and deploys it with `actions/deploy-pages`.
 
-The prototype uses relative paths, so it should work both at a custom domain root and under a GitHub Pages project path such as `/meet-the-cows/`.
+Stable deployed paths:
+
+```text
+https://<your-user>.github.io/meet-the-cows/
+https://<your-user>.github.io/meet-the-cows/packs/packs.json
+https://<your-user>.github.io/meet-the-cows/packs/fr-alps/manifest.json
+https://<your-user>.github.io/meet-the-cows/packs/fr-alps/fields.json
+https://<your-user>.github.io/meet-the-cows/packs/fr-alps/media/...
+https://<your-user>.github.io/meet-the-cows/packs/fr-alps/docs/...
+```
+
+Setup:
+
+1. Create a GitHub repo named `meet-the-cows`.
+2. In repository Settings -> Pages, set Build and deployment -> Source to GitHub Actions.
+3. Add the `OPENAIP_API_KEY` Actions secret if using the OpenAIP-backed build.
+4. Run `.github/workflows/deploy-pages.yml`, or push to `main`.
+
+The app uses relative URLs, so the same source works both at a custom domain root and under a GitHub Pages project path such as `/meet-the-cows/`.
 
 ## GitHub Action
 
-`.github/workflows/build-pack.yml` is included. It runs the pack builder manually via `workflow_dispatch`. Set repository variables if you want to include VAC:
-
-- `SIA_VAC_ROOT`: current SIA VAC AD root URL
-- `SIA_VAC_DATE`: attribution/update date shown in the manifest
+`.github/workflows/deploy-pages.yml` builds the app plus the generated `fr-alps` pack into `dist/site`, writes `dist/site/packs/packs.json`, uploads that directory as the Pages artifact, and deploys it.
 
 The action includes `--include-vac-airfields`, so VAC-only official aerodromes can be created when they are not present in the Guide CUP.
 

@@ -340,11 +340,6 @@ def main() -> None:
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # Maintain pack index.
-    index_path = out_dir.parent / "index.json"
-    index = [{"id": args.pack_id, "name": args.pack_name, "manifestUrl": f"data/packs/{args.pack_id}/manifest.json"}]
-    index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
-
     if not args.keep_raw:
         shutil.rmtree(cache_dir, ignore_errors=True)
 

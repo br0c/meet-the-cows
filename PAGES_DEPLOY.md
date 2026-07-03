@@ -10,6 +10,7 @@ https://br0c.github.io/meet-the-cows/packs/packs.json
 https://br0c.github.io/meet-the-cows/packs/fr-alps/manifest.json
 https://br0c.github.io/meet-the-cows/packs/fr-alps/fields.json
 https://br0c.github.io/meet-the-cows/packs/fr-alps/media/...
+https://br0c.github.io/meet-the-cows/packs/fr-alps/docs/...
 ```
 
 Setup:

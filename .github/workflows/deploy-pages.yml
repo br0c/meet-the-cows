@@ -1,6 +1,18 @@
 name: Deploy app and data pack to Pages
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "manifest.webmanifest"
+      - "service-worker.js"
+      - "styles.css"
+      - "src/**"
+      - "icons/**"
+      - "scripts/**"
+      - "requirements.txt"
+      - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
   schedule:
     # Daily at 03:17 UTC
