@@ -1,8 +1,6 @@
-const CACHE_NAME = 'meet-the-cows-0.3.12-beta';
+const CACHE_NAME = 'meet-the-cows-0.3.13-beta';
 const SCOPE = self.registration.scope;
-const JSZIP_URL = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm';
 const u = path => new URL(path, SCOPE).toString();
-
 const APP_SHELL = [
   u('.'),
   u('index.html'),
@@ -10,15 +8,10 @@ const APP_SHELL = [
   u('src/app.js'),
   u('manifest.webmanifest'),
   u('icons/icon.svg'),
-  JSZIP_URL,
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil((async () => {
-    const cache = await caches.open(CACHE_NAME);
-    await cache.addAll(APP_SHELL);
-    await self.skipWaiting();
-  })());
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -35,10 +28,9 @@ self.addEventListener('fetch', event => {
     const cache = await caches.open(CACHE_NAME);
     const cached = await cache.match(event.request);
     if (cached) return cached;
-
     try {
       const response = await fetch(event.request);
-      if (response.ok) await cache.put(event.request, response.clone());
+      if (response.ok) cache.put(event.request, response.clone());
       return response;
     } catch (error) {
       if (event.request.mode === 'navigate') return cache.match(u('index.html'));

@@ -1,11 +1,7 @@
-import JSZip from 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm';
-
-const APP_VERSION = '0.3.12-beta';
-const CACHE_NAME = 'meet-the-cows-0-3-12-beta-v1';
+const APP_VERSION = '0.3.13-beta';
+const CACHE_NAME = 'meet-the-cows-0-3-13-beta-v1';
 const BASE_URL = new URL('..', import.meta.url);
-const RELEASE_PACK_INDEX_URL = 'https://github.com/br0c/meet-the-cows/releases/download/data-latest/packs.json';
-const LOCAL_PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
-const PACK_VIRTUAL_PREFIX = new URL('__packs/', BASE_URL).toString();
+const PACK_INDEX_URL = new URL('packs/packs.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
 
 /** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, radio?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
@@ -37,8 +33,7 @@ let state = {
   view: 'main',
   computedRows: [],
   cacheStatus: 'unknown',
-  packIndexStatus: 'loading',
-  installProgress: '',
+  cacheProgress: '',
   detailScrollTop: 0,
 };
 
@@ -67,103 +62,43 @@ function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
 }
 
-
 async function loadPackIndex() {
-  const fallbackPack = {
-    id: 'fr-alps',
-    name: 'France / Alps',
-    url: 'https://github.com/br0c/meet-the-cows/releases/download/data-latest/fr-alps.zip',
-  };
-
   try {
-    const res = await fetch(RELEASE_PACK_INDEX_URL, { cache: 'no-cache' });
-    if (!res.ok) throw new Error(`Release pack index HTTP ${res.status}`);
+    const res = await fetch(PACK_INDEX_URL, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`Pack index HTTP ${res.status}`);
     const index = await res.json();
-    const packs = normalizePackIndex(index);
-    if (!packs.length) throw new Error('Release pack index contains no packs');
-    state.packs = packs;
-    state.packIndexStatus = 'release';
-    return;
-  } catch (releaseError) {
-    console.warn('Could not load release pack index; trying bundled dev index.', releaseError);
+    state.packs = Array.isArray(index) ? index : (Array.isArray(index.packs) ? index.packs : []);
+    if (!state.packs.length) throw new Error('Pack index contained no packs');
+  } catch (error) {
+    console.error(error);
+    state.packs = [{ id: 'fr-alps', name: 'France / Alps', manifestUrl: 'packs/fr-alps/manifest.json' }];
   }
-
-  try {
-    const res = await fetch(LOCAL_PACK_INDEX_URL, { cache: 'no-cache' });
-    if (!res.ok) throw new Error(`Local pack index HTTP ${res.status}`);
-    state.packs = normalizePackIndex(await res.json());
-    state.packIndexStatus = 'local dev';
-  } catch (localError) {
-    console.error(localError);
-    state.packs = [fallbackPack];
-    state.packIndexStatus = 'fallback';
-  }
-}
-
-function normalizePackIndex(index) {
-  const rawPacks = Array.isArray(index) ? index : Array.isArray(index?.packs) ? index.packs : [];
-  return rawPacks.map(pack => ({
-    ...pack,
-    id: pack.id || pack.packId,
-    name: pack.name || pack.id || pack.packId || 'Data pack',
-  })).filter(pack => pack.id);
 }
 
 async function loadSelectedPack() {
-  const pack = selectedPack();
+  const pack = state.packs.find(p => p.id === state.settings.packId) || state.packs[0];
   if (!pack) return;
   state.settings.packId = pack.id;
-  state.installProgress = '';
-
-  const installedManifestUrl = packVirtualUrl(pack.id, 'manifest.json');
   try {
-    const manifest = await readCachedJson(installedManifestUrl);
-    if (manifest) {
-      state.packManifest = manifest;
-      state.currentManifestUrl = installedManifestUrl;
-      const fieldsUrl = new URL(manifest.fieldsUrl || 'fields.json', installedManifestUrl).toString();
-      const fields = await readCachedJson(fieldsUrl);
-      if (!fields) throw new Error('Installed pack is missing fields.json');
-      state.fields = fields;
-      await checkCacheStatus();
-      return;
-    }
-  } catch (installedError) {
-    console.error('Installed pack could not be loaded.', installedError);
+    const manifestUrl = new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, BASE_URL).toString();
+    const manifestRes = await fetch(manifestUrl, { cache: 'no-cache' });
+    if (!manifestRes.ok) throw new Error(`Manifest HTTP ${manifestRes.status}`);
+    state.packManifest = await manifestRes.json();
+    state.currentManifestUrl = manifestUrl;
+    const fieldsUrl = new URL(state.packManifest.fieldsUrl || 'fields.json', manifestUrl).toString();
+    const fieldsRes = await fetch(fieldsUrl, { cache: 'no-cache' });
+    if (!fieldsRes.ok) throw new Error(`Fields HTTP ${fieldsRes.status}`);
+    state.fields = await fieldsRes.json();
+    state.cacheProgress = '';
+    await checkCacheStatus();
+  } catch (error) {
+    console.error(error);
+    state.packManifest = null;
+    state.currentManifestUrl = null;
+    state.fields = [];
+    state.cacheStatus = 'error';
+    state.cacheProgress = error.message || String(error);
   }
-
-  if (pack.manifestUrl) {
-    try {
-      const manifestUrl = new URL(pack.manifestUrl, BASE_URL).toString();
-      const manifestRes = await fetch(manifestUrl, { cache: 'no-cache' });
-      if (!manifestRes.ok) throw new Error(`Manifest HTTP ${manifestRes.status}`);
-      state.packManifest = await manifestRes.json();
-      state.currentManifestUrl = manifestUrl;
-      const fieldsUrl = new URL(state.packManifest.fieldsUrl || 'fields.json', manifestUrl).toString();
-      const fieldsRes = await fetch(fieldsUrl, { cache: 'no-cache' });
-      if (!fieldsRes.ok) throw new Error(`Fields HTTP ${fieldsRes.status}`);
-      state.fields = await fieldsRes.json();
-      await checkCacheStatus();
-      return;
-    } catch (localError) {
-      console.error(localError);
-    }
-  }
-
-  state.packManifest = {
-    id: pack.id,
-    name: pack.name,
-    version: pack.version || 'not installed',
-    updatedAt: pack.updatedAt || '',
-    fieldsUrl: 'fields.json',
-  };
-  state.currentManifestUrl = installedManifestUrl;
-  state.fields = [];
-  state.cacheStatus = pack.url ? 'not installed' : 'unavailable';
-}
-
-function selectedPack() {
-  return state.packs.find(p => p.id === state.settings.packId) || state.packs[0] || null;
 }
 
 function startGps() {
@@ -379,13 +314,12 @@ function renderSettingsPage() {
           <div><dt>Name</dt><dd>${escapeHtml(manifest?.name || 'No pack loaded')}</dd></div>
           <div><dt>Version</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
           <div><dt>Updated</dt><dd>${escapeHtml(manifest?.updatedAt || manifest?.generatedAt || manifest?.source?.updatedAt || '—')}</dd></div>
-          <div><dt>Source</dt><dd>${escapeHtml(state.packIndexStatus)}</dd></div>
           <div><dt>Fields</dt><dd>${state.fields.length}</dd></div>
           <div><dt>Offline</dt><dd>${escapeHtml(state.cacheStatus)}</dd></div>
-          <div><dt>Progress</dt><dd>${escapeHtml(state.installProgress || '—')}</dd></div>
+          <div><dt>Progress</dt><dd>${escapeHtml(state.cacheProgress || '—')}</dd></div>
         </dl>
         <div class="button-row">
-          <button class="primary" id="downloadPack">Install / update release pack</button>
+          <button class="primary" id="downloadPack">Download / verify offline pack</button>
           <button id="reloadPackSettings">Reload pack</button>
         </div>
       </div>
@@ -445,7 +379,7 @@ function difficultyBadgeClass(field) {
 }
 
 function renderFieldList() {
-  if (!state.fields.length) return '<div class="warning">No fields loaded. Open Settings and install/update the release pack.</div>';
+  if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
   if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission, or turn on demo mode in Settings.</div>';
   const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, requiredGlideRatio, glideReason }) => `
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
@@ -592,168 +526,76 @@ async function registerServiceWorker() {
   }
 }
 
+function buildOfflineUrls() {
+  const urls = new Set([
+    new URL('.', BASE_URL).toString(),
+    new URL('index.html', BASE_URL).toString(),
+    new URL('styles.css', BASE_URL).toString(),
+    new URL('src/app.js', BASE_URL).toString(),
+    new URL('manifest.webmanifest', BASE_URL).toString(),
+    new URL('service-worker.js', BASE_URL).toString(),
+    PACK_INDEX_URL,
+  ]);
+  if (state.packManifest && state.currentManifestUrl) {
+    urls.add(state.currentManifestUrl);
+    urls.add(new URL(state.packManifest.fieldsUrl || 'fields.json', state.currentManifestUrl).toString());
+    for (const field of state.fields) {
+      for (const media of field.media || []) {
+        if (media?.url) urls.add(new URL(media.url, state.currentManifestUrl).toString());
+        if (media?.thumbnailUrl) urls.add(new URL(media.thumbnailUrl, state.currentManifestUrl).toString());
+      }
+    }
+  }
+  return Array.from(urls);
+}
 
 async function downloadOfflinePack() {
-  const pack = selectedPack();
-  if (!pack) {
-    alert('No pack selected.');
-    return;
-  }
-
-  if (pack.url) {
-    await installReleasePack(pack);
-    return;
-  }
-
-  await cacheLegacyPackAssets();
-}
-
-async function installReleasePack(pack) {
   if (!('caches' in window)) {
-    alert('Cache API unavailable in this browser.');
+    alert('Cache Storage is not available in this browser.');
     return;
   }
 
+  const urls = buildOfflineUrls();
+  const cache = await caches.open(CACHE_NAME);
   state.cacheStatus = 'downloading';
-  state.installProgress = 'Downloading release zip…';
+  state.cacheProgress = `0/${urls.length}`;
   render();
 
-  try {
-    const zipRes = await fetch(pack.url, { cache: 'no-cache' });
-    if (!zipRes.ok) throw new Error(`Pack download HTTP ${zipRes.status}`);
-    const zipBuffer = await zipRes.arrayBuffer();
+  let ok = 0;
+  let failed = 0;
+  for (let i = 0; i < urls.length; i += 1) {
+    const url = urls[i];
+    try {
+      const response = await fetch(url, { cache: 'reload' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await cache.put(url, response.clone());
+      ok += 1;
+    } catch (error) {
+      console.warn('Offline cache failed', url, error);
+      failed += 1;
+    }
 
-    const expectedSha = (pack.sha256 || await fetchPackSha256(pack)).trim().split(/\s+/)[0].toLowerCase();
-    if (expectedSha) {
-      state.installProgress = 'Verifying checksum…';
+    if (i % 5 === 0 || i === urls.length - 1) {
+      state.cacheProgress = `${i + 1}/${urls.length} cached · ${failed} failed`;
       render();
-      const actualSha = await sha256Hex(zipBuffer);
-      if (actualSha.toLowerCase() !== expectedSha) {
-        throw new Error(`Checksum mismatch: expected ${expectedSha}, got ${actualSha}`);
-      }
-    }
-
-    state.installProgress = 'Opening zip…';
-    render();
-
-    const zip = await JSZip.loadAsync(zipBuffer);
-    const files = Object.values(zip.files).filter(entry => !entry.dir);
-    const manifestEntry = files.find(entry => entry.name === `${pack.id}/manifest.json`) || files.find(entry => entry.name.endsWith('/manifest.json'));
-    if (!manifestEntry) throw new Error('Zip does not contain manifest.json');
-
-    const packRoot = manifestEntry.name.replace(/manifest\.json$/, '').replace(/\/$/, '');
-    const cache = await caches.open(CACHE_NAME);
-    let done = 0;
-
-    for (const entry of files) {
-      if (!entry.name.startsWith(`${packRoot}/`)) continue;
-      const relativePath = entry.name.slice(packRoot.length + 1);
-      if (!relativePath) continue;
-
-      const blob = await entry.async('blob');
-      const response = new Response(blob, {
-        headers: {
-          'Content-Type': contentTypeForPath(relativePath),
-          'X-MTC-Pack-Id': pack.id,
-          'X-MTC-Pack-Source': pack.url,
-        },
-      });
-      await cache.put(packVirtualUrl(pack.id, relativePath), response);
-      done += 1;
-      if (done % 25 === 0 || done === files.length) {
-        state.installProgress = `Installing ${done}/${files.length} files…`;
-        render();
-      }
-    }
-
-    state.installProgress = 'Reloading installed pack…';
-    state.cacheStatus = 'ready';
-    await loadSelectedPack();
-    computeRows();
-    state.installProgress = `Installed ${done} files`;
-  } catch (error) {
-    console.error(error);
-    state.cacheStatus = 'error';
-    state.installProgress = error.message || String(error);
-    alert(`Could not install pack: ${state.installProgress}`);
-  }
-
-  render();
-}
-
-async function cacheLegacyPackAssets() {
-  if (!navigator.serviceWorker?.controller) {
-    alert('Service worker not ready yet. Reload once, then try again.');
-    return;
-  }
-  state.cacheStatus = 'downloading';
-  state.installProgress = 'Caching legacy pack files…';
-  render();
-  const urls = new Set([new URL('.', BASE_URL).toString(), new URL('index.html', BASE_URL).toString(), new URL('styles.css', BASE_URL).toString(), new URL('src/app.js', BASE_URL).toString(), new URL('manifest.webmanifest', BASE_URL).toString(), LOCAL_PACK_INDEX_URL]);
-  if (state.packManifest) {
-    urls.add(new URL(state.packManifest.fieldsUrl || 'fields.json', new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL)).toString());
-    urls.add(new URL(`data/packs/${state.packManifest.id}/manifest.json`, BASE_URL).toString());
-    for (const field of state.fields) {
-      for (const media of field.media || []) urls.add(new URL(media.url, state.currentManifestUrl || BASE_URL).toString());
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
-  const channel = new MessageChannel();
-  const done = new Promise(resolve => channel.port1.onmessage = resolve);
-  navigator.serviceWorker.controller.postMessage({ type: 'CACHE_URLS', urls: Array.from(urls) }, [channel.port2]);
-  const event = await done;
-  state.cacheStatus = event.data?.ok ? 'ready' : 'incomplete';
-  state.installProgress = state.cacheStatus;
+
+  state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
+  state.cacheProgress = `${ok}/${urls.length} cached · ${failed} failed`;
   render();
 }
 
 async function checkCacheStatus() {
-  if (!('caches' in window) || !state.packManifest) {
+  if (!('caches' in window) || !state.packManifest || !state.currentManifestUrl) {
     state.cacheStatus = 'unknown';
     return;
   }
   const cache = await caches.open(CACHE_NAME);
-  const fieldsUrl = new URL(state.packManifest.fieldsUrl || 'fields.json', state.currentManifestUrl || BASE_URL).toString();
-  state.cacheStatus = await cache.match(fieldsUrl) ? 'ready' : state.fields.length ? 'online only' : 'not installed';
+  const fieldsUrl = new URL(state.packManifest.fieldsUrl || 'fields.json', state.currentManifestUrl).toString();
+  state.cacheStatus = await cache.match(fieldsUrl) ? 'ready' : 'not downloaded';
 }
-
-async function readCachedJson(url) {
-  if (!('caches' in window)) return null;
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(url);
-  if (!cached) return null;
-  return cached.json();
-}
-
-function packVirtualUrl(packId, relativePath) {
-  const cleanPackId = String(packId || '').replace(/^\/+|\/+$/g, '');
-  const cleanPath = String(relativePath || '').replace(/^\/+/g, '');
-  return new URL(`${cleanPackId}/${cleanPath}`, PACK_VIRTUAL_PREFIX).toString();
-}
-
-async function fetchPackSha256(pack) {
-  if (!pack.sha256Url) return '';
-  const res = await fetch(pack.sha256Url, { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`Checksum HTTP ${res.status}`);
-  return res.text();
-}
-
-async function sha256Hex(buffer) {
-  const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function contentTypeForPath(path) {
-  const lower = String(path).toLowerCase();
-  if (lower.endsWith('.json')) return 'application/json; charset=utf-8';
-  if (lower.endsWith('.pdf')) return 'application/pdf';
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-  if (lower.endsWith('.png')) return 'image/png';
-  if (lower.endsWith('.webp')) return 'image/webp';
-  if (lower.endsWith('.svg')) return 'image/svg+xml';
-  if (lower.endsWith('.html')) return 'text/html; charset=utf-8';
-  return 'application/octet-stream';
-}
-
 
 function haversineMeters(lat1, lon1, lat2, lon2) {
   const R = 6371000;
