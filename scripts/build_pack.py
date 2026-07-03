@@ -441,6 +441,7 @@ def parse_cup(cup_text: str, pack_id: str) -> list[dict[str, Any]]:
             "widthM": width_m,
             "runwayDirectionDeg": direction_deg,
             "frequency": format_frequency_short(frequencies),
+            "radio": format_frequency_short(frequencies),
             "frequencies": frequencies,
             "notes": strip_difficulty_tags(notes),
             "source": {
@@ -1130,21 +1131,15 @@ def frequency_sort_key(freq: dict[str, Any]) -> tuple[int, float]:
 def apply_frequency_index(fields: list[dict[str, Any]], frequency_index: dict[str, list[dict[str, Any]]]) -> None:
     for field in fields:
         code = clean(field.get("code")).upper()
-        if not ICAO_RE.match(code):
+        if not code:
             continue
         indexed = frequency_index.get(code) or []
         if not indexed:
             continue
-        existing = list(field.get("frequencies") or [])
-        seen = {f"{float(item.get('mhz')):.3f}" for item in existing if isinstance(item.get("mhz"), (int, float))}
-        for item in indexed:
-            key = f"{float(item.get('mhz')):.3f}"
-            if key not in seen:
-                existing.append(dict(item))
-                seen.add(key)
-        existing.sort(key=frequency_sort_key)
+        existing = merge_frequency_lists(list(field.get("frequencies") or []), indexed)
         field["frequencies"] = existing
         field["frequency"] = format_frequency_short(existing)
+        field["radio"] = field["frequency"]
 
 
 def parse_vac_codes(vac_codes: str, raw_dir: Path) -> set[str]:
@@ -1271,6 +1266,7 @@ def make_open_airfield_entry(
         "widthM": runway.get("widthM"),
         "runwayDirectionDeg": runway.get("runwayDirectionDeg"),
         "frequency": format_frequency_short(frequencies),
+        "radio": format_frequency_short(frequencies),
         "frequencies": frequencies,
         "notes": notes,
         "source": {"name": "OpenAIP", "importedAt": dt.date.today().isoformat(), "packId": pack_id},
@@ -1348,9 +1344,15 @@ def import_vac_pdfs(
             media["updatedAt"] = vac_date
 
         if code in by_code:
+            merged_freqs = merge_frequency_lists(pdf_frequencies, frequency_index.get(code, []))
             for field in by_code[code]:
                 field["media"].append(dict(media))
                 field.setdefault("docs", {})["vac"] = media["url"]
+                if merged_freqs:
+                    all_freqs = merge_frequency_lists(list(field.get("frequencies") or []), merged_freqs)
+                    field["frequencies"] = all_freqs
+                    field["frequency"] = format_frequency_short(all_freqs)
+                    field["radio"] = field["frequency"]
             progress.update(index, extra=f"{code}: attached | ok {downloaded}, miss {misses}, err {errors}")
             continue
 
@@ -1397,6 +1399,7 @@ def make_vac_airfield_entry(
         "widthM": runway.get("widthM"),
         "runwayDirectionDeg": runway.get("runwayDirectionDeg"),
         "frequency": format_frequency_short(frequencies),
+        "radio": format_frequency_short(frequencies),
         "frequencies": frequencies,
         "notes": notes,
         "source": {

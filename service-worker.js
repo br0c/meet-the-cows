@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meet-the-cows-vac-frequency-v8';
+const CACHE_NAME = 'meet-the-cows-0-3-8-beta-v1';
 const SCOPE = self.registration.scope;
 const u = path => new URL(path, SCOPE).toString();
 const APP_SHELL = [

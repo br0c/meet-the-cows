@@ -1,10 +1,10 @@
-const APP_VERSION = '0.3.5';
-const CACHE_NAME = 'meet-the-cows-vac-frequency-v7';
+const APP_VERSION = '0.3.8-beta';
+const CACHE_NAME = 'meet-the-cows-0-3-8-beta-v1';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
 
-/** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
+/** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, radio?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
 
 const DEFAULT_SETTINGS = {
   packId: 'fr-alps',
@@ -293,6 +293,14 @@ function renderSettingsPage() {
       </div>
 
       <div class="settings-card">
+        <h3>App</h3>
+        <dl class="meta-list">
+          <div><dt>Version</dt><dd>${escapeHtml(APP_VERSION)}</dd></div>
+          <div><dt>Status</dt><dd>Beta — not for primary navigation</dd></div>
+        </dl>
+      </div>
+
+      <div class="settings-card">
         <h3>Pack</h3>
         <label for="packSelect">Selected pack</label>
         <select id="packSelect">${packs}</select>
@@ -417,13 +425,15 @@ function renderDetail(field) {
   `;
 }
 
+
 function formatFrequency(field) {
+  if (field.radio) return field.radio;
   if (field.frequency) return field.frequency;
   const freqs = Array.isArray(field.frequencies) ? field.frequencies : [];
   if (!freqs.length) return '—';
   const first = freqs[0];
   const mhz = typeof first.mhz === 'number' ? first.mhz.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') : '';
-  return [mhz, first.type || first.description].filter(Boolean).join(' ' ) || '—';
+  return [mhz, first.type || first.description].filter(Boolean).join(' ') || '—';
 }
 
 function renderMediaItem(item) {
