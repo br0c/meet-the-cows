@@ -39,6 +39,38 @@ CUPX files are handled by the importer as concatenated ZIP files: a pictures ZIP
 
 The Guide CUP does include some official aerodromes/altiports/velisurfaces, but the VAC import must not depend on that. SIA VAC airfields are handled as a separate layer.
 
+
+### Optional Streckenflug import with images
+
+If you have permission to use/rehost the streckenflug.at Landout Database content, the builder can import its public map JSON details and download the linked full-resolution public photos into the pack media folder.
+
+```bash
+python scripts/build_pack.py \
+  --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
+  --pack-id fr-alps \
+  --pack-name "France / Alps" \
+  --include-streckenflug \
+  --streckenflug-countries FR CH IT
+```
+
+Useful debug flags:
+
+```bash
+--streckenflug-max-detail 20     # only fetch the first 20 candidate details
+--no-streckenflug-images         # import fields/notes but skip image downloads
+--keep-raw                       # keep cached JSON responses under .cache/<pack-id>/raw
+```
+
+Implementation details:
+
+- The builder reads the public list/map page to find streckenflug IDs.
+- It then calls the same public JSON endpoint used by the browser map panel: `json.php?inc=map&task=landeplatz&id=<id>`.
+- It extracts field details, notes, feedback, and full-resolution `shield.php` photo links from the JSON `fotos` and `feedback` HTML.
+- Photos are copied into `data/packs/<pack-id>/media/<field-id>/` and referenced from `fields.json`, so the existing app media viewer and offline download flow pick them up automatically.
+- No extra Python dependency is required; this uses only the standard library.
+
+Important: importing and rehosting photos/content may require written permission from the upstream rights holder. Do not publish a derived public pack unless you are comfortable with that permission/licence position.
+
 ### VAC PDFs and VAC-only airfields
 
 VAC import is supported from day one. The SIA eAIP/VAC URL is cycle-specific. Find the current eAIP PDF root on the SIA site, then pass the `VAC/AD` directory as `--vac-root`.
@@ -128,16 +160,18 @@ The prototype uses relative paths, so it should work both at a custom domain roo
 
 The action includes `--include-vac-airfields`, so VAC-only official aerodromes can be created when they are not present in the Guide CUP.
 
-## Cockpit list
+## Field columns
 
-The main page is deliberately narrow for portrait use. It shows only:
+The cockpit list shows:
 
 - `Name`
+- `Brg`: bearing to entry
 - `Dist`: straight-line distance
-- `Glide`: rounded required glide ratio using iPhone GPS altitude, field elevation and safety margin
+- `Req`: required glide ratio using current altitude, field elevation and safety margin
+- `Δsafe`: current altitude minus field elevation minus safety margin
 - `Diff`: A/B/C/D/UNKNOWN
-
-Bearing, arrival height, field dimensions, notes, photos, PDFs and VAC are shown after tapping an entry. Pack selection, offline download/verify, safety margin and hide C/D filters live in Settings behind the gear icon.
+- `Len`, `Wid`: runway/field length and width when available
+- `Docs`: number of attached images/PDFs
 
 ## Safety disclaimer
 
