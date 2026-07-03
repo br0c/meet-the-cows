@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+from collections import Counter
 import io
 import json
 import os
@@ -144,7 +145,7 @@ def main() -> None:
     parser.add_argument("--openaip-api-key", default=os.environ.get("OPENAIP_API_KEY", ""), help="OpenAIP API key; prefer OPENAIP_API_KEY env var, never commit it")
     parser.add_argument("--openaip-base-url", default=os.environ.get("OPENAIP_API_BASE_URL", OPENAIP_API_BASE_URL), help="OpenAIP Core API base URL")
     parser.add_argument("--openaip-airports", default="", help="Optional local JSON/GeoJSON export or URL to use instead of the API. May be repeated as comma-separated paths.")
-    parser.add_argument("--openaip-include-types", default=os.environ.get("OPENAIP_INCLUDE_TYPES", "1"), help="Comma-separated OpenAIP airport type numbers to include as glider-relevant. Default 1 = Glider Site.")
+    parser.add_argument("--openaip-include-types", default=os.environ.get("OPENAIP_INCLUDE_TYPES", "1,2,6,11,13"), help="Comma-separated OpenAIP airport type numbers to include as glider-relevant. Default: 1 Glider Site, 2 Airfield Civil, 6 Ultra Light Flying Site, 11 Landing Strip, 13 Altiport. Use '1' for strict glider-site-only imports.")
     parser.add_argument("--vac-candidate-mode", choices=["glider", "pack", "all"], default="glider", help="Which official VAC candidates to try: glider OpenAIP/pack airfields, existing pack only, or every airport from the coordinate source")
     parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory")
     parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
@@ -629,8 +630,11 @@ def format_frequency_short(frequencies: list[dict[str, Any]]) -> str:
         return ""
     first = frequencies[0]
     mhz = first.get("mhz")
-    mhz_text = f"{float(mhz):.3f}".rstrip("0").rstrip(".") if isinstance(mhz, (int, float)) else ""
-    return " ".join(part for part in (mhz_text, clean(first.get("type"))) if part)
+    mhz_text = f"{float(mhz):.3f}" if isinstance(mhz, (int, float)) else ""
+    freq_type = clean(first.get("type"))
+    if freq_type.isdigit() or freq_type.upper() in {"OTHER", "UNKNOWN", "N/A", "NA"}:
+        freq_type = ""
+    return " ".join(part for part in (mhz_text, freq_type) if part)
 
 
 
@@ -680,7 +684,14 @@ def load_openaip_airfields(
             records_by_country[country] = fetch_openaip_airports_for_country(country, raw_dir, api_key, base_url)
 
     for country, records in records_by_country.items():
+        type_counts: Counter[str] = Counter()
+        for record in records:
+            type_counts[openaip_type_name(get_deep(record, "type", "properties.type")) or "UNKNOWN"] += 1
+        if type_counts:
+            top_types = ", ".join(f"{name}={count}" for name, count in type_counts.most_common(8))
+            print(f"OpenAIP {country}: fetched type mix: {top_types}", file=sys.stderr)
         kept = 0
+        kept_type_counts: Counter[str] = Counter()
         for record in records:
             airport = normalize_openaip_airport(record, country)
             if not airport:
@@ -705,7 +716,9 @@ def load_openaip_airfields(
             if extracted_freqs:
                 freqs[code] = extracted_freqs
             kept += 1
-        print(f"OpenAIP {country}: kept {kept} glider-relevant airfields from {len(records)} records", file=sys.stderr)
+            kept_type_counts[airport.get("type") or "UNKNOWN"] += 1
+        kept_types = ", ".join(f"{name}={count}" for name, count in kept_type_counts.most_common(8)) or "none"
+        print(f"OpenAIP {country}: kept {kept} glider-relevant airfields from {len(records)} records ({kept_types})", file=sys.stderr)
     return airports, runways, freqs
 
 
@@ -994,10 +1007,10 @@ def normalize_openaip_frequencies(record: dict[str, Any]) -> list[dict[str, Any]
 def openaip_frequency_type_name(value: Any) -> str:
     mapping = {0: "OTHER", 1: "A/A", 2: "AFIS", 3: "TWR", 4: "APP", 5: "ATIS", 6: "GND", 7: "INFO"}
     if isinstance(value, int):
-        return mapping.get(value, str(value))
+        return mapping.get(value, "")
     text = clean(value)
     if text.isdigit():
-        return mapping.get(int(text), text)
+        return mapping.get(int(text), "")
     return text
 
 
