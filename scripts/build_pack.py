@@ -717,7 +717,6 @@ def fetch_openaip_airports_for_country(country: str, raw_dir: Path, api_key: str
     progress = Progress(0, f"OpenAIP {country}")
     while True:
         params = {
-            "apiKey": api_key,
             "country": country,
             "countryCode": country,
             "limit": str(limit),
@@ -732,7 +731,7 @@ def fetch_openaip_airports_for_country(country: str, raw_dir: Path, api_key: str
             if page != 1:
                 print(f"OpenAIP {country}: page {page} failed: {first_error}", file=sys.stderr)
                 break
-            fallback_url = endpoint + "?" + urllib.parse.urlencode({"apiKey": api_key})
+            fallback_url = endpoint
             data = read_json_url(fallback_url, raw_dir / "openaip_airports_all.json", api_key=api_key)
         records = extract_openaip_records(data)
         country_records = [r for r in records if record_matches_country(r, country)]
@@ -763,12 +762,31 @@ def read_json(source: str, raw_dir: Path) -> Any:
 
 def read_json_url(url: str, cache_path: Path, *, api_key: str = "") -> Any:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.4"})
+    api_key = (api_key or "").strip().strip('"').strip("'")
+    headers = {"User-Agent": "MeetTheCows/0.5"}
     if api_key:
-        request.add_header("x-openaip-api-key", api_key)
-        request.add_header("Authorization", f"Bearer {api_key}")
-    with urllib.request.urlopen(request, timeout=120) as response:
-        raw = response.read()
+        # OpenAIP's current docs use x-openaip-api-key. Some older examples used
+        # x-openaip-client-id, so send both; do not put the key in the URL.
+        headers["x-openaip-api-key"] = api_key
+        headers["x-openaip-client-id"] = api_key
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as error:
+        body = ""
+        try:
+            body = error.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            pass
+        if error.code in (401, 403) and "api.core.openaip.net" in url:
+            raise RuntimeError(
+                "OpenAIP authentication failed. Check that OPENAIP_API_KEY is exported "
+                "in this shell, that it has no quotes/spaces copied into the value, and "
+                "that the key is a Core API key. Tested headers: x-openaip-api-key and "
+                f"x-openaip-client-id. HTTP {error.code}. Response: {body}"
+            ) from error
+        raise
     cache_path.write_bytes(raw)
     return json.loads(raw.decode("utf-8"))
 
