@@ -1,5 +1,5 @@
-const APP_VERSION = '0.3.10-beta';
-const CACHE_NAME = 'meet-the-cows-0-3-10-beta-v1';
+const APP_VERSION = '0.3.11-beta';
+const CACHE_NAME = 'meet-the-cows-0-3-11-beta-v1';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('data/packs/index.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
