@@ -1857,10 +1857,24 @@ STRECKENFLUG_GERMAN_PHRASES: list[tuple[str, str]] = [
     (r"\bim südlichen Teil läuft ein Graben durch\b", "a ditch runs through the southern part"),
     (r"\bNur die nördliche Hälfte entlang des Weges nutzen\b", "Use only the northern half along the track"),
     (r"\bZufahrt zum Feld an der Nordspitze\b", "Access to the field at the northern tip"),
+    (r"\bwie unten beschrieben\b", "As described below"),
     (r"\bBesichtigungs-Video:\s*https?://\S+\b", ""),
     (r"\bBesichtigt am\b", "Inspected on"),
     (r"\bBesichtigung\s+am\b", "Inspection on"),
     (r"\bBesichtigung\s+(\d)", r"Inspection \1"),
+    (r"\bUL-Piste mit Windsack\b", "UL strip with windsock"),
+    (r"\bAnsteigend von Südost nach Nordwest, Landung daher nur von Südost nach Nordwest\b", "Climbs from southeast to northwest; land only from southeast to northwest"),
+    (r"\bZwei weiße, kegelförmige Landereiter markieren die Schwelle\b", "Two white cone-shaped markers indicate the threshold"),
+    (r"\bAufsetzen nicht vor der Schwelle, da der Boden davor uneben ist\b", "Do not touch down before the threshold; the ground before it is uneven"),
+    (r"\bAufsetzen aber auch nicht weit nach der Schwelle, da bei langem Ausrollen bergauf Richtung Nordwest der Boden zunehmend unebener wird\b", "Also do not touch down far after the threshold; on a long uphill rollout toward the northwest the ground becomes increasingly uneven"),
+    (r"\bAm besten sind die ersten 150 Meter nach der Schwelle\b", "The first 150 m after the threshold are best"),
+    (r"\bAus der Luft sieht das Feld farblich scheckig, uneinheitlich und dadurch schlechter aus, als es ist\b", "From the air the field looks patchy and uneven in color, so it looks worse than it is"),
+    (r"\bRingsum sind aber auch viele landwirtschaftliche Felder\b", "There are also many agricultural fields around it"),
+    (r"\bSchwierige Wahl; bei der UL-Piste weiß man zumindest, was man hat\b", "Difficult choice; with the UL strip at least you know what you have"),
+    (r"\bIm März 2023 war die Piste eher schlecht gepflegt, mit einzelnen kleinen dornigen Büschen hier und da\b", "In March 2023 the strip was rather poorly maintained, with a few small thorny bushes here and there"),
+    (r"\bHallo, die Oberfläche von Montgardin ist in der Datei als Asphaltpiste eingetragen\b", "The Montgardin surface is listed as asphalt in the file"),
+    (r"\bDies ist nicht korrekt, bei der Oberfläche handelt es sich um Gras\b", "This is not correct; the surface is grass"),
+    (r"\bViele Grüße!?\s*(?:Tore Graeber)?\b", ""),
     (r"\bFeld unverändert gut\b", "Field unchanged and good"),
     (r"\bAm\s+(\d{1,2}\.\d{1,2}\.\d{2,4})\s+dort gelandet\b", r"Landed there on \1"),
     (r"\bLanderichtung\s+([0-9/]+)\b", r"Landing direction \1."),
@@ -1882,7 +1896,13 @@ STRECKENFLUG_GERMAN_PHRASES: list[tuple[str, str]] = [
     (r"\bNur von Osten her anfliegbar\b", "Approachable only from the east"),
     (r"\bhoch anfliegen\b", "approach high"),
     (r"\bFrisch gemäht\b", "Freshly mowed"),
+    (r"\bEntlang der Straße ist ein Zaun\b", "There is a fence along the road"),
+    (r"\bEntlang der Strasse ist ein Zaun\b", "There is a fence along the road"),
     (r"\bSüdlichen Teil der Wiese benützen\b", "Use the southern part of the meadow"),
+    (r"\bGras noch tief\b", "Grass still low"),
+    (r"\bLuftaufnahme März\s+(\d{4})\b", r"Aerial photo March \1"),
+    (r"\bGut landbar, Naturwiese\b", "Good landing option, natural meadow"),
+    (r"\bAnflug nur Richtung\s+([0-9°]+)\b", r"Approach only direction \1"),
     (r"\bWestliches Feld\b", "Western field"),
     (r"\bNördliches Feld\b", "Northern field"),
     (r"\bHindernisse im Anflug\b", "Obstacles on approach"),
@@ -2023,12 +2043,21 @@ STRECKENFLUG_GERMAN_PHRASES: list[tuple[str, str]] = [
 ]
 
 
+GERMAN_TEXT_HINT_RE = re.compile(
+    r"[äöüß]|\b(?:"
+    r"aussenlandefeld|außenlandefeld|anflug|angeflogen|anfliegbar|aufsetzen|ausrollen|"
+    r"beachten|besichtigung|besichtigt|boden|feld|felder|gemäht|graben|"
+    r"hindernis|hindernisse|landbar|landung|landungen|leitunge?n|"
+    r"möglich|nördlich|oberfläche|piste|schwelle|südlich|strom|"
+    r"uneben|unverändert|vorsicht|wiese|wiesen|zaun|zufahrt|"
+    r"aber|am|bei|beschrieben|da|das|der|die|durch|ist|mit|nach|nicht|nur|und|von|zu|zum|zur"
+    r")\b",
+    flags=re.I,
+)
+
+
 def build_streckenflug_notes_from_json(data: dict[str, Any]) -> str:
     parts: list[str] = []
-    category = clean(data.get("kategorie"))
-    art = clean(data.get("art"))
-    if category or art:
-        parts.append(" · ".join(v for v in [art, category] if v))
     for label, key in [
         ("Info", "info"),
         ("Surface", "oberflaeche"),
@@ -2087,12 +2116,25 @@ def translate_streckenflug_text(value: str) -> str:
     text = normalize_space(value)
     if not text:
         return ""
+    text = re.sub(r"https?://\S+", "", text, flags=re.I)
+    translated = "".join(translate_streckenflug_chunk(part) for part in re.split(r"(\s+---\s+)", text))
+    translated = re.sub(r"\bInspection video:\s*(?:[.;]\s*)?$", "", translated, flags=re.I)
+    return tidy_streckenflug_text(translated)
+
+
+def translate_streckenflug_chunk(text: str) -> str:
+    if not text or re.fullmatch(r"\s+---\s+", text):
+        return text
+    if not looks_german_text(text):
+        return text
     translated = text
     for pattern, replacement in STRECKENFLUG_GERMAN_PHRASES:
         translated = re.sub(pattern, replacement, translated, flags=re.I)
-    translated = re.sub(r"https?://\S+", "", translated, flags=re.I)
-    translated = re.sub(r"\bInspection video:\s*(?:[.;]\s*)?$", "", translated, flags=re.I)
-    return tidy_streckenflug_text(translated)
+    return translated
+
+
+def looks_german_text(value: str) -> bool:
+    return bool(GERMAN_TEXT_HINT_RE.search(value or ""))
 
 
 def tidy_streckenflug_text(value: str) -> str:
