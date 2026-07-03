@@ -1734,7 +1734,7 @@ def parse_streckenflug_detail(
     width_m = parse_first_metric_length(data.get("breite"))
     runway_direction = parse_runway_direction(data.get("richtung"))
     source_url = item.get("url") or f"https://landout.streckenflug.at/index.php?inc=map&iID={data.get('id') or item.get('streckenflugId', '')}"
-    notes = build_streckenflug_notes_from_json(data, source_url)
+    notes = build_streckenflug_notes_from_json(data)
     freqs = extract_frequencies_from_text(notes, source="streckenflug.at detail")
     field_id = stable_id(country or "xx", code, name, lat, lon)
 
@@ -1769,7 +1769,6 @@ def parse_streckenflug_detail(
         "notes": notes,
         "source": {
             "name": "streckenflug.at Landout Database",
-            "url": source_url,
             "sourceId": clean(data.get("id")) or item.get("streckenflugId", ""),
             "importedAt": dt.date.today().isoformat(),
             "modified": clean(data.get("modified")),
@@ -1790,7 +1789,67 @@ def streckenflug_country_code(label: str) -> str:
     return mapping.get(label.strip().lower(), label.strip().upper() if len(label.strip()) == 2 else "")
 
 
-def build_streckenflug_notes_from_json(data: dict[str, Any], source_url: str) -> str:
+STRECKENFLUG_GERMAN_PHRASES: list[tuple[str, str]] = [
+    (r"\bBesichtigung am\b", "Inspection on"),
+    (r"\bUnverändert wie beschrieben\b", "Unchanged from the description"),
+    (r"\bDefinitiv nur Kategorie\s+([A-D])\b", r"Definitely category \1"),
+    (r"\bnur für Notfälle\b", "emergencies only"),
+    (r"\bBesichtigungs-Video\b", "Inspection video"),
+    (r"\bSIP Kategorie\s+([A-D])\b", r"SIP category \1"),
+    (r"\bWiese hängt zum See hin\b", "The meadow slopes toward the lake"),
+    (r"\bHängt zum See hin\b", "Slopes toward the lake"),
+    (r"\bmeist Nordwind\b", "usually northerly wind"),
+    (r"\bWiese ist landbar\b", "The meadow is landable"),
+    (r"\bDie Wiese ist weiterhin landbar\b", "The meadow remains landable"),
+    (r"\bmit den bekannten Einschränkungen\b", "with the known limitations"),
+    (r"\ballerdings mit Einschränkungen\b", "but with limitations"),
+    (r"\bEndanflug über Bebauung\b", "final approach over buildings"),
+    (r"\bkurze Wiese\b", "short meadow"),
+    (r"\bnur südlichen Teil nutzen\b", "use only the southern part"),
+    (r"\bbis zum Zaun bzw\. zur Baumreihe\b", "up to the fence / tree line"),
+    (r"\bStromleitung nordöstlich beachten\b", "watch the power line to the northeast"),
+    (r"\bZeitweise Vieh möglich\b", "livestock may be present at times"),
+    (r"\binitiales feedback\b", "initial feedback"),
+    (r"\bMittlerweile ist der Anflugbereich südlich der Querstraße bebaut worden\b", "The approach area south of the cross road has since been built up"),
+    (r"\bMit etwas Sicherheitshöhe beim Überflug der Straße bleibt\b", "With some safety height while crossing the road, what remains is"),
+    (r"\bein tatsächlich nutzbarer Streifen von ca\.\b", "an actually usable strip of about"),
+    (r"\bder in der zweiten Hälfte zum Ufer hin abfällt\b", "which slopes down toward the shore in the second half"),
+    (r"\bAm Ende der Wiese kommt dann die Baumreihe bzw\. der Graben\b", "At the end of the meadow there is the tree line / ditch"),
+    (r"\bsind wesentlich besser und bieten mehr Alternativen\b", "are significantly better and offer more alternatives"),
+    (r"\bSie sind länger bzw\. haben einen freien Anflug\b", "They are longer / have an unobstructed approach"),
+    (r"\bEine Landung auf der Wiese in Buchau würde ich unter diese[mn] Umständen nicht mehr in Betracht ziehen\b", "I would no longer consider landing on the meadow in Buchau under these circumstances"),
+    (r"\bist ebenfalls dieser Meinung\b", "shares this opinion"),
+    (r"\bwir würden die Wiese aus dem SIP streichen\b", "we would remove the meadow from the SIP"),
+    (r"\bWiese\b", "meadow"),
+    (r"\blandbar\b", "landable"),
+    (r"\bEinschränkungen\b", "limitations"),
+    (r"\bAnflugbereich\b", "approach area"),
+    (r"\bAnflug\b", "approach"),
+    (r"\bEndanflug\b", "final approach"),
+    (r"\bBebauung\b", "buildings"),
+    (r"\bZaun\b", "fence"),
+    (r"\bBaumreihe\b", "tree line"),
+    (r"\bStromleitung\b", "power line"),
+    (r"\bbeachten\b", "watch"),
+    (r"\bVieh\b", "livestock"),
+    (r"\bmöglich\b", "possible"),
+    (r"\bsüdlichen\b", "southern"),
+    (r"\bnördlich\b", "northern"),
+    (r"\bnordöstlich\b", "northeast"),
+    (r"\bSee\b", "lake"),
+    (r"\bUfer\b", "shore"),
+    (r"\bStraße\b", "road"),
+    (r"\bGraben\b", "ditch"),
+    (r"\bNotfälle\b", "emergencies"),
+    (r"\bKategorie\b", "category"),
+    (r"\bBesichtigung\b", "inspection"),
+    (r"\bbeschrieben\b", "described"),
+    (r"\bfreie[nr]?\b", "clear"),
+    (r"\blänger\b", "longer"),
+]
+
+
+def build_streckenflug_notes_from_json(data: dict[str, Any]) -> str:
     parts: list[str] = []
     category = clean(data.get("kategorie"))
     art = clean(data.get("art"))
@@ -1806,6 +1865,7 @@ def build_streckenflug_notes_from_json(data: dict[str, Any], source_url: str) ->
     ]:
         value = clean(data.get(key))
         if value:
+            value = translate_streckenflug_text(value)
             parts.append(f"{label}: {value}")
     obstacles: list[str] = []
     if clean(data.get("z_uneben")) == "1":
@@ -1816,13 +1876,36 @@ def build_streckenflug_notes_from_json(data: dict[str, Any], source_url: str) ->
         obstacles.append("power/other lines")
     if obstacles:
         parts.append("Reported hazards: " + ", ".join(obstacles))
-    feedback_text = normalize_space(strip_html(clean(data.get("feedback"))))
+    feedback_text = translate_streckenflug_text(streckenflug_html_text(clean(data.get("feedback"))))
     if feedback_text:
         parts.append("Feedback: " + feedback_text)
-    note = "\n".join(parts)
-    if source_url:
-        note = f"streckenflug.at source: {source_url}\n{note}" if note else f"streckenflug.at source: {source_url}"
-    return note.strip()
+    return "\n".join(parts).strip()
+
+
+def streckenflug_html_text(value: str) -> str:
+    value = re.sub(r"<\s*(?:br|/p|/div|hr)\b[^>]*>", ". ", value, flags=re.I)
+    value = strip_html(value)
+    value = re.sub(r"https?://(?:www\.)?landout\.streckenflug\.at/\S+", "", value, flags=re.I)
+    return tidy_streckenflug_text(value)
+
+
+def translate_streckenflug_text(value: str) -> str:
+    text = normalize_space(value)
+    if not text:
+        return ""
+    translated = text
+    for pattern, replacement in STRECKENFLUG_GERMAN_PHRASES:
+        translated = re.sub(pattern, replacement, translated, flags=re.I)
+    return tidy_streckenflug_text(translated)
+
+
+def tidy_streckenflug_text(value: str) -> str:
+    text = normalize_space(value)
+    text = re.sub(r"\s+([.,;:])", r"\1", text)
+    text = re.sub(r"([.!?])\s*\.", r"\1", text)
+    text = re.sub(r"\.{2,}", ".", text)
+    text = re.sub(r"([.!?])\s+([a-z])", lambda m: f"{m.group(1)} {m.group(2).upper()}", text)
+    return text.strip()
 
 
 def extract_streckenflug_photo_urls(html_parts: Sequence[str], source_url: str) -> list[str]:
@@ -2106,7 +2189,7 @@ def extract_streckenflug_type(text: str) -> str:
 
 
 def build_streckenflug_notes(text: str, url: str) -> str:
-    text = normalize_space(text)
+    text = translate_streckenflug_text(normalize_space(text))
     # Keep notes bounded; the detail pages can include lots of navigation/menu text.
     interesting = []
     for marker in ("Comment", "Kommentar", "Remarks", "Bemerkung", "Description", "Beschreibung", "Obstacles", "Hindernisse"):
@@ -2114,8 +2197,6 @@ def build_streckenflug_notes(text: str, url: str) -> str:
         if m:
             interesting.append(m.group(1).strip())
     note = " | ".join(dict.fromkeys(interesting)) or text[:700]
-    if url:
-        note = f"streckenflug.at source: {url}\n{note}"
     return note[:1500]
 
 

@@ -389,7 +389,10 @@ function renderDetail(field) {
     <div class="detail-backdrop" id="detailBackdrop">
       <article class="detail" role="dialog" aria-modal="true">
         <button id="closeDetail">Close</button>
-        <h2>${escapeHtml(field.name)}</h2>
+        <div class="detail-title-row">
+          <h2>${escapeHtml(field.name)}</h2>
+          <span class="badge detail-badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
+        </div>
         <div class="detail-meta">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Outlanding', field.rawDifficulty].filter(Boolean).join(' · '))}</div>
         <div class="detail-grid">
           <div class="detail-card"><span class="status-label">Bearing</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
