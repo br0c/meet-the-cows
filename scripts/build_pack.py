@@ -95,6 +95,25 @@ DEDUPE_STRONG_NAME_DISTANCE_M = 800.0
 PACK_IMAGE_MAX_LONG_EDGE = 2560
 PACK_IMAGE_JPEG_QUALITY = 85
 
+# DeepL translation of German streckenflug notes. Configured in main(); when no key is
+# available the code falls back to the offline STRECKENFLUG_GERMAN_PHRASES dictionary.
+DEEPL_API_KEY = ""
+DEEPL_API_URL = ""
+_DEEPL_DISABLED = False
+_DEEPL_CHARS_SPENT = 0
+# Max characters this run may send to DeepL. Set in main() to min(per-build cap, remaining
+# lifetime quota). None means "not configured" (no guard). This is the budget safeguard:
+# once tripped, deepl_translate returns None so callers fall back to the offline dictionary.
+_DEEPL_BUDGET_CHARS: int | None = None
+_TRANSLATION_CACHE: dict[str, str] = {}
+_TRANSLATION_CACHE_PATH: Path | None = None
+_TRANSLATION_STATS: dict[str, int] = {"deepl": 0, "cache": 0, "fallback": 0}
+
+# Bump whenever the build LOGIC changes the pack output (parsing, merging, translation,
+# schema). A mismatch with the published state forces a full rebuild even if the upstream
+# sources are unchanged, so code changes always reach the deployed pack.
+PACK_SCHEMA_VERSION = 3
+
 
 
 class Progress:
@@ -173,9 +192,31 @@ def main() -> None:
     parser.add_argument("--frequencies-csv", default=os.environ.get("FREQUENCIES_CSV", ""), help="Optional legacy frequency CSV URL/path. Disabled by default; OpenAIP/SIA/CUP notes are preferred.")
     parser.add_argument("--vac-codes", default="", help="Optional comma-separated ICAO codes or path/URL to a text file of ICAO codes to try. Use to limit/extend VAC candidates.")
     parser.add_argument("--keep-raw", action="store_true", help="Keep downloaded raw files in .cache")
+    parser.add_argument("--deepl-api-key", default=os.environ.get("DEEPL_API_KEY", ""), help="DeepL API key for translating German streckenflug notes to English; prefer the DEEPL_API_KEY env var. Without it, an offline dictionary is used.")
+    parser.add_argument("--deepl-api-url", default=os.environ.get("DEEPL_API_URL", ""), help="Override the DeepL endpoint. Auto-selected from the key (free keys end in ':fx') when unset.")
+    parser.add_argument("--deepl-max-chars", type=int, default=int(os.environ.get("DEEPL_MAX_CHARS", "300000")), help="Safety cap on DeepL characters spent in a single build (also bounded by remaining lifetime quota). 0 disables the per-build cap. Protects the finite free-tier budget if the translation cache is ever missed.")
+    parser.add_argument("--state-url", default=os.environ.get("PACK_STATE_URL", ""), help="URL of the previously published state.json. When set and the source fingerprint is unchanged, the build short-circuits (skips the rebuild and deploy).")
+    parser.add_argument("--force-full", action="store_true", default=os.environ.get("FORCE_FULL", "").lower() in ("1", "true", "yes"), help="Ignore the incremental short-circuit and rebuild everything.")
     args = parser.parse_args()
-    global DEDUPE_DISTANCE_M
+    global DEDUPE_DISTANCE_M, DEEPL_API_KEY, DEEPL_API_URL, _DEEPL_BUDGET_CHARS
     DEDUPE_DISTANCE_M = float(args.dedupe_distance_m)
+    DEEPL_API_KEY = args.deepl_api_key
+    DEEPL_API_URL = resolve_deepl_api_url(args.deepl_api_key, args.deepl_api_url)
+    if DEEPL_API_KEY:
+        usage = deepl_usage()
+        if usage:
+            used, limit = usage
+            remaining = max(0, limit - used)
+            _DEEPL_BUDGET_CHARS = min(args.deepl_max_chars, remaining) if args.deepl_max_chars > 0 else remaining
+            pct = (used / limit * 100) if limit else 0
+            print(
+                f"DeepL usage before build: {used:,}/{limit:,} ({pct:.1f}% of lifetime used); "
+                f"this run may spend up to {_DEEPL_BUDGET_CHARS:,} chars",
+                file=sys.stderr,
+            )
+        else:
+            _DEEPL_BUDGET_CHARS = args.deepl_max_chars if args.deepl_max_chars > 0 else None
+            print(f"DeepL usage endpoint unavailable; per-build cap = {_DEEPL_BUDGET_CHARS}", file=sys.stderr)
 
     root = Path.cwd()
     out_dir = root / args.out
@@ -184,11 +225,38 @@ def main() -> None:
     media_dir = out_dir / "media"
     docs_dir = out_dir / "docs" / "vac"
 
+    # Persisted across runs (not under the per-pack cache_dir that gets wiped each build)
+    # so the daily rebuild only translates new/changed strings.
+    load_translation_cache(root / ".cache" / "translation-cache.json")
+
     if out_dir.exists():
         shutil.rmtree(out_dir)
     media_dir.mkdir(parents=True, exist_ok=True)
     docs_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Level 0 incremental: skip the whole rebuild when no source changed ---
+    # Resolve the VAC cycle up front so it can feed the fingerprint and be reused below.
+    resolved_vac_root = ""
+    resolved_vac_date = args.vac_date
+    if args.vac_root and args.vac_root.lower() != "none":
+        resolved_vac_root, inferred_vac_date = resolve_vac_root(args.vac_root, raw_dir)
+        if resolved_vac_date.lower() == "auto":
+            resolved_vac_date = inferred_vac_date or ""
+    source_state = build_source_state(
+        cupx=source_version_tag(args.cupx),
+        vac=resolved_vac_date or resolved_vac_root,
+        streckenflug=(
+            streckenflug_list_fingerprint(args.streckenflug_url, args.streckenflug_countries, raw_dir)
+            if args.include_streckenflug else ""
+        ),
+    )
+    if args.state_url and not args.force_full:
+        if source_states_match(read_previous_state(args.state_url), source_state):
+            print(f"No source changes since last build (schema {PACK_SCHEMA_VERSION}); skipping rebuild.", file=sys.stderr)
+            write_build_status(root, changed=False)
+            return
+    print(f"Building pack (schema {PACK_SCHEMA_VERSION}); fingerprint {source_state}", file=sys.stderr)
 
     blob = read_bytes(args.cupx, raw_dir)
     cup_text, pictures = extract_cup_and_pictures(blob)
@@ -202,12 +270,6 @@ def main() -> None:
 
     vac_count = 0
     vac_created_airfields = 0
-    resolved_vac_root = ""
-    resolved_vac_date = args.vac_date
-    if args.vac_root and args.vac_root.lower() != "none":
-        resolved_vac_root, inferred_vac_date = resolve_vac_root(args.vac_root, raw_dir)
-        if resolved_vac_date.lower() == "auto":
-            resolved_vac_date = inferred_vac_date or ""
 
     airport_index: dict[str, dict[str, Any]] = {}
     runway_index: dict[str, dict[str, Any]] = {}
@@ -215,6 +277,13 @@ def main() -> None:
     if resolved_vac_root:
         if args.include_vac_airfields:
             if args.airfield_source == "openaip":
+                # ICAO codes we already hold from the Guide parse. OpenAIP records for these
+                # codes are kept regardless of type so their authoritative names win on merge.
+                known_icao_codes = {
+                    code
+                    for f in fields
+                    if (code := clean(f.get("code")).upper()) and re.fullmatch(r"[A-Z]{4}", code)
+                }
                 airport_index, runway_index, openaip_frequency_index = load_openaip_airfields(
                     countries=args.countries,
                     raw_dir=raw_dir,
@@ -223,6 +292,7 @@ def main() -> None:
                     local_sources=args.openaip_airports,
                     include_type_codes=parse_int_set(args.openaip_include_types),
                     candidate_mode=args.vac_candidate_mode,
+                    known_codes=known_icao_codes,
                 )
                 merge_frequency_indexes(frequency_index, openaip_frequency_index)
                 apply_frequency_index(fields, frequency_index)
@@ -341,9 +411,31 @@ def main() -> None:
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # Publish the source fingerprint so the next build can detect "nothing changed".
+    state_out = dict(source_state)
+    state_out["builtAt"] = dt.datetime.now(dt.UTC).isoformat()
+    (out_dir / "state.json").write_text(json.dumps(state_out, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_build_status(root, changed=True)
+
+    save_translation_cache()
+
     if not args.keep_raw:
         shutil.rmtree(cache_dir, ignore_errors=True)
 
+    stats = _TRANSLATION_STATS
+    translate_engine = "DeepL" if DEEPL_API_KEY and not _DEEPL_DISABLED else ("DeepL(disabled)" if DEEPL_API_KEY else "dictionary")
+    print(
+        f"Translation ({translate_engine}): {stats['deepl']} translated, "
+        f"{stats['cache']} cached, {stats['fallback']} dictionary-fallback; "
+        f"~{_DEEPL_CHARS_SPENT:,} DeepL chars spent this run",
+        file=sys.stderr,
+    )
+    if DEEPL_API_KEY:
+        usage = deepl_usage()
+        if usage:
+            used, limit = usage
+            pct = (used / limit * 100) if limit else 0
+            print(f"DeepL usage after build: {used:,}/{limit:,} ({pct:.1f}% of lifetime used)", file=sys.stderr)
     print(
         f"Built {args.pack_name}: {len(fields)} entries, {copied_media} CUP photos, "
         f"{vac_count} VAC PDFs, {vac_created_airfields} VAC-only airfields, "
@@ -386,6 +478,97 @@ def read_text(url_or_path: str, raw_dir: Path) -> str:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return data.decode("latin-1")
+
+
+# --- Incremental build (Level 0): fingerprint the sources to skip unchanged rebuilds ---
+
+def source_version_tag(url_or_path: str) -> str:
+    """Cheap change signal for a remote/local file: ETag/Last-Modified, or size+mtime."""
+    if re.match(r"^https?://", url_or_path, re.I):
+        try:
+            request = urllib.request.Request(url_or_path, method="HEAD")
+            with urllib.request.urlopen(request, timeout=30) as response:
+                tag = response.headers.get("ETag") or response.headers.get("Last-Modified") or ""
+            return tag.strip('"')
+        except Exception as error:  # noqa: BLE001 - unknown version -> force rebuild (safe)
+            print(f"version check failed for {url_or_path}: {error}", file=sys.stderr)
+            return ""
+    path = Path(url_or_path)
+    if path.exists():
+        stat = path.stat()
+        return f"{stat.st_size}-{int(stat.st_mtime)}"
+    return ""
+
+
+def extract_streckenflug_list_versions(page: str) -> list[tuple[str, str]]:
+    """From a streckenflug list page, return (id, visit-year) pairs (the change signal)."""
+    pairs: list[tuple[str, str]] = []
+    for row_match in re.finditer(r"<tr\b[^>]*>(?P<row>.*?)</tr>", page, re.I | re.S):
+        row = row_match.group("row")
+        id_match = re.search(r"iID=(\d+)", row)
+        if not id_match:
+            continue
+        cells = re.findall(r"<td\b[^>]*>(.*?)</td>", row, re.I | re.S)
+        visit = normalize_space(strip_html(cells[4])) if len(cells) > 4 else ""
+        pairs.append((id_match.group(1), visit))
+    return pairs
+
+
+def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_dir: Path) -> str:
+    """Hash of (id, visit-year) across the country list pages. Year-granular by design."""
+    import hashlib
+
+    entries: list[str] = []
+    for country in countries:
+        url = streckenflug_country_list_url(list_url, str(country).upper())
+        try:
+            page = read_text(url, raw_dir)
+        except Exception as error:  # noqa: BLE001 - unknown -> force rebuild (safe)
+            print(f"streckenflug list fingerprint failed for {country}: {error}", file=sys.stderr)
+            return ""
+        entries.extend(f"{iid}:{visit}" for iid, visit in extract_streckenflug_list_versions(page))
+    entries.sort()
+    return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
+
+
+def build_source_state(*, cupx: str, vac: str, streckenflug: str) -> dict[str, Any]:
+    return {
+        "schemaVersion": PACK_SCHEMA_VERSION,
+        "cupx": cupx,
+        "vac": vac,
+        "streckenflug": streckenflug,
+    }
+
+
+def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
+    if not previous:
+        return False
+    return all(str(previous.get(k)) == str(current.get(k)) for k in ("schemaVersion", "cupx", "vac", "streckenflug"))
+
+
+def read_previous_state(state_url: str) -> dict[str, Any] | None:
+    """Fetch the last published state.json (fresh, no cache). None if missing/unreadable."""
+    if not state_url:
+        return None
+    try:
+        request = urllib.request.Request(state_url, headers={"Cache-Control": "no-cache"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 - missing state (first build) -> rebuild
+        return None
+
+
+def write_build_status(root: Path, *, changed: bool) -> None:
+    """Signal the CI workflow whether a deploy is needed (skip when nothing changed)."""
+    gh_output = os.environ.get("GITHUB_OUTPUT")
+    if gh_output:
+        try:
+            with open(gh_output, "a", encoding="utf-8") as handle:
+                handle.write(f"changed={'true' if changed else 'false'}\n")
+        except Exception as error:  # noqa: BLE001
+            print(f"could not write GITHUB_OUTPUT: {error}", file=sys.stderr)
+    (root / "build-status.json").write_text(json.dumps({"changed": changed}), encoding="utf-8")
 
 
 def extract_cup_and_pictures(blob: bytes) -> tuple[str, dict[str, bytes]]:
@@ -725,6 +908,7 @@ def load_openaip_airfields(
     local_sources: str,
     include_type_codes: set[int],
     candidate_mode: str,
+    known_codes: set[str] = frozenset(),
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     countries = [str(c).upper() for c in countries]
     airports: dict[str, dict[str, Any]] = {}
@@ -762,12 +946,19 @@ def load_openaip_airfields(
             airport = normalize_openaip_airport(record, country)
             if not airport:
                 continue
+            airport_code = clean(airport.get("code")).upper()
             if candidate_mode == "all":
                 is_candidate = True
             elif candidate_mode == "pack":
                 is_candidate = False
             else:
                 is_candidate = is_openaip_glider_relevant(record, include_type_codes)
+            # Always keep an OpenAIP airfield whose ICAO code we already have from a primary
+            # source (Guide/streckenflug). This lets its authoritative name and metadata
+            # merge onto that field even when it is not otherwise flagged glider-relevant
+            # (e.g. type 0 aerodromes like LFMR/LFNS/LFNC with no glider keyword).
+            if not is_candidate and airport_code and airport_code in known_codes:
+                is_candidate = True
             if not is_candidate:
                 continue
             code = airport.get("code") or airport.get("altCode") or stable_airfield_code(country, airport["name"], airport["latitude"], airport["longitude"])
@@ -2125,12 +2316,152 @@ def translate_streckenflug_text(value: str) -> str:
 def translate_streckenflug_chunk(text: str) -> str:
     if not text or re.fullmatch(r"\s+---\s+", text):
         return text
+    return translate_german_to_english(text)
+
+
+def translate_german_to_english(text: str) -> str:
+    """Translate German streckenflug text to English via DeepL, with an offline fallback.
+
+    French is left untouched (DeepL's detected source language is checked). Results are
+    memoised in a run-persistent cache so the daily rebuild only pays for new/changed text.
+    """
+    key = normalize_space(text)
+    if not key:
+        return text
+    cached = _TRANSLATION_CACHE.get(key)
+    if cached is not None:
+        _TRANSLATION_STATS["cache"] += 1
+        return cached
+    result = deepl_translate(key)
+    if result is not None:
+        _TRANSLATION_CACHE[key] = result
+        _TRANSLATION_STATS["deepl"] += 1
+        return result
+    # DeepL unavailable or failed: best-effort dictionary substitution.
+    _TRANSLATION_STATS["fallback"] += 1
+    return dictionary_translate_german(text)
+
+
+def deepl_translate(text: str) -> str | None:
+    """Return an English translation of German text, or None when DeepL is unavailable.
+
+    French input is returned unchanged (German -> English only). Any auth/quota error
+    disables DeepL for the rest of the run so we degrade to the dictionary instead of
+    hammering the API.
+    """
+    global _DEEPL_DISABLED, _DEEPL_CHARS_SPENT
+    if _DEEPL_DISABLED or not DEEPL_API_KEY or not DEEPL_API_URL:
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    # Budget safeguard: never spend past the per-run allowance (min of the per-build cap and
+    # remaining lifetime quota). Once tripped, stop calling DeepL for the rest of the build.
+    if _DEEPL_BUDGET_CHARS is not None and _DEEPL_CHARS_SPENT + len(stripped) > _DEEPL_BUDGET_CHARS:
+        if not _DEEPL_DISABLED:
+            print(
+                f"DeepL budget guard: stopping at {_DEEPL_CHARS_SPENT:,} chars this run "
+                f"(allowance {_DEEPL_BUDGET_CHARS:,}); remaining notes use the offline dictionary",
+                file=sys.stderr,
+            )
+        _DEEPL_DISABLED = True
+        return None
+    body = urllib.parse.urlencode({"text": stripped, "target_lang": "EN-GB"}).encode("utf-8")
+    request = urllib.request.Request(
+        DEEPL_API_URL,
+        data=body,
+        headers={
+            "Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "MeetTheCows-pack-build/0.4",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403, 456):
+            _DEEPL_DISABLED = True
+            print(f"DeepL disabled for this run (HTTP {error.code}); using offline dictionary", file=sys.stderr)
+        else:
+            print(f"DeepL request failed (HTTP {error.code})", file=sys.stderr)
+        return None
+    except Exception as error:  # noqa: BLE001 - network/JSON errors should not abort the build
+        print(f"DeepL request error: {error}", file=sys.stderr)
+        return None
+    translations = payload.get("translations") or []
+    if not translations:
+        return None
+    # DeepL bills for the characters it processed regardless of detected language.
+    _DEEPL_CHARS_SPENT += len(stripped)
+    first = translations[0]
+    detected = clean(first.get("detected_source_language")).upper()
+    translated = clean(first.get("text"))
+    # French stays French: keep the original when DeepL detects the source as French.
+    if detected == "FR":
+        return stripped
+    return translated or stripped
+
+
+def dictionary_translate_german(text: str) -> str:
     if not looks_german_text(text):
         return text
     translated = text
     for pattern, replacement in STRECKENFLUG_GERMAN_PHRASES:
         translated = re.sub(pattern, replacement, translated, flags=re.I)
     return translated
+
+
+def resolve_deepl_api_url(api_key: str, override: str = "") -> str:
+    if override:
+        return override
+    if not api_key:
+        return ""
+    # DeepL free-tier auth keys end with ":fx".
+    if api_key.strip().endswith(":fx"):
+        return "https://api-free.deepl.com/v2/translate"
+    return "https://api.deepl.com/v2/translate"
+
+
+def deepl_usage() -> tuple[int, int] | None:
+    """Return (character_count, character_limit) from DeepL, or None if unavailable."""
+    if not DEEPL_API_KEY or not DEEPL_API_URL:
+        return None
+    usage_url = DEEPL_API_URL.rsplit("/", 1)[0] + "/usage"
+    try:
+        request = urllib.request.Request(usage_url, headers={"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return int(data.get("character_count", 0)), int(data.get("character_limit", 0))
+    except Exception as error:  # noqa: BLE001
+        print(f"DeepL usage check failed: {error}", file=sys.stderr)
+        return None
+
+
+def load_translation_cache(path: Path) -> None:
+    global _TRANSLATION_CACHE, _TRANSLATION_CACHE_PATH
+    _TRANSLATION_CACHE_PATH = path
+    try:
+        if path.exists():
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                _TRANSLATION_CACHE = {str(k): str(v) for k, v in loaded.items()}
+    except Exception as error:  # noqa: BLE001
+        print(f"translation cache load failed: {error}", file=sys.stderr)
+
+
+def save_translation_cache() -> None:
+    if _TRANSLATION_CACHE_PATH is None:
+        return
+    try:
+        _TRANSLATION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _TRANSLATION_CACHE_PATH.write_text(
+            json.dumps(_TRANSLATION_CACHE, ensure_ascii=False, sort_keys=True, indent=0),
+            encoding="utf-8",
+        )
+    except Exception as error:  # noqa: BLE001
+        print(f"translation cache save failed: {error}", file=sys.stderr)
 
 
 def looks_german_text(value: str) -> bool:
@@ -2636,6 +2967,11 @@ def name_quality_score(field: dict[str, Any], name: str) -> tuple[int, int, int,
 
 def clean_display_name(name: str) -> str:
     value = re.sub(r"^(?:#?\d+\s+)+", "", clean(name)).strip()
+    # Strip a leading ICAO code token, e.g. "LFMR Barcelonnette" -> "Barcelonnette".
+    # Case-sensitive on purpose: real codes in the source are upper-case, so this does
+    # not eat title-case place names such as "Livigno", "Lion" or "Lus". Only strip when
+    # descriptive text follows, so a code-only name keeps the code as its label.
+    value = re.sub(r"^(?:LF|LS|LI)[A-Z0-9]{2,4}\b\s+(?=\S)", "", value).strip()
     value = re.sub(r"\s+\b(?:LF|LS|LI)[A-Z0-9]{2,4}\b\s*$", "", value, flags=re.I).strip()
     return normalize_display_name(value)
 

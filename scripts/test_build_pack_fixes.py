@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Fast, offline regression tests for field-name selection and German translation.
+
+Run directly: `python scripts/test_build_pack_fixes.py`. No network or API key needed;
+the DeepL call is monkeypatched. Guards the fixes for:
+  - truncated airfield names (Barcelonnett / Sisteron The / LFNC St Crepin)
+  - German streckenflug notes not being fully translated (French must stay French)
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_build_pack():
+    spec = importlib.util.spec_from_file_location("build_pack", ROOT / "scripts" / "build_pack.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+bp = load_build_pack()
+GUIDE = "planeur-net / Guide des Aires de Sécurité"
+STRK = "streckenflug.at Landout Database"
+
+
+def field(source: str, name: str) -> dict:
+    return {"source": {"name": source}, "name": name}
+
+
+def test_clean_display_name_strips_leading_code():
+    assert bp.clean_display_name("#42 LFMR Barcelonnette") == "Barcelonnette"
+    assert bp.clean_display_name("#40 LFNC St Crepin") == "St Crepin"
+    assert bp.clean_display_name("#32 LFNS Sisteron") == "Sisteron"
+    # Trailing code still stripped.
+    assert bp.clean_display_name("Barcelonnette LFMR") == "Barcelonnette"
+
+
+def test_clean_display_name_keeps_place_names():
+    # Title-case place names starting with L must not be mistaken for ICAO codes.
+    for name in ["Livigno", "Lion-sur-Mer", "Lus la Croix Haute", "La Motte", "Lissabon"]:
+        assert bp.clean_display_name(name) == name, name
+
+
+def test_guide_full_name_beats_truncated_streckenflug():
+    cases = [
+        ("#42 LFMR Barcelonnette", "Barcelonnett", "Barcelonnette"),
+        ("#32 LFNS Sisteron", "Sisteron The", "Sisteron"),
+        ("#40 LFNC St Crepin", "LFNC St Crepin", "St Crepin"),
+    ]
+    for guide_name, strk_name, expected in cases:
+        group = [field(GUIDE, guide_name), field(STRK, strk_name)]
+        assert bp.choose_best_name(group, group[0]) == expected, (guide_name, strk_name)
+
+
+def test_openaip_name_wins_when_present():
+    group = [field(GUIDE, "#42 LFMR Barcelonnette"), field("OpenAIP", "Barcelonnette - Saint-Pons")]
+    assert bp.choose_best_name(group, group[0]) == "Barcelonnette - Saint-Pons"
+
+
+def test_deepl_url_resolution():
+    assert bp.resolve_deepl_api_url("abc:fx").endswith("api-free.deepl.com/v2/translate")
+    assert bp.resolve_deepl_api_url("abc").endswith("://api.deepl.com/v2/translate")
+    assert bp.resolve_deepl_api_url("") == ""
+
+
+def test_translation_cache_dedups_and_translates(monkeypatch=None):
+    bp.DEEPL_API_KEY = "key:fx"
+    bp.DEEPL_API_URL = "http://mock"
+    bp._DEEPL_DISABLED = False
+    bp._TRANSLATION_CACHE = {}
+    bp._TRANSLATION_STATS = {"deepl": 0, "cache": 0, "fallback": 0}
+    calls = {"n": 0}
+
+    def fake(text: str):
+        calls["n"] += 1
+        return "EN:" + text
+
+    original = bp.deepl_translate
+    bp.deepl_translate = fake
+    try:
+        assert bp.translate_german_to_english("Achtung Hochspannung") == "EN:Achtung Hochspannung"
+        assert bp.translate_german_to_english("Achtung Hochspannung") == "EN:Achtung Hochspannung"
+        assert calls["n"] == 1, "second identical string must come from cache"
+        assert bp._TRANSLATION_STATS == {"deepl": 1, "cache": 1, "fallback": 0}
+    finally:
+        bp.deepl_translate = original
+
+
+def test_french_stays_french():
+    # Simulate a DeepL response whose detected source is French: keep the original.
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"translations": [{"detected_source_language": "FR", "text": "DISCARD ME"}]}
+            ).encode()
+
+    bp.DEEPL_API_KEY = "key:fx"
+    bp.DEEPL_API_URL = "http://mock"
+    bp._DEEPL_DISABLED = False
+    original = bp.urllib.request.urlopen
+    bp.urllib.request.urlopen = lambda *a, **k: Resp()
+    try:
+        assert bp.deepl_translate("Terrain en herbe, pente douce") == "Terrain en herbe, pente douce"
+    finally:
+        bp.urllib.request.urlopen = original
+
+
+def test_fallback_without_key_leaves_french_untouched():
+    bp.DEEPL_API_KEY = ""
+    bp.DEEPL_API_URL = ""
+    bp._DEEPL_DISABLED = False
+    bp._DEEPL_BUDGET_CHARS = None
+    bp._TRANSLATION_CACHE = {}
+    french = "Terrain en herbe, attention au maïs"
+    assert bp.translate_german_to_english(french) == french
+
+
+def test_budget_guard_stops_spending():
+    # A tiny per-run allowance must halt DeepL and disable it before overspending.
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"translations": [{"detected_source_language": "DE", "text": "EN"}]}).encode()
+
+    bp.DEEPL_API_KEY = "key:fx"
+    bp.DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"
+    bp._DEEPL_DISABLED = False
+    bp._DEEPL_CHARS_SPENT = 0
+    bp._DEEPL_BUDGET_CHARS = 10
+    original = bp.urllib.request.urlopen
+    bp.urllib.request.urlopen = lambda *a, **k: Resp()
+    try:
+        assert bp.deepl_translate("kurz") == "EN"          # 4 chars, under cap
+        assert bp._DEEPL_CHARS_SPENT == 4
+        assert bp.deepl_translate("langeres") is None       # 4+8 > 10 -> guard trips
+        assert bp._DEEPL_DISABLED is True
+    finally:
+        bp.urllib.request.urlopen = original
+        bp._DEEPL_BUDGET_CHARS = None
+        bp._DEEPL_DISABLED = False
+        bp._DEEPL_CHARS_SPENT = 0
+
+
+def test_source_states_match():
+    base = bp.build_source_state(cupx="etagA", vac="2026-06-11", streckenflug="hash1")
+    assert bp.source_states_match(dict(base), base) is True
+    assert bp.source_states_match(None, base) is False
+    # Any source change -> mismatch -> rebuild.
+    assert bp.source_states_match({**base, "cupx": "etagB"}, base) is False
+    assert bp.source_states_match({**base, "vac": "2026-07-09"}, base) is False
+    assert bp.source_states_match({**base, "streckenflug": "hash2"}, base) is False
+    # A schema bump forces a rebuild even if sources are identical.
+    assert bp.source_states_match({**base, "schemaVersion": base["schemaVersion"] - 1}, base) is False
+
+
+def test_extract_streckenflug_list_versions():
+    page = (
+        "<table><tr><td>Name</td><td>Country</td><td>Region</td><td>Category</td><td>Visit</td><td></td></tr>"
+        "<tr><td><a href='index.php?inc=map&iID=452'>Altdorf</a></td><td>Switzerland</td>"
+        "<td>Alps</td><td>Landout</td><td>2026</td><td></td></tr>"
+        "<tr><td><a href='index.php?inc=map&iID=20'>Aiton</a></td><td>France</td>"
+        "<td>Alps</td><td>Landout</td><td>2022</td><td></td></tr></table>"
+    )
+    pairs = bp.extract_streckenflug_list_versions(page)
+    assert ("452", "2026") in pairs and ("20", "2022") in pairs
+    # A visit-year change alters the fingerprint (record would be re-fetched).
+    changed = page.replace("<td>2026</td>", "<td>2027</td>")
+    assert bp.extract_streckenflug_list_versions(changed) != pairs
+
+
+def main() -> None:
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for test in tests:
+        test()
+        print(f"  ok  {test.__name__}")
+    print(f"\nAll {len(tests)} build_pack fix tests passed")
+
+
+if __name__ == "__main__":
+    main()

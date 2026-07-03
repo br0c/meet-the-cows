@@ -9,8 +9,13 @@ on:
       - "requirements.txt"
       - ".github/workflows/build-data-pack.yml"
   workflow_dispatch:
+    inputs:
+      force_full:
+        description: "Rebuild everything, ignoring the incremental short-circuit"
+        type: boolean
+        default: true
   schedule:
-    # Daily at 03:17 UTC
+    # Daily at 03:17 UTC (incremental Mon-Sat; full refresh on Sunday)
     - cron: "17 3 * * *"
 
 permissions:
@@ -31,6 +36,7 @@ jobs:
     env:
       PACK_ID: fr-alps
       PACK_NAME: France / Alps
+      PAGES_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
 
     steps:
       - name: Checkout
@@ -47,9 +53,42 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
 
+      - name: Unit tests (name/translation/incremental logic)
+        run: python scripts/test_build_pack_fixes.py
+
+      # Full rebuild on code push (developer intent) and on the Sunday cron (weekly refresh
+      # that catches same-year streckenflug edits). The Mon-Sat cron runs incrementally and
+      # short-circuits when no source changed.
+      - name: Decide build mode
+        id: mode
+        run: |
+          FORCE=false
+          case "${{ github.event_name }}" in
+            push) FORCE=true ;;
+            workflow_dispatch) FORCE="${{ github.event.inputs.force_full }}" ;;
+            schedule) [ "$(date -u +%u)" = "7" ] && FORCE=true ;;
+          esac
+          echo "force_full=${FORCE}" >> "$GITHUB_OUTPUT"
+          echo "Build mode: force_full=${FORCE} (event=${{ github.event_name }})"
+
+      # Persist German->English translations so each build only pays DeepL for new/changed
+      # text. Unique primary key => always saves the updated cache; restore-keys pulls the
+      # most recent one from a previous run.
+      - name: Restore translation cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/translation-cache.json
+          key: translation-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            translation-cache-
+
       - name: Build data pack
+        id: build
         env:
           OPENAIP_API_KEY: ${{ secrets.OPENAIP_API_KEY }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/${{ env.PACK_ID }}/state.json
+          FORCE_FULL: ${{ steps.mode.outputs.force_full }}
         run: |
           rm -rf "data/packs/${PACK_ID}" ".cache/${PACK_ID}" "dist/site"
 
@@ -66,16 +105,23 @@ jobs:
             --vac-date auto \
             --include-vac-airfields
 
+      - name: No source changes (skipped rebuild)
+        if: steps.build.outputs.changed == 'false'
+        run: echo "No source changes since the last build; kept the existing deployed pack."
+
       - name: Smoke test pack
+        if: steps.build.outputs.changed != 'false'
         run: python scripts/smoke_test_pack.py
 
       - name: Cache generated data pack for app-only deploys
+        if: steps.build.outputs.changed != 'false'
         uses: actions/cache/save@v4
         with:
           path: data/packs/${{ env.PACK_ID }}
           key: pages-pack-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Assemble Pages site
+        if: steps.build.outputs.changed != 'false'
         run: |
           mkdir -p dist/site/packs
 
@@ -95,19 +141,23 @@ jobs:
           du -sh dist/site dist/site/packs dist/site/packs/${PACK_ID}
 
       - name: Setup Pages
+        if: steps.build.outputs.changed != 'false'
         uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
+        if: steps.build.outputs.changed != 'false'
         uses: actions/upload-pages-artifact@v3
         with:
           name: github-pages-${{ github.run_attempt }}
           path: dist/site
 
       - name: Deploy to GitHub Pages
+        if: steps.build.outputs.changed != 'false'
         id: deployment
         uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 
       - name: Show URL
+        if: steps.build.outputs.changed != 'false'
         run: echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
