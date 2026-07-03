@@ -50,13 +50,15 @@ python scripts/build_pack.py \
   --pack-id fr-alps \
   --pack-name "France / Alps" \
   --include-streckenflug \
-  --streckenflug-countries FR CH IT
+  --streckenflug-countries FR CH IT \
+  --streckenflug-workers 4
 ```
 
 Useful debug flags:
 
 ```bash
 --streckenflug-max-detail 20     # only fetch the first 20 candidate details
+--streckenflug-workers 4         # fetch JSON details/images concurrently for full builds
 --no-streckenflug-images         # import fields/notes but skip image downloads
 --keep-raw                       # keep cached JSON responses under .cache/<pack-id>/raw
 ```
@@ -70,6 +72,26 @@ Implementation details:
 - No extra Python dependency is required; this uses only the standard library.
 
 Important: importing and rehosting photos/content may require written permission from the upstream rights holder. Do not publish a derived public pack unless you are comfortable with that permission/licence position.
+
+For a full France/Alps build with CUPX, OpenAIP airfields and Streckenflug, run locally with `OPENAIP_API_KEY` exported in your shell, or run it in GitHub Actions where the repository secret is available:
+
+```bash
+rm -rf data/packs/fr-alps .cache/fr-alps
+
+python scripts/build_pack.py \
+  --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
+  --pack-id fr-alps \
+  --pack-name "France / Alps" \
+  --countries FR CH IT \
+  --airfield-source openaip \
+  --include-streckenflug \
+  --streckenflug-countries FR CH IT \
+  --streckenflug-workers 4 \
+  --vac-root none \
+  --keep-raw
+```
+
+GitHub secrets are not automatically visible in a local terminal. For local builds, use `export OPENAIP_API_KEY=...` or pass `--openaip-api-key ...`.
 
 ### VAC PDFs and VAC-only airfields
 

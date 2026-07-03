@@ -156,6 +156,7 @@ def main() -> None:
     parser.add_argument("--streckenflug-url", default=os.environ.get("STRECKENFLUG_URL", STRECKENFLUG_LIST_URL), help="Public streckenflug.at list URL to scrape")
     parser.add_argument("--streckenflug-countries", nargs="+", default=os.environ.get("STRECKENFLUG_COUNTRIES", "FR CH IT").split(), help="Countries to keep from streckenflug.at, default FR CH IT")
     parser.add_argument("--streckenflug-max-detail", type=int, default=int(os.environ.get("STRECKENFLUG_MAX_DETAIL", "0")), help="Debug limit for streckenflug detail pages; 0 means no limit")
+    parser.add_argument("--streckenflug-workers", type=int, default=int(os.environ.get("STRECKENFLUG_WORKERS", "1")), help="Number of concurrent streckenflug detail/image workers. Default 1; use 4-8 for full builds.")
     parser.add_argument("--no-streckenflug-images", action="store_true", help="Import streckenflug.at fields but skip downloading their public full-resolution images")
     parser.add_argument("--vac-candidate-mode", choices=["glider", "pack", "all"], default="glider", help="Which official VAC candidates to try: glider OpenAIP/pack airfields, existing pack only, or every airport from the coordinate source")
     parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory")
@@ -250,6 +251,7 @@ def main() -> None:
         streckenflug_fields = load_streckenflug_fields(
             args.streckenflug_url,
             raw_dir,
+            workers=args.streckenflug_workers,
             media_dir=media_dir,
             pack_id=args.pack_id,
             countries=args.streckenflug_countries,
@@ -1468,6 +1470,7 @@ def load_streckenflug_fields(
     list_url: str,
     raw_dir: Path,
     *,
+    workers: int = 1,
     media_dir: Path,
     pack_id: str,
     countries: Sequence[str],
@@ -1481,9 +1484,8 @@ def load_streckenflug_fields(
 
       json.php?inc=map&task=landeplatz&id=<streckenflug id>
 
-    This importer intentionally uses that public browser endpoint instead of parsing
-    the rendered map panel HTML. Keep upstream permission/licence requirements in mind
-    before publishing a pack that rehosts copied photos.
+    `workers` parallelises detail JSON and image downloads. Keep the default low and
+    use a modest value such as 4 for full builds so the upstream site is not hammered.
     """
     country_filter = {str(c).upper() for c in countries}
     print(f"Loading streckenflug.at list {list_url}", file=sys.stderr)
@@ -1493,23 +1495,53 @@ def load_streckenflug_fields(
         candidates = candidates[:max_detail]
     print(f"streckenflug.at: {len(candidates)} candidate ids from public list", file=sys.stderr)
 
+    if not candidates:
+        return []
+
+    worker_count = max(1, int(workers or 1))
     progress = Progress(len(candidates), "streckenflug.at details")
     fields: list[dict[str, Any]] = []
-    for index, item in enumerate(candidates, start=1):
+    skipped = 0
+    failed = 0
+
+    def fetch_one(item: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
+        source_id = clean(item.get("streckenflugId"))
         try:
-            data = fetch_streckenflug_detail_json(item["streckenflugId"], raw_dir)
+            data = fetch_streckenflug_detail_json(source_id, raw_dir)
             field = parse_streckenflug_detail(data, item, pack_id, media_dir, include_images=include_images)
             if not field:
-                progress.update(index, extra=f"skip {item.get('name','')[:32]}")
-                continue
+                return None, f"skip {item.get('name','')[:32]}"
             if country_filter and clean(field.get("country")).upper() not in country_filter:
-                progress.update(index, extra=f"skip country {field.get('country','')}")
-                continue
-            fields.append(field)
-            progress.update(index, extra=f"+{len(fields)} {field.get('name','')[:32]}")
+                return None, f"skip country {field.get('country','')}"
+            return field, f"+ {field.get('name','')[:32]}"
         except Exception as error:
-            progress.update(index, extra=f"err {item.get('name','')[:24]}: {error}", force=True)
-    progress.done(f"imported {len(fields)}, {count_media_items(fields)} images")
+            return None, f"err {item.get('name','')[:24]}: {error}"
+
+    if worker_count == 1:
+        for item in candidates:
+            field, status = fetch_one(item)
+            if field:
+                fields.append(field)
+            elif status.startswith("err"):
+                failed += 1
+            else:
+                skipped += 1
+            progress.update(step=1, extra=f"{status} ({len(fields)} imported)", force=status.startswith("err"))
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [executor.submit(fetch_one, item) for item in candidates]
+            for future in as_completed(futures):
+                field, status = future.result()
+                if field:
+                    fields.append(field)
+                elif status.startswith("err"):
+                    failed += 1
+                else:
+                    skipped += 1
+                progress.update(step=1, extra=f"{status} ({len(fields)} imported)", force=status.startswith("err"))
+
+    fields.sort(key=lambda f: (clean(f.get("country")), clean(f.get("name"))))
+    progress.done(f"imported {len(fields)}, skipped {skipped}, failed {failed}, {count_media_items(fields)} images")
     return fields
 
 
