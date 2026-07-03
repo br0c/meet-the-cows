@@ -1,5 +1,5 @@
-const APP_VERSION = '0.3.15-beta';
-const CACHE_NAME = 'meet-the-cows-0.3.15-beta';
+const APP_VERSION = '0.3.16-beta';
+const CACHE_NAME = 'meet-the-cows-0.3.16-beta';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('packs/packs.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
@@ -63,9 +63,9 @@ function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
 }
 
-async function loadPackIndex() {
+async function loadPackIndex({ cacheMode = 'no-cache' } = {}) {
   try {
-    const res = await fetch(PACK_INDEX_URL, { cache: 'no-cache' });
+    const res = await fetch(PACK_INDEX_URL, { cache: cacheMode });
     if (!res.ok) throw new Error(`Pack index HTTP ${res.status}`);
     const index = await res.json();
     state.packs = Array.isArray(index) ? index : (Array.isArray(index.packs) ? index.packs : []);
@@ -76,20 +76,24 @@ async function loadPackIndex() {
   }
 }
 
-async function loadSelectedPack() {
-  const pack = state.packs.find(p => p.id === state.settings.packId) || state.packs[0];
+async function loadSelectedPack({ cacheMode = 'no-cache' } = {}) {
+  const pack = selectedPack();
   if (!pack) return;
   state.settings.packId = pack.id;
   try {
-    const manifestUrl = new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, BASE_URL).toString();
-    const manifestRes = await fetch(manifestUrl, { cache: 'no-cache' });
+    const manifestUrl = manifestUrlForPack(pack);
+    const manifestRes = await fetch(manifestUrl, { cache: cacheMode });
     if (!manifestRes.ok) throw new Error(`Manifest HTTP ${manifestRes.status}`);
     state.packManifest = await manifestRes.json();
     state.currentManifestUrl = manifestUrl;
     const fieldsUrl = new URL(state.packManifest.fieldsUrl || 'fields.json', manifestUrl).toString();
-    const fieldsRes = await fetch(fieldsUrl, { cache: 'no-cache' });
+    const fieldsRes = await fetch(fieldsUrl, { cache: cacheMode });
     if (!fieldsRes.ok) throw new Error(`Fields HTTP ${fieldsRes.status}`);
     state.fields = await fieldsRes.json();
+    if (state.selectedFieldId && !state.fields.some(field => field.id === state.selectedFieldId)) {
+      state.selectedFieldId = null;
+    }
+    computeRows();
     state.cacheProgress = '';
     await checkCacheStatus();
   } catch (error) {
@@ -97,6 +101,45 @@ async function loadSelectedPack() {
     state.packManifest = null;
     state.currentManifestUrl = null;
     state.fields = [];
+    state.cacheStatus = 'error';
+    state.cacheProgress = error.message || String(error);
+  }
+}
+
+function selectedPack() {
+  return state.packs.find(p => p.id === state.settings.packId) || state.packs[0];
+}
+
+function manifestUrlForPack(pack) {
+  return new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, BASE_URL).toString();
+}
+
+async function reloadSelectedPack() {
+  state.cacheStatus = 'refreshing';
+  state.cacheProgress = 'Clearing cached pack';
+  render();
+
+  try {
+    const pack = selectedPack();
+    if (pack) {
+      const deleted = await clearPackCache(pack.id);
+      state.cacheProgress = `Cleared ${deleted} cached pack entries`;
+      render();
+    }
+
+    state.cacheProgress = 'Fetching fresh pack index';
+    render();
+    await loadPackIndex({ cacheMode: 'reload' });
+
+    state.cacheProgress = 'Fetching fresh pack';
+    render();
+    await loadSelectedPack({ cacheMode: 'reload' });
+
+    if (state.cacheStatus !== 'error') {
+      state.cacheProgress = `Fresh pack loaded · ${state.cacheProgress || 'media/docs not checked'}`;
+    }
+  } catch (error) {
+    console.error(error);
     state.cacheStatus = 'error';
     state.cacheProgress = error.message || String(error);
   }
@@ -448,8 +491,8 @@ function renderMediaItem(item) {
 function attachEvents() {
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
-  document.querySelector('#refreshPack')?.addEventListener('click', async () => { await loadSelectedPack(); render(); });
-  document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await loadSelectedPack(); render(); });
+  document.querySelector('#refreshPack')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
+  document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
   document.querySelector('#packSelect')?.addEventListener('change', async e => {
     state.settings.packId = e.target.value;
     saveSettings();
@@ -496,6 +539,27 @@ async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try { await navigator.serviceWorker.register(new URL('service-worker.js', BASE_URL)); } catch (e) { console.warn(e); }
   }
+}
+
+async function clearPackCache(packId) {
+  if (!('caches' in window) || !packId) return 0;
+  const packRootUrl = new URL(`packs/${packId}/`, BASE_URL).toString();
+  const cacheNames = await caches.keys();
+  let deleted = 0;
+
+  for (const cacheName of cacheNames) {
+    if (!cacheName.startsWith('meet-the-cows-')) continue;
+    const cache = await caches.open(cacheName);
+    const requests = await cache.keys();
+    for (const request of requests) {
+      const url = request.url;
+      if (url === PACK_INDEX_URL || url.startsWith(packRootUrl)) {
+        if (await cache.delete(request)) deleted += 1;
+      }
+    }
+  }
+
+  return deleted;
 }
 
 function buildOfflineMediaUrls() {
