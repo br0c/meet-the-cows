@@ -1,212 +1,88 @@
 # Meet the Cows
 
-Offline-first outlanding field and VAC viewer for glider pilots.
+Meet the Cows is an offline-friendly landing-field viewer for glider pilots.
 
-The goal is deliberately narrow: **open the app, get GPS position, see nearby landable options, tap one, see photos/docs/VAC**. It is not a replacement for SeeYou Navigator, XCSoar, LX, Oudie, FLARM, official briefing, or judgement.
+Open it, allow location access, and it shows nearby outlanding fields and airfields with distance, bearing, required glide ratio, notes, photos, and available documents such as VAC PDFs.
 
-## Current state
+## Safety
 
-This is an initial static PWA prototype:
+This app is for quick field briefing and triage only. It is not primary navigation and does not account for terrain, wind, sink, airspace, obstacles, NOTAMs, legality, or current field condition.
 
-- nearest entries list from current GPS position
-- outlanding fields and official/VAC-only airfields in the same list
-- distance and bearing
-- straight-line required glide ratio
-- safety arrival margin, default 250 m
-- manual altitude override
-- hide C and/or D fields
-- field detail panel with notes, images and PDFs
-- service-worker offline cache
-- Python build pipeline for CUPX + SIA VAC import
-- optional creation of VAC-only airfield entries using an airport coordinate source
+Always use official and current sources, local knowledge, and established navigation tools for flight decisions.
 
-The bundled `fr-alps` pack is **sample data only** so the UI works immediately. It is not for flight. Generate the real pack with the importer.
+## Features
 
-## Data sources
+- Nearby fields from your current GPS position
+- Distance, bearing, and straight-line required glide ratio
+- Safety arrival margin setting
+- Manual altitude mode for ground testing
+- Filters for more difficult fields
+- Field detail view with notes, photos, and documents
+- Installable PWA with offline app shell
+- Optional offline download for pack media and documents
 
-### Outlanding fields
+## Using Offline
 
-The intended initial source is the planeur-net Guide des Aires de Sécurité CUPX:
+The app shell and core pack files are cached automatically by the service worker.
 
-```bash
-python scripts/build_pack.py \
-  --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
-  --pack-id fr-alps \
-  --pack-name "France / Alps"
-```
+Photos and PDFs can be large, so they are not all cached automatically. To make them available offline:
 
-CUPX files are handled by the importer as concatenated ZIP files: a pictures ZIP and a points ZIP containing `POINTS.CUP`.
+1. Open Settings.
+2. Tap `Download / verify media & docs`.
+3. Keep the app open until the progress line finishes.
 
-The Guide CUP does include some official aerodromes/altiports/velisurfaces, but the VAC import must not depend on that. SIA VAC airfields are handled as a separate layer.
+The offline button downloads media and documents from the static pack URLs one by one and reports progress.
 
+## Data
 
-### Optional Streckenflug import with images
-
-If you have permission to use/rehost the streckenflug.at Landout Database content, the builder can import its public map JSON details and download the linked full-resolution public photos into the pack media folder.
-
-```bash
-python scripts/build_pack.py \
-  --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
-  --pack-id fr-alps \
-  --pack-name "France / Alps" \
-  --include-streckenflug \
-  --streckenflug-countries FR CH IT \
-  --streckenflug-workers 4
-```
-
-Useful debug flags:
-
-```bash
---streckenflug-max-detail 20     # only fetch the first 20 candidate details
---streckenflug-workers 4         # fetch JSON details/images concurrently for full builds
---no-streckenflug-images         # import fields/notes but skip image downloads
---keep-raw                       # keep cached JSON responses under .cache/<pack-id>/raw
-```
-
-Implementation details:
-
-- The builder reads the public list/map page to find streckenflug IDs.
-- It then calls the same public JSON endpoint used by the browser map panel: `json.php?inc=map&task=landeplatz&id=<id>`.
-- It extracts field details, notes, feedback, and full-resolution `shield.php` photo links from the JSON `fotos` and `feedback` HTML.
-- Photos are copied into `data/packs/<pack-id>/media/<field-id>/` and referenced from `fields.json`, so the existing app media viewer and offline download flow pick them up automatically.
-- No extra Python dependency is required; this uses only the standard library.
-
-Important: importing and rehosting photos/content may require written permission from the upstream rights holder. Do not publish a derived public pack unless you are comfortable with that permission/licence position.
-
-For a full France/Alps build with CUPX, OpenAIP airfields and Streckenflug, run locally with `OPENAIP_API_KEY` exported in your shell, or run it in GitHub Actions where the repository secret is available:
-
-```bash
-rm -rf data/packs/fr-alps .cache/fr-alps
-
-python scripts/build_pack.py \
-  --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
-  --pack-id fr-alps \
-  --pack-name "France / Alps" \
-  --countries FR CH IT \
-  --airfield-source openaip \
-  --include-streckenflug \
-  --streckenflug-countries FR CH IT \
-  --streckenflug-workers 4 \
-  --vac-root none \
-  --keep-raw
-```
-
-GitHub secrets are not automatically visible in a local terminal. For local builds, use `export OPENAIP_API_KEY=...` or pass `--openaip-api-key ...`.
-
-### VAC PDFs and VAC-only airfields
-
-VAC import is supported from day one. The SIA eAIP/VAC URL is cycle-specific. Find the current eAIP PDF root on the SIA site, then pass the `VAC/AD` directory as `--vac-root`.
-
-To attach VACs to existing CUP entries **and also create official airfield entries when the airfield is not in the CUP**, use `--include-vac-airfields`:
-
-```bash
-python scripts/build_pack.py \
-  --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
-  --pack-id fr-alps \
-  --pack-name "France / Alps" \
-  --vac-root "https://www.sia.aviation-civile.gouv.fr/media/dvd/eAIP_11_JUN_2026/Atlas-VAC/PDF_AIPparSSection/VAC/AD" \
-  --vac-date "2026-06-11 / AIRAC 06-26" \
-  --include-vac-airfields
-```
-
-The importer tries URLs in this form:
+The public app loads a static data pack from same-origin GitHub Pages paths:
 
 ```text
-{vac-root}/AD-2.LFMR.pdf
-{vac-root}/AD-2.LFLG.pdf
-...
+/meet-the-cows/packs/packs.json
+/meet-the-cows/packs/fr-alps/manifest.json
+/meet-the-cows/packs/fr-alps/fields.json
+/meet-the-cows/packs/fr-alps/media/...
+/meet-the-cows/packs/fr-alps/docs/...
 ```
 
-Behaviour:
+Generated pack files are not committed to the repository.
 
-1. If the LFxx code already exists in the CUP-derived fields, the VAC PDF is attached to that entry.
-2. If the LFxx code is not present and `--include-vac-airfields` is enabled, the importer creates a separate `kind: "airfield"` entry using the airport coordinate source, then attaches the VAC PDF.
-3. If a PDF exists but no coordinates are available, the PDF is downloaded but no list entry is created because it cannot be sorted by proximity.
+## Credits and Data Sources
 
-By default the VAC-only airfield layer uses OurAirports `airports.csv` and `runways.csv` for coordinates/dimensions. That data is useful for placing the entry on the nearest-options list, but is not authoritative navigation data. The SIA VAC remains the official source.
+Meet the Cows stands on work published by several aviation and gliding data providers. Please respect each source's terms, licences, and attribution requirements.
 
-Optional flags:
+- [planeur-net / Guide des Aires de Securite](https://github.com/planeur-net/outlanding): outlanding field data and source photos where included.
+- [Service de l'Information Aeronautique (SIA)](https://www.sia.aviation-civile.gouv.fr): official French VAC documents where included.
+- [OpenAIP](https://www.openaip.net): airfield metadata used to help discover and place glider-relevant airfields.
+- [streckenflug.at Landout Database](https://landout.streckenflug.at): additional landout notes and photos where the pack build includes them.
+- [OurAirports](https://ourairports.com): optional airport/runway coordinate fallback for some pack builds.
 
-```bash
---airports-csv path_or_url   # defaults to OurAirports airports.csv
---runways-csv path_or_url    # defaults to OurAirports runways.csv
---vac-codes LFMR,LFLG,LFNA   # optional limit/extension list, or path/URL to a text file
---max-vac 20                 # debug limit
-```
+The exact sources used by a deployed pack are listed in that pack's `manifest.json`.
 
-## SIA attribution / licence note
+## Run Locally
 
-For any hosted SIA VAC PDFs, show attribution similar to:
-
-```text
-Service de l’Information Aéronautique — original data downloaded from https://www.sia.aviation-civile.gouv.fr, update date: YYYY-MM-DD / AIRAC xx-xx.
-```
-
-Do not imply SIA endorsement. Keep update dates visible. VAC data is safety-critical and cycle-specific.
-
-## Guide des Aires photo permission note
-
-The upstream project says its pictures are used with permission. That is not automatically the same thing as a general open licence for rehosting/remixing elsewhere. Before making a public hosted app with copied photos, get explicit permission from the upstream maintainer / rights holder or keep this as a personal/private derived pack.
-
-## Run locally
-
-No build step is required for the prototype.
+No app build step is required.
 
 ```bash
 python3 -m http.server 5173
 ```
 
-Open:
+Then open:
 
 ```text
 http://localhost:5173
 ```
 
-For iPhone testing, serve over HTTPS or deploy to GitHub Pages. Browser geolocation requires a secure context except on localhost.
+Browser geolocation requires HTTPS except on localhost.
 
-## Deploy to GitHub Pages
+## Deployment
 
-Generated pack files are not committed. The Pages workflow builds the pack, assembles a static artifact, and deploys it with `actions/deploy-pages`.
+GitHub Pages deployment is handled by `.github/workflows/deploy-pages.yml`.
 
-Stable deployed paths:
+The workflow builds the data pack, assembles the static app and pack files into a Pages artifact, uploads it, and deploys with `actions/deploy-pages`.
 
-```text
-https://<your-user>.github.io/meet-the-cows/
-https://<your-user>.github.io/meet-the-cows/packs/packs.json
-https://<your-user>.github.io/meet-the-cows/packs/fr-alps/manifest.json
-https://<your-user>.github.io/meet-the-cows/packs/fr-alps/fields.json
-https://<your-user>.github.io/meet-the-cows/packs/fr-alps/media/...
-https://<your-user>.github.io/meet-the-cows/packs/fr-alps/docs/...
-```
+## Contributing
 
-Setup:
+Field corrections and photo contributions are welcome. Include the field name or code, describe the issue clearly, and cite a useful source when possible.
 
-1. Create a GitHub repo named `meet-the-cows`.
-2. In repository Settings -> Pages, set Build and deployment -> Source to GitHub Actions.
-3. Add the `OPENAIP_API_KEY` Actions secret if using the OpenAIP-backed build.
-4. Run `.github/workflows/deploy-pages.yml`, or push to `main`.
-
-The app uses relative URLs, so the same source works both at a custom domain root and under a GitHub Pages project path such as `/meet-the-cows/`.
-
-## GitHub Action
-
-`.github/workflows/deploy-pages.yml` builds the app plus the generated `fr-alps` pack into `dist/site`, writes `dist/site/packs/packs.json`, uploads that directory as the Pages artifact, and deploys it.
-
-The action includes `--include-vac-airfields`, so VAC-only official aerodromes can be created when they are not present in the Guide CUP.
-
-## Field columns
-
-The cockpit list shows:
-
-- `Name`
-- `Brg`: bearing to entry
-- `Dist`: straight-line distance
-- `Req`: required glide ratio using current altitude, field elevation and safety margin
-- `Δsafe`: current altitude minus field elevation minus safety margin
-- `Diff`: A/B/C/D/UNKNOWN
-- `Len`, `Wid`: runway/field length and width when available
-- `Docs`: number of attached images/PDFs
-
-## Safety disclaimer
-
-Meet the Cows is only a field briefing/triage tool. It does **not** account for terrain, wind, sink, airspace, circuit direction, obstacles, legality, NOTAMs or current field condition. Use official sources and established gliding tools for navigation and flight safety.
+Only contribute photos or documents you own or have permission to share.
