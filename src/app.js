@@ -12,7 +12,6 @@ const DEFAULT_SETTINGS = {
   hideC: false,
   hideD: true,
   sortMode: 'glide',
-  demoMode: false,
   useManualAltitude: false,
   manualAltitudeM: 2500,
 };
@@ -52,7 +51,9 @@ async function init() {
 
 function loadSettings() {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    const settings = { ...DEFAULT_SETTINGS, ...(stored && typeof stored === 'object' ? stored : {}) };
+    return Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map(key => [key, settings[key]]));
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -106,12 +107,6 @@ function startGps() {
     navigator.geolocation.clearWatch(gpsWatchId);
     gpsWatchId = null;
   }
-  if (state.settings.demoMode) {
-    state.position = demoPosition();
-    state.gpsStatus = 'demo';
-    computeRows();
-    return;
-  }
   if (!('geolocation' in navigator)) {
     state.gpsStatus = 'unavailable';
     state.gpsError = 'Geolocation API unavailable';
@@ -141,17 +136,6 @@ function startGps() {
     },
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
   );
-}
-
-function demoPosition() {
-  return {
-    latitude: 44.392,
-    longitude: 6.64,
-    altitudeM: 2600,
-    accuracyM: 5,
-    altitudeAccuracyM: 30,
-    timestamp: Date.now(),
-  };
 }
 
 function activeAltitudeM() {
@@ -266,7 +250,6 @@ function renderStatus() {
 
 function gpsLabel() {
   if (state.gpsStatus === 'ok') return `OK ±${Math.round(state.position?.accuracyM || 0)}m`;
-  if (state.gpsStatus === 'demo') return 'DEMO';
   if (state.gpsStatus === 'error') return `Error`;
   return state.gpsStatus;
 }
@@ -274,7 +257,7 @@ function gpsLabel() {
 function renderWarnings() {
   const items = [];
   if (state.packManifest?.isSample) items.push('Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.');
-  if (state.gpsStatus === 'error') items.push(`GPS error: ${escapeHtml(state.gpsError)}. Use demo mode only for testing.`);
+  if (state.gpsStatus === 'error') items.push(`GPS error: ${escapeHtml(state.gpsError)}.`);
   if (state.position && state.position.altitudeM === null && !state.settings.useManualAltitude) items.push('GPS altitude is missing, so required glide ratio cannot be computed. Add a manual altitude in Settings for ground testing.');
   if (!items.length) return '';
   return items.map(i => `<div class="warning">${i}</div>`).join('');
@@ -348,10 +331,6 @@ function renderSettingsPage() {
           <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
           <label for="hideD">Hide D fields</label>
         </div>
-        <div class="checkbox-row">
-          <input id="demoMode" type="checkbox" ${state.settings.demoMode ? 'checked' : ''} />
-          <label for="demoMode">Demo near Ubaye</label>
-        </div>
       </div>
     </section>
   `;
@@ -380,7 +359,7 @@ function difficultyBadgeClass(field) {
 
 function renderFieldList() {
   if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
-  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission, or turn on demo mode in Settings.</div>';
+  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission.</div>';
   const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, requiredGlideRatio, glideReason }) => `
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
       <span class="field-main">
@@ -489,20 +468,10 @@ function attachEvents() {
     saveSettings();
     render();
   });
-  for (const id of ['hideC', 'hideD', 'demoMode', 'useManualAltitude']) {
+  for (const id of ['hideC', 'hideD', 'useManualAltitude']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       state.settings[id] = e.target.checked;
       if (id === 'useManualAltitude') computeRows();
-      if (id === 'demoMode') {
-        if (e.target.checked) {
-          state.position = demoPosition();
-          state.gpsStatus = 'demo';
-        } else {
-          state.position = null;
-          state.gpsStatus = 'idle';
-        }
-        startGps();
-      }
       saveSettings();
       render();
     });
