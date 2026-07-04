@@ -1,4 +1,4 @@
-const APP_VERSION = '0.4.0-beta';
+const APP_VERSION = '0.4.1-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. Legacy 'meet-the-cows-*' caches are still cleaned up on reload.
 const DATA_CACHE = 'mtc-data';
@@ -365,6 +365,10 @@ function renderSettingsPage() {
           <button class="primary" id="downloadPack">Download / verify media & docs</button>
           <button id="reloadPackSettings">Reload pack</button>
         </div>
+        <div class="button-row single">
+          <button id="exportCup">Export CUP for SeeYou (${state.fields.length} fields)</button>
+        </div>
+        <p class="settings-note">Waypoint file for SeeYou Navigator and other nav apps. Brief a field here, then navigate to it in SeeYou.</p>
       </div>
 
       <div class="settings-card">
@@ -540,6 +544,7 @@ function attachEvents() {
     });
   }
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
+  document.querySelector('#exportCup')?.addEventListener('click', exportCup);
   document.querySelector('#syncDataBtn')?.addEventListener('click', syncPackDelta);
   document.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
     state.selectedFieldId = row.getAttribute('data-field-id');
@@ -777,6 +782,91 @@ async function syncPackDelta() {
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
   state.cacheProgress = `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`;
   render();
+}
+
+// --- SeeYou CUP export, generated in-app from the loaded fields (offline, always in sync) ---
+
+function cupCoord(value, isLat) {
+  const hemi = value >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W');
+  const abs = Math.abs(value);
+  const deg = Math.floor(abs);
+  const minutes = (abs - deg) * 60;
+  // DDMM.mmm for latitude, DDDMM.mmm for longitude.
+  return `${String(deg).padStart(isLat ? 2 : 3, '0')}${minutes.toFixed(3).padStart(6, '0')}${hemi}`;
+}
+
+function cupQuote(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function cupFrequency(field) {
+  const freqs = Array.isArray(field.frequencies) ? field.frequencies : [];
+  const mhz = freqs.find(f => typeof f?.mhz === 'number')?.mhz;
+  if (typeof mhz === 'number') return mhz.toFixed(3);
+  const match = String(field.frequency || field.radio || '').match(/\d{3}\.\d{1,3}/);
+  return match ? match[0] : '';
+}
+
+function generateCupText() {
+  // Style: 5 = airfield (solid surface), 3 = outlanding field.
+  const rows = ['name,code,country,lat,lon,elev,style,rwdir,rwlen,freq,desc'];
+  for (const field of state.fields) {
+    if (!Number.isFinite(field.latitude) || !Number.isFinite(field.longitude)) continue;
+    const name = String(field.name || field.code || 'field').replace(/^#?\d+\s+/, '').trim();
+    const elev = Number.isFinite(field.elevationM) ? `${Math.round(field.elevationM)}m` : '';
+    const rwdir = Number.isFinite(field.runwayDirectionDeg) ? Math.round(field.runwayDirectionDeg) : '';
+    const rwlen = Number.isFinite(field.lengthM) && field.lengthM > 0 ? `${Math.round(field.lengthM)}m` : '';
+    const diff = field.difficulty && field.difficulty !== 'UNKNOWN' ? `[${field.difficulty}] ` : '';
+    const notes = String(field.notes || '')
+      .replace(/https?:\/\/\S+/gi, '')                 // drop URLs (incl. the streckenflug source link)
+      .replace(/streckenflug\.at source:\s*/gi, '')    // drop the now-orphaned source label
+      .replace(/\bInspection video:\s*/gi, '')
+      .replace(/\s*\|\s*/g, ' | ')                     // normalise section separators
+      .replace(/^(?:\s*\|\s*)+|(?:\s*\|\s*)+$/g, '')    // trim leading/trailing separators
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 900);
+    rows.push([
+      cupQuote(name),
+      cupQuote(field.code || ''),
+      String(field.country || '').slice(0, 2),
+      cupCoord(field.latitude, true),
+      cupCoord(field.longitude, false),
+      elev,
+      field.kind === 'airfield' ? 5 : 3,
+      rwdir,
+      rwlen,
+      cupFrequency(field),
+      cupQuote(diff + notes),
+    ].join(','));
+  }
+  return rows.join('\r\n') + '\r\n';
+}
+
+async function exportCup() {
+  if (!state.fields.length) { alert('No pack loaded yet.'); return; }
+  const filename = `meet-the-cows-${selectedPack()?.id || 'pack'}.cup`;
+  const text = generateCupText();
+  // Prefer the share sheet on phones (Save to Files, or open straight into SeeYou).
+  try {
+    const file = new File([text], filename, { type: 'text/plain' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: filename });
+      return;
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    console.warn('CUP share failed, falling back to download', error);
+  }
+  // Fallback: a direct file download (desktop, Android).
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 function haversineMeters(lat1, lon1, lat2, lon2) {

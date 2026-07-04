@@ -1,4 +1,4 @@
-const APP_VERSION = '0.4.0-beta';
+const APP_VERSION = '0.4.1-beta';
 // Shell cache is versioned and replaced on app update. Data cache is stable so downloaded
 // media/docs survive app updates (an app update must never wipe a pilot's offline pack).
 const SHELL_CACHE = `mtc-shell-${APP_VERSION}`;

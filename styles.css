@@ -161,6 +161,7 @@ a { color: var(--accent); }
 .settings-note { margin: -4px 0 2px; color: var(--muted); font-size: 12px; line-height: 1.35; }
 
 .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.button-row.single { grid-template-columns: 1fr; margin-top: 8px; }
 .meta-list { display: grid; gap: 6px; margin: 2px 0 0; }
 .meta-list div { display: grid; grid-template-columns: 92px minmax(0,1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
 .meta-list dt { color: var(--muted); font-size: 12px; }
