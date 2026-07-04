@@ -56,15 +56,17 @@ jobs:
       - name: Unit tests (name/translation/incremental logic)
         run: python scripts/test_build_pack_fixes.py
 
-      # Full rebuild on code push (developer intent) and on the Sunday cron (weekly refresh
-      # that catches same-year streckenflug edits). The Mon-Sat cron runs incrementally and
-      # short-circuits when no source changed.
+      # Incremental by default: the build short-circuits when the source fingerprint AND
+      # PACK_SCHEMA_VERSION match the published state.json, so pushes/crons that change nothing
+      # in the pack skip the rebuild+deploy. Full rebuild only on the Sunday weekly refresh
+      # (also catches same-year streckenflug edits) and on manual dispatch with force_full.
+      # IMPORTANT: bump PACK_SCHEMA_VERSION in build_pack.py when a code change alters pack
+      # output, otherwise a push may short-circuit and not deploy your change.
       - name: Decide build mode
         id: mode
         run: |
           FORCE=false
           case "${{ github.event_name }}" in
-            push) FORCE=true ;;
             workflow_dispatch) FORCE="${{ github.event.inputs.force_full }}" ;;
             schedule) [ "$(date -u +%u)" = "7" ] && FORCE=true ;;
           esac
