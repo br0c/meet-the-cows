@@ -771,13 +771,6 @@ def parse_width(row: dict[str, Any]) -> float | None:
     return None
 
 
-def parse_float(value: str) -> float | None:
-    try:
-        return float(value) if value else None
-    except ValueError:
-        return None
-
-
 def extract_difficulty(notes: str, row: dict[str, Any]) -> tuple[str, str]:
     text = " ".join(str(v or "") for v in [notes, row.get("userdata"), row.get("type")])
     tags = [t.strip().lower() for t in re.findall(r"\{([^}]+)\}", text)]
@@ -2588,16 +2581,6 @@ def download_url_bytes(url: str, *, referer: str = "") -> tuple[bytes, str]:
         return response.read(), response.headers.get("Content-Type", "")
 
 
-def image_extension_from_response(data: bytes, content_type: str) -> str:
-    content_type = (content_type or "").lower()
-    if "png" in content_type or data.startswith(b"\x89PNG"):
-        return ".png"
-    if "webp" in content_type or data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return ".webp"
-    if "gif" in content_type or data.startswith(b"GIF"):
-        return ".gif"
-    return ".jpg"
-
 def write_optimized_jpeg_image(data: bytes, target: Path) -> None:
     """Write a phone-optimised JPEG: max 2560 px long edge, RGB, q85, no metadata."""
     try:
@@ -2683,71 +2666,6 @@ def normalize_space(value: str) -> str:
     return re.sub(r"\s+", " ", value or " ").strip()
 
 
-def choose_streckenflug_name(page: str, fallback: str) -> str:
-    for pattern in (r"<h1[^>]*>(.*?)</h1>", r"<h2[^>]*>(.*?)</h2>", r"<title[^>]*>(.*?)</title>"):
-        match = re.search(pattern, page, flags=re.I | re.S)
-        if match:
-            candidate = normalize_space(strip_html(match.group(1)))
-            candidate = re.sub(r"\s*[-|].*$", "", candidate).strip()
-            if candidate and len(candidate) <= 80 and "landout" not in candidate.lower():
-                return candidate
-    return normalize_space(fallback)
-
-
-def extract_lat_lon_from_text(text: str) -> tuple[float | None, float | None]:
-    # Decimal coordinates, with common German/English labels.
-    labelled = re.search(r"(?:Lat(?:itude)?|Breite)\D+(-?\d{1,2}[.,]\d+)\D+(?:Lon(?:gitude)?|Lng|Länge|Laenge)\D+(-?\d{1,3}[.,]\d+)", text, flags=re.I)
-    if labelled:
-        return parse_decimal(labelled.group(1)), parse_decimal(labelled.group(2))
-    pair = re.search(r"\b([NS])\s*(\d{1,2}(?:[.,]\d+)?)\D+([EW])\s*(\d{1,3}(?:[.,]\d+)?)\b", text, flags=re.I)
-    if pair:
-        lat = parse_decimal(pair.group(2)); lon = parse_decimal(pair.group(4))
-        if lat is not None and pair.group(1).upper() == "S": lat = -lat
-        if lon is not None and pair.group(3).upper() == "W": lon = -lon
-        return lat, lon
-    # DMS-ish forms: 46° 12' 34" N 7° 12' 34" E
-    dms = re.search(r"(\d{1,2})\D+(\d{1,2})\D+(\d{1,2}(?:[.,]\d+)?)\D*([NS])\D+(\d{1,3})\D+(\d{1,2})\D+(\d{1,2}(?:[.,]\d+)?)\D*([EW])", text, flags=re.I)
-    if dms:
-        lat = dms_to_decimal(dms.group(1), dms.group(2), dms.group(3), dms.group(4))
-        lon = dms_to_decimal(dms.group(5), dms.group(6), dms.group(7), dms.group(8))
-        return lat, lon
-    # Last resort: two decimal coordinates in plausible Europe ranges.
-    nums = [parse_decimal(n) for n in re.findall(r"-?\d{1,3}[.,]\d{4,}", text)]
-    nums = [n for n in nums if n is not None]
-    for i in range(len(nums) - 1):
-        lat, lon = nums[i], nums[i+1]
-        if lat is not None and lon is not None and 35 <= lat <= 55 and -10 <= lon <= 20:
-            return lat, lon
-    return None, None
-
-
-def parse_decimal(value: str) -> float | None:
-    try:
-        return float((value or "").replace(",", "."))
-    except Exception:
-        return None
-
-
-def dms_to_decimal(deg: str, minute: str, second: str, hemi: str) -> float | None:
-    try:
-        value = float(deg) + float(minute) / 60 + float(second.replace(",", ".")) / 3600
-        return -value if hemi.upper() in {"S", "W"} else value
-    except Exception:
-        return None
-
-
-def extract_country_from_text(text: str) -> str:
-    aliases = {
-        "France": "FR", "Frankreich": "FR",
-        "Switzerland": "CH", "Schweiz": "CH", "Suisse": "CH",
-        "Italy": "IT", "Italia": "IT", "Italien": "IT",
-    }
-    for label, code in aliases.items():
-        if re.search(rf"\b{re.escape(label)}\b", text, flags=re.I):
-            return code
-    return ""
-
-
 def infer_country_from_lon_lat(lon: float, lat: float) -> str:
     # Rough fallback only, used when the scraped page omits a country label.
     if 41 <= lat <= 52 and -5 <= lon <= 10:
@@ -2757,30 +2675,6 @@ def infer_country_from_lon_lat(lon: float, lat: float) -> str:
     if 36 <= lat <= 47.5 and 6 <= lon <= 19:
         return "IT"
     return ""
-
-
-def extract_airfield_code_from_text(text: str) -> str:
-    # Keep non-standard LFnnnn glider/ULM codes too.
-    match = re.search(r"\b((?:LF|LS|LI)[A-Z0-9]{2,4})\b", text, flags=re.I)
-    return match.group(1).upper() if match else ""
-
-
-def extract_labelled_length(text: str, labels: Sequence[str]) -> float | None:
-    label_pattern = "|".join(re.escape(label) for label in labels)
-    match = re.search(rf"(?:{label_pattern})\D+(\d{{2,5}}(?:[.,]\d+)?)\s*(m|ft)?", text, flags=re.I)
-    if match:
-        return parse_length(" ".join(part for part in match.groups() if part))
-    return None
-
-
-def extract_streckenflug_dimensions(text: str) -> tuple[float | None, float | None]:
-    # Prefer explicit L x W expressions.
-    match = re.search(r"(\d{2,5})\s*[x×]\s*(\d{1,4})\s*m?", text, flags=re.I)
-    if match:
-        return float(match.group(1)), float(match.group(2))
-    length = extract_labelled_length(text, ["Length", "Länge", "Laenge", "Runway", "Piste", "RWY", "Landeplatzlänge"])
-    width = extract_labelled_length(text, ["Width", "Breite", "Runway width", "Pistenbreite"])
-    return length, width
 
 
 def extract_streckenflug_difficulty(text: str) -> tuple[str, str]:
@@ -2794,25 +2688,6 @@ def extract_streckenflug_difficulty(text: str) -> tuple[str, str]:
     if re.search(r"Only for emergencies", text, flags=re.I): return "streckenflug-C", "C"
     if re.search(r"no longer landable", text, flags=re.I): return "streckenflug-D", "D"
     return "streckenflug-unknown", "UNKNOWN"
-
-
-def extract_streckenflug_type(text: str) -> str:
-    for label in ("Airstrip (Ultralight)", "Airfield", "Landout Field"):
-        if label.lower() in text.lower():
-            return label
-    return "Landout Field"
-
-
-def build_streckenflug_notes(text: str, url: str) -> str:
-    text = translate_streckenflug_text(normalize_space(text))
-    # Keep notes bounded; the detail pages can include lots of navigation/menu text.
-    interesting = []
-    for marker in ("Comment", "Kommentar", "Remarks", "Bemerkung", "Description", "Beschreibung", "Obstacles", "Hindernisse"):
-        m = re.search(rf"{marker}\s*:?\s*(.{{0,800}})", text, flags=re.I)
-        if m:
-            interesting.append(m.group(1).strip())
-    note = " | ".join(dict.fromkeys(interesting)) or text[:700]
-    return note[:1500]
 
 
 def consolidate_duplicate_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
