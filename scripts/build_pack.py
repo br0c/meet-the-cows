@@ -112,7 +112,7 @@ _TRANSLATION_STATS: dict[str, int] = {"deepl": 0, "cache": 0, "fallback": 0}
 # Bump whenever the build LOGIC changes the pack output (parsing, merging, translation,
 # schema). A mismatch with the published state forces a full rebuild even if the upstream
 # sources are unchanged, so code changes always reach the deployed pack.
-PACK_SCHEMA_VERSION = 3
+PACK_SCHEMA_VERSION = 4
 
 
 
@@ -411,6 +411,9 @@ def main() -> None:
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # Per-file hash+size manifest so the app can download only changed media/docs.
+    media_manifest_count = write_media_manifest(out_dir, manifest["version"])
+
     # Publish the source fingerprint so the next build can detect "nothing changed".
     state_out = dict(source_state)
     state_out["builtAt"] = dt.datetime.now(dt.UTC).isoformat()
@@ -569,6 +572,30 @@ def write_build_status(root: Path, *, changed: bool) -> None:
         except Exception as error:  # noqa: BLE001
             print(f"could not write GITHUB_OUTPUT: {error}", file=sys.stderr)
     (root / "build-status.json").write_text(json.dumps({"changed": changed}), encoding="utf-8")
+
+
+def write_media_manifest(out_dir: Path, version: str) -> int:
+    """Emit media-manifest.json: pack-relative path -> {hash, size} for every media/doc file.
+
+    The app diffs this against its last-synced copy to download only new/changed files and
+    evict removed ones, instead of re-downloading the whole pack on every data update.
+    """
+    import hashlib
+
+    files: dict[str, dict[str, Any]] = {}
+    for sub in ("media", "docs"):
+        base = out_dir / sub
+        if not base.exists():
+            continue
+        for path in sorted(base.rglob("*")):
+            if not path.is_file():
+                continue
+            data = path.read_bytes()
+            rel = path.relative_to(out_dir).as_posix()
+            files[rel] = {"h": hashlib.sha1(data).hexdigest()[:16], "s": len(data)}
+    payload = {"version": version, "count": len(files), "files": files}
+    (out_dir / "media-manifest.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return len(files)
 
 
 def extract_cup_and_pictures(blob: bytes) -> tuple[str, dict[str, bytes]]:

@@ -1,8 +1,12 @@
-const APP_VERSION = '0.3.16-beta';
-const CACHE_NAME = 'meet-the-cows-0.3.16-beta';
+const APP_VERSION = '0.4.0-beta';
+// Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
+// wipe a downloaded pack. Legacy 'meet-the-cows-*' caches are still cleaned up on reload.
+const DATA_CACHE = 'mtc-data';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('packs/packs.json', BASE_URL).toString();
 const SETTINGS_KEY = 'mtc-settings-v2';
+const syncedVersionKey = packId => `mtc-synced-version-${packId}`;
+const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
 
 /** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, radio?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
 
@@ -34,6 +38,7 @@ let state = {
   cacheStatus: 'unknown',
   cacheProgress: '',
   detailScrollTop: 0,
+  dataUpdateAvailable: false,
 };
 
 const app = document.querySelector('#app');
@@ -95,6 +100,7 @@ async function loadSelectedPack({ cacheMode = 'no-cache' } = {}) {
     }
     computeRows();
     state.cacheProgress = '';
+    updateDataUpdateFlag(pack.id);
     await checkCacheStatus();
   } catch (error) {
     console.error(error);
@@ -308,9 +314,20 @@ function renderWarnings() {
 
 function renderMainPage() {
   return `
+    ${renderUpdateBanner()}
     ${renderWarnings()}
     ${renderFieldList()}
     <p class="footer-note">Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.</p>
+  `;
+}
+
+function renderUpdateBanner() {
+  if (!state.dataUpdateAvailable) return '';
+  return `
+    <div class="update-banner">
+      <span>🔄 New field data available.</span>
+      <button id="syncDataBtn" class="primary">Update</button>
+    </div>
   `;
 }
 
@@ -523,6 +540,7 @@ function attachEvents() {
     });
   }
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
+  document.querySelector('#syncDataBtn')?.addEventListener('click', syncPackDelta);
   document.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
     state.selectedFieldId = row.getAttribute('data-field-id');
     state.detailScrollTop = 0;
@@ -548,7 +566,7 @@ async function clearPackCache(packId) {
   let deleted = 0;
 
   for (const cacheName of cacheNames) {
-    if (!cacheName.startsWith('meet-the-cows-')) continue;
+    if (cacheName !== DATA_CACHE && !cacheName.startsWith('meet-the-cows-')) continue;
     const cache = await caches.open(cacheName);
     const requests = await cache.keys();
     for (const request of requests) {
@@ -588,7 +606,7 @@ async function downloadOfflinePack() {
     return;
   }
 
-  const cache = await caches.open(CACHE_NAME);
+  const cache = await caches.open(DATA_CACHE);
   state.cacheStatus = 'downloading';
   state.cacheProgress = `0/${urls.length} media/docs`;
   render();
@@ -617,6 +635,13 @@ async function downloadOfflinePack() {
     await new Promise(resolve => setTimeout(resolve, 0));
   }
 
+  // Record the synced baseline so future data updates only fetch the delta.
+  try {
+    storeSyncedManifest(selectedPack()?.id, await fetchMediaManifest());
+  } catch (error) {
+    console.warn('Could not record synced media manifest', error);
+  }
+
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
   state.cacheProgress = `${ok}/${urls.length} media/docs cached · ${failed} failed`;
   render();
@@ -627,7 +652,7 @@ async function checkCacheStatus() {
     state.cacheStatus = 'unknown';
     return;
   }
-  const cache = await caches.open(CACHE_NAME);
+  const cache = await caches.open(DATA_CACHE);
   const urls = buildOfflineMediaUrls();
   if (!urls.length) {
     state.cacheStatus = 'ready';
@@ -641,6 +666,117 @@ async function checkCacheStatus() {
   }
   state.cacheStatus = cached === urls.length ? 'ready' : cached > 0 ? 'incomplete' : 'not downloaded';
   state.cacheProgress = `${cached}/${urls.length} media/docs cached`;
+}
+
+function updateDataUpdateFlag(packId) {
+  // Only prompt pilots who already downloaded a pack: a newer published version than the one
+  // they last synced means their offline media/docs are stale.
+  const synced = localStorage.getItem(syncedVersionKey(packId)) || '';
+  const live = state.packManifest?.version || '';
+  state.dataUpdateAvailable = Boolean(synced && live && synced !== live);
+}
+
+function mediaManifestUrl() {
+  return new URL('media-manifest.json', state.currentManifestUrl || BASE_URL).toString();
+}
+
+async function fetchMediaManifest() {
+  const res = await fetch(mediaManifestUrl(), { cache: 'reload' });
+  if (!res.ok) throw new Error(`media-manifest HTTP ${res.status}`);
+  return res.json();
+}
+
+function storeSyncedManifest(packId, manifest) {
+  if (!packId || !manifest) return;
+  try {
+    localStorage.setItem(syncedManifestKey(packId), JSON.stringify(manifest));
+    localStorage.setItem(syncedVersionKey(packId), manifest.version || '');
+  } catch (error) {
+    console.warn('Could not persist synced manifest', error);
+  }
+  state.dataUpdateAvailable = false;
+}
+
+function isPackMediaOrDocUrl(url) {
+  return url.includes('/packs/') && (url.includes('/media/') || url.includes('/docs/'));
+}
+
+// Incremental data update: refresh field text, then download only the media/docs whose
+// content hash changed (per media-manifest.json), and evict files no longer referenced.
+async function syncPackDelta() {
+  if (!('caches' in window)) {
+    alert('Cache Storage is not available in this browser.');
+    return;
+  }
+  const packId = selectedPack()?.id;
+  state.cacheStatus = 'downloading';
+  state.cacheProgress = 'Refreshing field data…';
+  render();
+
+  await loadSelectedPack({ cacheMode: 'reload' });
+
+  let manifest;
+  try {
+    manifest = await fetchMediaManifest();
+  } catch (error) {
+    // Older pack without a hash manifest: fall back to a full verify/download.
+    console.warn('No media manifest; full download fallback', error);
+    await downloadOfflinePack();
+    return;
+  }
+
+  const files = manifest.files || {};
+  const stored = (() => { try { return JSON.parse(localStorage.getItem(syncedManifestKey(packId)) || '{}'); } catch { return {}; } })();
+  const storedFiles = stored.files || {};
+  const cache = await caches.open(DATA_CACHE);
+
+  const referenced = new Set();
+  for (const field of state.fields) {
+    for (const media of field.media || []) {
+      if (media?.url) referenced.add(media.url);
+    }
+  }
+
+  // New/changed referenced files, plus any referenced file missing from the cache.
+  const toDownload = [];
+  for (const key of referenced) {
+    const entry = files[key];
+    if (!entry) continue;
+    const abs = new URL(key, state.currentManifestUrl).toString();
+    const changed = !storedFiles[key] || storedFiles[key].h !== entry.h;
+    if (changed || !(await cache.match(abs))) toDownload.push(abs);
+  }
+
+  let ok = 0;
+  let failed = 0;
+  for (let i = 0; i < toDownload.length; i += 1) {
+    const abs = toDownload[i];
+    try {
+      const res = await fetch(abs, { cache: 'reload' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await cache.put(abs, res.clone());
+      ok += 1;
+    } catch (error) {
+      if (await cache.match(abs)) ok += 1; else failed += 1;
+    }
+    state.cacheProgress = `Updating ${ok}/${toDownload.length} file(s)${failed ? ` · ${failed} failed` : ''}`;
+    render();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  // Evict cached media/docs that the new pack no longer references.
+  const referencedAbs = new Set([...referenced].map(key => new URL(key, state.currentManifestUrl).toString()));
+  let evicted = 0;
+  for (const request of await cache.keys()) {
+    if (isPackMediaOrDocUrl(request.url) && !referencedAbs.has(request.url)) {
+      if (await cache.delete(request)) evicted += 1;
+    }
+  }
+
+  storeSyncedManifest(packId, manifest);
+  state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
+  state.cacheProgress = `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`;
+  render();
 }
 
 function haversineMeters(lat1, lon1, lat2, lon2) {
