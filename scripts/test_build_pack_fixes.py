@@ -158,6 +158,46 @@ def test_budget_guard_stops_spending():
         bp._DEEPL_CHARS_SPENT = 0
 
 
+def test_deepl_retries_on_429_then_succeeds(monkeypatch=None):
+    # Rate limit twice, then succeed: the call must retry (not fall back) and count chars once.
+    import urllib.error
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"translations": [{"detected_source_language": "DE", "text": "EN"}]}).encode()
+
+    attempts = {"n": 0}
+
+    def flaky(*a, **k):
+        attempts["n"] += 1
+        if attempts["n"] <= 2:
+            raise urllib.error.HTTPError("url", 429, "Too Many Requests", {}, None)
+        return Resp()
+
+    bp.DEEPL_API_KEY = "key:fx"
+    bp.DEEPL_API_URL = "https://api-free.deepl.com/v2/translate"
+    bp._DEEPL_DISABLED = False
+    bp._DEEPL_BUDGET_CHARS = None
+    bp._DEEPL_CHARS_SPENT = 0
+    orig_open, orig_sleep = bp.urllib.request.urlopen, bp.time.sleep
+    bp.urllib.request.urlopen = flaky
+    bp.time.sleep = lambda *_: None
+    try:
+        assert bp.deepl_translate("Wiese") == "EN"
+        assert attempts["n"] == 3, "should retry twice then succeed"
+        assert bp._DEEPL_CHARS_SPENT == len("Wiese")
+    finally:
+        bp.urllib.request.urlopen = orig_open
+        bp.time.sleep = orig_sleep
+        bp._DEEPL_CHARS_SPENT = 0
+
+
 def test_source_states_match():
     base = bp.build_source_state(cupx="etagA", vac="2026-06-11", streckenflug="hash1")
     assert bp.source_states_match(dict(base), base) is True

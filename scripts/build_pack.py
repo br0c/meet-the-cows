@@ -41,6 +41,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -108,11 +109,14 @@ _DEEPL_BUDGET_CHARS: int | None = None
 _TRANSLATION_CACHE: dict[str, str] = {}
 _TRANSLATION_CACHE_PATH: Path | None = None
 _TRANSLATION_STATS: dict[str, int] = {"deepl": 0, "cache": 0, "fallback": 0}
+# Serialises DeepL access: streckenflug scraping runs on many worker threads, and concurrent
+# calls get rate-limited (HTTP 429). One request at a time + backoff keeps us under the limit.
+_DEEPL_LOCK = threading.Lock()
 
 # Bump whenever the build LOGIC changes the pack output (parsing, merging, translation,
 # schema). A mismatch with the published state forces a full rebuild even if the upstream
 # sources are unchanged, so code changes always reach the deployed pack.
-PACK_SCHEMA_VERSION = 4
+PACK_SCHEMA_VERSION = 5
 
 
 
@@ -2355,17 +2359,20 @@ def translate_german_to_english(text: str) -> str:
     key = normalize_space(text)
     if not key:
         return text
-    cached = _TRANSLATION_CACHE.get(key)
-    if cached is not None:
-        _TRANSLATION_STATS["cache"] += 1
-        return cached
-    result = deepl_translate(key)
-    if result is not None:
-        _TRANSLATION_CACHE[key] = result
-        _TRANSLATION_STATS["deepl"] += 1
-        return result
-    # DeepL unavailable or failed: best-effort dictionary substitution.
-    _TRANSLATION_STATS["fallback"] += 1
+    # Serialise: worker threads must not call DeepL concurrently (rate limits), and this keeps
+    # the cache and char counter consistent. Cache hits are cheap, so locking them is fine.
+    with _DEEPL_LOCK:
+        cached = _TRANSLATION_CACHE.get(key)
+        if cached is not None:
+            _TRANSLATION_STATS["cache"] += 1
+            return cached
+        result = deepl_translate(key)
+        if result is not None:
+            _TRANSLATION_CACHE[key] = result
+            _TRANSLATION_STATS["deepl"] += 1
+            return result
+        _TRANSLATION_STATS["fallback"] += 1
+    # DeepL unavailable or failed: best-effort dictionary substitution (no shared state).
     return dictionary_translate_german(text)
 
 
@@ -2404,18 +2411,30 @@ def deepl_translate(text: str) -> str | None:
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        if error.code in (401, 403, 456):
-            _DEEPL_DISABLED = True
-            print(f"DeepL disabled for this run (HTTP {error.code}); using offline dictionary", file=sys.stderr)
-        else:
-            print(f"DeepL request failed (HTTP {error.code})", file=sys.stderr)
-        return None
-    except Exception as error:  # noqa: BLE001 - network/JSON errors should not abort the build
-        print(f"DeepL request error: {error}", file=sys.stderr)
+    payload = None
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as error:
+            if error.code == 429:
+                # Rate limited: honour Retry-After (seconds) else exponential backoff, then retry.
+                retry_after = error.headers.get("Retry-After") if error.headers else None
+                delay = float(retry_after) if (retry_after and retry_after.isdigit()) else min(2 ** attempt, 16)
+                time.sleep(delay)
+                continue
+            if error.code in (401, 403, 456):
+                _DEEPL_DISABLED = True
+                print(f"DeepL disabled for this run (HTTP {error.code}); using offline dictionary", file=sys.stderr)
+            else:
+                print(f"DeepL request failed (HTTP {error.code})", file=sys.stderr)
+            return None
+        except Exception as error:  # noqa: BLE001 - network/JSON errors should not abort the build
+            print(f"DeepL request error: {error}", file=sys.stderr)
+            return None
+    if payload is None:
+        print("DeepL rate limit persisted after retries; using offline dictionary for this note", file=sys.stderr)
         return None
     translations = payload.get("translations") or []
     if not translations:
