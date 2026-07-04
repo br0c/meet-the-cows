@@ -22,8 +22,9 @@ Difficulty `C` and `D` fields are highly contraindicated. Treat them as hazardou
 - Manual altitude mode for ground testing
 - Filters for more difficult fields
 - Field detail view with notes, photos, and documents
-- Installable PWA with offline app shell
-- Optional offline download for pack media and documents
+- Installable PWA with offline app shell that updates itself on next launch
+- Offline download of pack media and documents
+- In-app prompt when new field data is published, downloading only what changed
 
 ## Install on a Phone
 
@@ -37,15 +38,27 @@ For cockpit use, open the app before launch while you still have a good connecti
 
 ## Using Offline
 
-The app shell and core pack files are cached automatically by the service worker.
+The app shell and core pack files (field list and manifest) are cached automatically by the service worker and refreshed from the network whenever you open the app online.
 
-Photos and PDFs can be large, so they are not all cached automatically. To make them available offline:
+Photos and PDFs can be large, so they are not all cached automatically. To make them available offline the first time:
 
 1. Open Settings.
 2. Tap `Download / verify media & docs`.
 3. Keep the app open until the progress line finishes.
 
-The offline button downloads media and documents from the static pack URLs one by one and reports progress.
+This downloads every photo and document for the pack and records what you have so later updates only fetch the difference.
+
+## Updates
+
+Updates are only ever offered, never applied in flight. You choose when to reload or sync, on the ground with a good connection.
+
+### App updates
+
+The app updates itself: the next time you open it online, it loads the latest version automatically. An app update no longer clears your downloaded photos and documents — the app shell and the offline pack live in separate caches.
+
+### Data updates
+
+When a newer data pack is published, a `New field data available` banner appears at the top of the list. Tap `Update` to sync. The app refreshes the field text, then downloads only the media and documents that actually changed, removes any that were dropped, and skips everything you already hold — so a routine update is a small download, not the whole pack.
 
 ## Using in Flight
 
@@ -77,11 +90,15 @@ The public app loads a static data pack from same-origin GitHub Pages paths:
 /meet-the-cows/packs/packs.json
 /meet-the-cows/packs/fr-alps/manifest.json
 /meet-the-cows/packs/fr-alps/fields.json
+/meet-the-cows/packs/fr-alps/media-manifest.json
+/meet-the-cows/packs/fr-alps/state.json
 /meet-the-cows/packs/fr-alps/media/...
 /meet-the-cows/packs/fr-alps/docs/...
 ```
 
-Generated pack files are not committed to the repository.
+`media-manifest.json` lists a content hash for every media/doc file; the app diffs it to
+download only changed files on an update. `state.json` is the source fingerprint the build
+uses to decide whether a rebuild is needed. Generated pack files are not committed to the repository.
 
 ## Credits and Data Sources
 
@@ -101,6 +118,8 @@ GitHub Pages deployment is split so app-only changes do not rebuild the data pac
 
 - `.github/workflows/deploy-app.yml` deploys app-shell changes using the latest already-built pack.
 - `.github/workflows/build-data-pack.yml` rebuilds the data pack, assembles the full static site, and deploys it. It runs manually, on schedule, and when the data-build scripts change.
+
+The data-pack build is incremental: it fingerprints the upstream sources (Guide CUPX, SIA VAC cycle, streckenflug list) and skips the rebuild and deploy entirely when nothing has changed, so the daily run is a no-op on quiet days. It does a full refresh on pushes, on manual runs, and once a week. German streckenflug notes are translated to English via DeepL, cached across runs so only new or changed text is re-translated.
 
 ## Contributing
 
