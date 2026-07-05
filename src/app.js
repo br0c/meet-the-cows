@@ -1,4 +1,4 @@
-const APP_VERSION = '0.4.1-beta';
+const APP_VERSION = '0.4.3-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. Legacy 'meet-the-cows-*' caches are still cleaned up on reload.
 const DATA_CACHE = 'mtc-data';
@@ -13,7 +13,7 @@ const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
 const DEFAULT_SETTINGS = {
   packId: 'fr-alps',
   safetyMarginM: 250,
-  hideC: false,
+  hideC: true,
   hideD: true,
   sortMode: 'glide',
   useManualAltitude: false,
@@ -395,6 +395,7 @@ function renderSettingsPage() {
           <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
           <label for="hideD">Hide D fields</label>
         </div>
+        <p class="settings-note">C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.</p>
       </div>
     </section>
   `;
@@ -537,6 +538,16 @@ function attachEvents() {
   });
   for (const id of ['hideC', 'hideD', 'useManualAltitude']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
+      if ((id === 'hideC' || id === 'hideD') && !e.target.checked) {
+        // Revealing difficult fields — make the pilot acknowledge the risk before showing them.
+        const label = id === 'hideC' ? 'C' : 'D';
+        const severity = label === 'D' ? 'very difficult' : 'difficult';
+        const ok = confirm(`Difficulty ${label} fields are ${severity} and possibly dangerous — last-resort emergency options only, not recommended. Show them in the nearest list anyway?`);
+        if (!ok) {
+          e.target.checked = true; // decline: leave them hidden
+          return;
+        }
+      }
       state.settings[id] = e.target.checked;
       if (id === 'useManualAltitude') computeRows();
       saveSettings();
@@ -807,6 +818,58 @@ function cupFrequency(field) {
   return match ? match[0] : '';
 }
 
+// Pull a labelled value ("Surface: grass", "Direction: 07/25") out of the notes block. The
+// streckenflug import writes these as their own lines; returns '' when the label is absent.
+function cupNoteValue(notes, label) {
+  const match = new RegExp(`^\\s*${label}\\s*:\\s*(.+)$`, 'im').exec(String(notes || ''));
+  if (!match) return '';
+  return match[1].split(/[.;\n]/)[0].trim().replace(/\s+/g, ' ').slice(0, 40);
+}
+
+// The Guide des Aires ("guide des vaches") free-text field description, kept alongside the
+// structured summary. Strips the streckenflug labelled block, OpenAIP/VAC import boilerplate,
+// URLs, and a leading runway token so info already shown above (difficulty, direction…) is not
+// duplicated. Only guide-sourced fields carry this prose; streckenflug fields stay compact.
+function cupGuideNotes(field) {
+  if (!/Guide des Aires|planeur-net/i.test(field.source?.name || '')) return '';
+  const text = String(field.notes || '')
+    .replace(/^\s*streckenflug\.at source:.*$/gim, '')
+    .replace(/^\s*(?:Landout Field|Airstrip|Airfield|Airport)\b.*$/gim, '')
+    .replace(/^\s*(?:Info|Surface|Direction|Slope|Visit|Modified|Feedback|Reported hazards)\s*:.*$/gim, '')
+    .replace(/^\s*-{2,}\s*$/gim, '')
+    .replace(/Glider-relevant airfield imported from OpenAIP[^.]*\.?/gi, '')
+    .replace(/Official aerodrome entry created from SIA VAC import\.?/gi, '')
+    .replace(/Coordinates\/dimensions are from the airport source[^.]*\.?/gi, '')
+    .replace(/Verify (?:current official AIP\/VAC data before use|the attached official VAC)\.?/gi, '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/^\s*(?:[NSEW]{1,2}\/[NSEW]{1,2}|\d{1,3}\/\d{1,3}|\d{2,3})\b\.?\s+/, '');
+  return text.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+// Compact waypoint description: difficulty, frequency, length×width, surface, direction/pistes,
+// then the Guide des Aires prose. The full field notes stay in the app; the CUP stays readable.
+function cupDescription(field) {
+  const parts = [];
+  if (field.difficulty && field.difficulty !== 'UNKNOWN') parts.push(`[${field.difficulty}]`);
+  const freq = cupFrequency(field);
+  if (freq) parts.push(`${freq} MHz`);
+  const length = Number(field.lengthM);
+  const width = Number(field.widthM);
+  if (Number.isFinite(length) && length > 0 && Number.isFinite(width) && width > 0) {
+    parts.push(`${Math.round(length)}×${Math.round(width)} m`);
+  } else if (Number.isFinite(length) && length > 0) {
+    parts.push(`${Math.round(length)} m`);
+  }
+  const surface = cupNoteValue(field.notes, 'Surface');
+  if (surface) parts.push(surface);
+  const direction = cupNoteValue(field.notes, 'Direction')
+    || (Number.isFinite(field.runwayDirectionDeg) ? `${String(Math.round(field.runwayDirectionDeg)).padStart(3, '0')}°` : '');
+  if (direction) parts.push(direction);
+  const prose = cupGuideNotes(field);
+  if (prose) parts.push(prose);
+  return parts.join(' · ');
+}
+
 function generateCupText() {
   // Style: 5 = airfield (solid surface), 3 = outlanding field.
   const rows = ['name,code,country,lat,lon,elev,style,rwdir,rwlen,freq,desc'];
@@ -816,16 +879,6 @@ function generateCupText() {
     const elev = Number.isFinite(field.elevationM) ? `${Math.round(field.elevationM)}m` : '';
     const rwdir = Number.isFinite(field.runwayDirectionDeg) ? Math.round(field.runwayDirectionDeg) : '';
     const rwlen = Number.isFinite(field.lengthM) && field.lengthM > 0 ? `${Math.round(field.lengthM)}m` : '';
-    const diff = field.difficulty && field.difficulty !== 'UNKNOWN' ? `[${field.difficulty}] ` : '';
-    const notes = String(field.notes || '')
-      .replace(/https?:\/\/\S+/gi, '')                 // drop URLs (incl. the streckenflug source link)
-      .replace(/streckenflug\.at source:\s*/gi, '')    // drop the now-orphaned source label
-      .replace(/\bInspection video:\s*/gi, '')
-      .replace(/\s*\|\s*/g, ' | ')                     // normalise section separators
-      .replace(/^(?:\s*\|\s*)+|(?:\s*\|\s*)+$/g, '')    // trim leading/trailing separators
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 900);
     rows.push([
       cupQuote(name),
       cupQuote(field.code || ''),
@@ -837,7 +890,7 @@ function generateCupText() {
       rwdir,
       rwlen,
       cupFrequency(field),
-      cupQuote(diff + notes),
+      cupQuote(cupDescription(field)),
     ].join(','));
   }
   return rows.join('\r\n') + '\r\n';

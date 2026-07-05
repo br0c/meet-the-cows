@@ -40,10 +40,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
@@ -77,7 +77,7 @@ jobs:
       # text. Unique primary key => always saves the updated cache; restore-keys pulls the
       # most recent one from a previous run.
       - name: Restore translation cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/translation-cache.json
           key: translation-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -117,7 +117,7 @@ jobs:
 
       - name: Cache generated data pack for app-only deploys
         if: steps.build.outputs.changed != 'false'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/packs/${{ env.PACK_ID }}
           key: pages-pack-${{ github.run_id }}-${{ github.run_attempt }}
@@ -144,11 +144,11 @@ jobs:
 
       - name: Setup Pages
         if: steps.build.outputs.changed != 'false'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
         if: steps.build.outputs.changed != 'false'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages-${{ github.run_attempt }}
           path: dist/site
@@ -156,7 +156,7 @@ jobs:
       - name: Deploy to GitHub Pages
         if: steps.build.outputs.changed != 'false'
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 

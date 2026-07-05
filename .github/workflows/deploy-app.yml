@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -70,7 +70,7 @@ jobs:
 
       - name: Restore latest generated data pack cache
         if: steps.data_changes.outputs.data_changed != 'true'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/packs/${{ env.PACK_ID }}
           key: pages-pack-${{ github.run_id }}
@@ -112,11 +112,11 @@ jobs:
 
       - name: Setup Pages
         if: steps.data_changes.outputs.data_changed != 'true'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
         if: steps.data_changes.outputs.data_changed != 'true'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages-${{ github.run_attempt }}
           path: dist/site
@@ -124,7 +124,7 @@ jobs:
       - name: Deploy to GitHub Pages
         if: steps.data_changes.outputs.data_changed != 'true'
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 

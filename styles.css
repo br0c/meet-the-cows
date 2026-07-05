@@ -118,21 +118,25 @@ a { color: var(--accent); }
 .field-glide::after { content: ''; }
 .field-glide.missing::after { content: ''; }
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); font-weight: 900; justify-self: end; }
-.badge-a,
-.badge-b {
-  color: #052e16;
+.badge-a {
+  color: #000;
   background: #86efac;
-  border-color: #22c55e;
+  border-color: transparent;
+}
+.badge-b {
+  color: #000;
+  background: #fde047;
+  border-color: transparent;
 }
 .badge-c {
-  color: #111827;
+  color: #000;
   background: #f59e0b;
-  border-color: #ffedd5;
+  border-color: transparent;
 }
 .badge-d {
-  color: #ffffff;
-  background: #dc2626;
-  border-color: #fecaca;
+  color: #000;
+  background: #ef4444;
+  border-color: transparent;
 }
 .badge-unknown { color: var(--muted); background: transparent; }
 

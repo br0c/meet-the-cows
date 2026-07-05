@@ -116,7 +116,7 @@ _DEEPL_LOCK = threading.Lock()
 # Bump whenever the build LOGIC changes the pack output (parsing, merging, translation,
 # schema). A mismatch with the published state forces a full rebuild even if the upstream
 # sources are unchanged, so code changes always reach the deployed pack.
-PACK_SCHEMA_VERSION = 5
+PACK_SCHEMA_VERSION = 6
 
 
 
@@ -368,7 +368,7 @@ def main() -> None:
     manifest = {
         "id": args.pack_id,
         "name": args.pack_name,
-        "version": dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S"),
+        "version": source_state_version(source_state),
         "generatedAt": dt.datetime.now(dt.UTC).isoformat(),
         "isSample": False,
         "fieldsUrl": "fields.json",
@@ -551,6 +551,22 @@ def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]
     if not previous:
         return False
     return all(str(previous.get(k)) == str(current.get(k)) for k in ("schemaVersion", "cupx", "vac", "streckenflug"))
+
+
+def source_state_version(source_state: dict[str, Any]) -> str:
+    """Content-stable pack version: a short hash of the source fingerprint.
+
+    The app shows "New field data available" whenever this differs from the version the pilot
+    last synced. Deriving it from the source state (schema + upstream fingerprints) rather than
+    the build clock means a rebuild that changed nothing upstream — notably the weekly Sunday
+    full refresh — keeps the same version and does NOT prompt every pilot to re-download the
+    pack. It advances only when a source actually advances (new CUPX, VAC cycle, or streckenflug
+    edit) or the schema is bumped.
+    """
+    import hashlib
+
+    payload = json.dumps(source_state, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def read_previous_state(state_url: str) -> dict[str, Any] | None:
