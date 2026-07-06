@@ -2,6 +2,8 @@
 
 Meet the Cows is an offline-friendly landing-field viewer for glider pilots, designed to run as a phone web app in the cockpit.
 
+**Live app: <https://br0c.github.io/meet-the-cows/>** — open it on your phone and add it to your home screen.
+
 Install it on your phone, open it before or during a flight, allow location access, and it shows nearby outlanding fields and airfields with distance, bearing, required glide ratio, notes, photos, and available documents such as VAC PDFs.
 
 ## Safety
@@ -28,7 +30,7 @@ Difficulty `C` and `D` fields are highly contraindicated. Treat them as hazardou
 
 ## Install on a Phone
 
-1. Open the deployed Meet the Cows site on your phone.
+1. Open <https://br0c.github.io/meet-the-cows/> in your phone browser.
 2. On iPhone, use Safari's share button, then choose `Add to Home Screen`.
 3. On Android, use the browser menu, then choose `Install app` or `Add to Home screen`.
 4. Launch Meet the Cows from the home-screen icon.
