@@ -1,4 +1,4 @@
-const APP_VERSION = '0.4.3-beta';
+const APP_VERSION = '0.4.4-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. Legacy 'meet-the-cows-*' caches are still cleaned up on reload.
 const DATA_CACHE = 'mtc-data';
@@ -19,6 +19,10 @@ const DEFAULT_SETTINGS = {
   useManualAltitude: false,
   manualAltitudeM: 2500,
 };
+
+// Best-options shortlist: only difficulty A entries reachable at this required glide
+// ratio or better qualify for the pinned top-three picks.
+const TOP_PICK_MAX_GLIDE = 20;
 
 let renderTimer = null;
 let gpsWatchId = null;
@@ -422,10 +426,23 @@ function difficultyBadgeClass(field) {
   return 'badge-unknown';
 }
 
-function renderFieldList() {
-  if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
-  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission.</div>';
-  const rows = state.computedRows.slice(0, 120).map(({ field, distanceM, requiredGlideRatio, glideReason }) => `
+// The three best safe options, pinned above the rest of the list: difficulty A only,
+// required glide ratio TOP_PICK_MAX_GLIDE or better, airfields ranked before fields,
+// then lowest required glide first.
+function topPickRows() {
+  return state.computedRows
+    .filter(row => row.field.difficulty === 'A'
+      && row.requiredGlideRatio !== null
+      && row.requiredGlideRatio <= TOP_PICK_MAX_GLIDE)
+    .sort((a, b) => {
+      const airfieldFirst = (a.field.kind === 'airfield' ? 0 : 1) - (b.field.kind === 'airfield' ? 0 : 1);
+      return airfieldFirst || a.requiredGlideRatio - b.requiredGlideRatio;
+    })
+    .slice(0, 3);
+}
+
+function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
+  return `
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
       <span class="field-main">
         <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
@@ -435,13 +452,23 @@ function renderFieldList() {
       <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
       <span class="badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
     </button>
-  `).join('');
+  `;
+}
+
+function renderFieldList() {
+  if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
+  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission.</div>';
+  const picks = topPickRows();
+  const pickIds = new Set(picks.map(row => row.field.id));
+  const rest = state.computedRows.filter(row => !pickIds.has(row.field.id)).slice(0, 120);
   return `
     <section class="field-list" aria-label="Nearest landing fields">
       <div class="field-list-head">
         <span>Name</span><span>Dist</span><span>Glide</span><span>Diff</span>
       </div>
-      ${rows}
+      ${picks.map(renderFieldRow).join('')}
+      ${picks.length && rest.length ? '<div class="top-picks-divider" role="separator"></div>' : ''}
+      ${rest.map(renderFieldRow).join('')}
     </section>
   `;
 }
@@ -556,7 +583,12 @@ function attachEvents() {
   }
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
   document.querySelector('#exportCup')?.addEventListener('click', exportCup);
-  document.querySelector('#syncDataBtn')?.addEventListener('click', syncPackDelta);
+  document.querySelector('#syncDataBtn')?.addEventListener('click', () => {
+    // Jump to Settings so the pilot watches the sync progress there, instead of the
+    // banner appearing to do nothing (progress only renders on the settings page).
+    state.view = 'settings';
+    syncPackDelta();
+  });
   document.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
     state.selectedFieldId = row.getAttribute('data-field-id');
     state.detailScrollTop = 0;

@@ -19,6 +19,7 @@ Difficulty `C` and `D` fields are highly contraindicated. Treat them as hazardou
 ## Features
 
 - Nearby fields from your current GPS position
+- Three best safe options (difficulty `A`, required glide ratio 20 or better, airfields first) pinned above the list
 - Distance, bearing, and straight-line required glide ratio
 - Safety arrival margin setting
 - Manual altitude mode for ground testing
@@ -60,13 +61,13 @@ The app updates itself: the next time you open it online, it loads the latest ve
 
 ### Data updates
 
-When a newer data pack is published, a `New field data available` banner appears at the top of the list. Tap `Update` to sync. The app refreshes the field text, then downloads only the media and documents that actually changed, removes any that were dropped, and skips everything you already hold — so a routine update is a small download, not the whole pack.
+When a newer data pack is published, a `New field data available` banner appears at the top of the list. Tap `Update` to sync; the app opens Settings so you can watch the progress. It refreshes the field text, then downloads only the media and documents that actually changed, removes any that were dropped, and skips everything you already hold — so a routine update is a small download, not the whole pack.
 
 ## Using in Flight
 
 1. Launch the home-screen app.
 2. Wait for the GPS status to become available.
-3. Use the nearest list to compare distance, bearing, required glide ratio, and difficulty.
+3. Use the nearest list to compare distance, bearing, required glide ratio, and difficulty. The three best safe options (difficulty `A`, required glide ratio 20 or better, airfields preferred) are pinned above the thicker divider.
 4. Tap a field to review notes, photos, documents, and VAC material.
 5. Adjust the safety arrival margin in Settings if you want a more conservative glide estimate.
 

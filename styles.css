@@ -102,6 +102,7 @@ a { color: var(--accent); }
   cursor: pointer;
 }
 .field-row:last-child { border-bottom: 0; }
+.top-picks-divider { height: 4px; background: #64748b; }
 .field-row:active { background: rgba(56,189,248,.10); }
 .field-main { min-width: 0; }
 .field-name {
