@@ -7,9 +7,6 @@
   --muted: #94a3b8;
   --line: #334155;
   --accent: #38bdf8;
-  --good: #86efac;
-  --warn: #f59e0b;
-  --bad: #ef4444;
 }
 
 * { box-sizing: border-box; }
@@ -29,7 +26,6 @@ button {
   padding: 10px 12px;
 }
 button.primary { background: #075985; border-color: #0ea5e9; }
-button.danger { background: #7f1d1d; border-color: #f87171; }
 button:disabled { opacity: .45; }
 a { color: var(--accent); }
 
@@ -116,8 +112,6 @@ a { color: var(--accent); }
 .field-sub { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .field-distance,
 .field-glide { text-align: right; font-weight: 800; font-size: 14px; white-space: nowrap; }
-.field-glide::after { content: ''; }
-.field-glide.missing::after { content: ''; }
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); font-weight: 900; justify-self: end; }
 .badge-a {
   color: #000;

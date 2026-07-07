@@ -148,6 +148,26 @@ def main() -> int:
     if not fields:
         errors.append("fields.json contains no fields")
 
+    # The in-app update mechanism depends on these two files: media-manifest.json drives the
+    # incremental media sync, state.json drives the build short-circuit. A pack missing either
+    # silently degrades (full re-downloads / rebuilds every run), so fail the deploy instead.
+    media_manifest_path = pack_dir / "media-manifest.json"
+    if not media_manifest_path.exists():
+        errors.append(f"missing media-manifest.json: {media_manifest_path}")
+    else:
+        media_manifest = load_json(media_manifest_path)
+        if not isinstance(media_manifest, dict) or not isinstance(media_manifest.get("files"), dict):
+            errors.append("media-manifest.json is not an object with a files map")
+        elif media_manifest.get("version") != manifest.get("version"):
+            errors.append(
+                f"media-manifest version ({media_manifest.get('version')}) differs from "
+                f"manifest version ({manifest.get('version')})"
+            )
+        elif media_count and not media_manifest["files"]:
+            errors.append("media-manifest.json lists no files although fields reference media")
+    if not (pack_dir / "state.json").exists():
+        errors.append(f"missing state.json: {pack_dir / 'state.json'}")
+
     print("Pack smoke test")
     print(f"  Pack dir:     {pack_dir}")
     print(f"  Pack id:      {manifest.get('id', '—')}")

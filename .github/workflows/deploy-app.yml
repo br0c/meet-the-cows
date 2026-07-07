@@ -42,6 +42,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # APP_VERSION is declared in both files (the SW cannot import the module); a mismatch
+      # would leave clients on a stale shell cache. Fail fast instead of deploying drift.
+      - name: Check APP_VERSION consistency
+        run: |
+          app=$(grep -o "APP_VERSION = '[^']*'" src/app.js | head -1)
+          sw=$(grep -o "APP_VERSION = '[^']*'" service-worker.js | head -1)
+          echo "src/app.js:        ${app}"
+          echo "service-worker.js: ${sw}"
+          [ -n "${app}" ] && [ "${app}" = "${sw}" ] || { echo "ERROR: APP_VERSION mismatch"; exit 1; }
+
       - name: Detect data-pack changes
         id: data_changes
         run: |

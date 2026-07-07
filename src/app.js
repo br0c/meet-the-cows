@@ -1,6 +1,6 @@
-const APP_VERSION = '0.4.4-beta';
+const APP_VERSION = '0.4.5-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
-// wipe a downloaded pack. Legacy 'meet-the-cows-*' caches are still cleaned up on reload.
+// wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
 const BASE_URL = new URL('..', import.meta.url);
 const PACK_INDEX_URL = new URL('packs/packs.json', BASE_URL).toString();
@@ -8,7 +8,7 @@ const SETTINGS_KEY = 'mtc-settings-v2';
 const syncedVersionKey = packId => `mtc-synced-version-${packId}`;
 const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
 
-/** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, radio?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
+/** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
 
 const DEFAULT_SETTINGS = {
   packId: 'fr-alps',
@@ -520,7 +520,6 @@ function formatRunwayDimensions(field) {
 
 function formatFrequency(field) {
   if (field.frequency) return field.frequency;
-  if (field.radio) return field.radio;
   const freqs = Array.isArray(field.frequencies) ? field.frequencies : [];
   if (!freqs.length) return '—';
   const first = freqs[0];
@@ -610,21 +609,13 @@ async function registerServiceWorker() {
 async function clearPackCache(packId) {
   if (!('caches' in window) || !packId) return 0;
   const packRootUrl = new URL(`packs/${packId}/`, BASE_URL).toString();
-  const cacheNames = await caches.keys();
+  const cache = await caches.open(DATA_CACHE);
   let deleted = 0;
-
-  for (const cacheName of cacheNames) {
-    if (cacheName !== DATA_CACHE && !cacheName.startsWith('meet-the-cows-')) continue;
-    const cache = await caches.open(cacheName);
-    const requests = await cache.keys();
-    for (const request of requests) {
-      const url = request.url;
-      if (url === PACK_INDEX_URL || url.startsWith(packRootUrl)) {
-        if (await cache.delete(request)) deleted += 1;
-      }
+  for (const request of await cache.keys()) {
+    if (request.url === PACK_INDEX_URL || request.url.startsWith(packRootUrl)) {
+      if (await cache.delete(request)) deleted += 1;
     }
   }
-
   return deleted;
 }
 
@@ -708,9 +699,11 @@ async function checkCacheStatus() {
     return;
   }
 
+  // One keys() call instead of one match() round-trip per file (~1500 on a full pack).
+  const cachedUrls = new Set((await cache.keys()).map(request => request.url));
   let cached = 0;
   for (const url of urls) {
-    if (await cache.match(url)) cached += 1;
+    if (cachedUrls.has(url)) cached += 1;
   }
   state.cacheStatus = cached === urls.length ? 'ready' : cached > 0 ? 'incomplete' : 'not downloaded';
   state.cacheProgress = `${cached}/${urls.length} media/docs cached`;
@@ -786,13 +779,14 @@ async function syncPackDelta() {
   }
 
   // New/changed referenced files, plus any referenced file missing from the cache.
+  const cachedUrls = new Set((await cache.keys()).map(request => request.url));
   const toDownload = [];
   for (const key of referenced) {
     const entry = files[key];
     if (!entry) continue;
     const abs = new URL(key, state.currentManifestUrl).toString();
     const changed = !storedFiles[key] || storedFiles[key].h !== entry.h;
-    if (changed || !(await cache.match(abs))) toDownload.push(abs);
+    if (changed || !cachedUrls.has(abs)) toDownload.push(abs);
   }
 
   let ok = 0;
@@ -846,7 +840,7 @@ function cupFrequency(field) {
   const freqs = Array.isArray(field.frequencies) ? field.frequencies : [];
   const mhz = freqs.find(f => typeof f?.mhz === 'number')?.mhz;
   if (typeof mhz === 'number') return mhz.toFixed(3);
-  const match = String(field.frequency || field.radio || '').match(/\d{3}\.\d{1,3}/);
+  const match = String(field.frequency || '').match(/\d{3}\.\d{1,3}/);
   return match ? match[0] : '';
 }
 

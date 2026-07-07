@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import hashlib
 import html
 from collections import Counter
 import io
@@ -116,7 +117,7 @@ _DEEPL_LOCK = threading.Lock()
 # Bump whenever the build LOGIC changes the pack output (parsing, merging, translation,
 # schema). A mismatch with the published state forces a full rebuild even if the upstream
 # sources are unchanged, so code changes always reach the deployed pack.
-PACK_SCHEMA_VERSION = 6
+PACK_SCHEMA_VERSION = 7
 
 
 
@@ -523,8 +524,6 @@ def extract_streckenflug_list_versions(page: str) -> list[tuple[str, str]]:
 
 def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_dir: Path) -> str:
     """Hash of (id, visit-year) across the country list pages. Year-granular by design."""
-    import hashlib
-
     entries: list[str] = []
     for country in countries:
         url = streckenflug_country_list_url(list_url, str(country).upper())
@@ -563,8 +562,6 @@ def source_state_version(source_state: dict[str, Any]) -> str:
     pack. It advances only when a source actually advances (new CUPX, VAC cycle, or streckenflug
     edit) or the schema is bumped.
     """
-    import hashlib
-
     payload = json.dumps(source_state, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
@@ -600,8 +597,6 @@ def write_media_manifest(out_dir: Path, version: str) -> int:
     The app diffs this against its last-synced copy to download only new/changed files and
     evict removed ones, instead of re-downloading the whole pack on every data update.
     """
-    import hashlib
-
     files: dict[str, dict[str, Any]] = {}
     for sub in ("media", "docs"):
         base = out_dir / sub
@@ -731,7 +726,6 @@ def parse_cup(cup_text: str, pack_id: str) -> list[dict[str, Any]]:
             "widthM": width_m,
             "runwayDirectionDeg": direction_deg,
             "frequency": format_frequency_short(frequencies),
-            "radio": format_frequency_short(frequencies),
             "frequencies": frequencies,
             "notes": strip_difficulty_tags(notes),
             "source": {
@@ -896,10 +890,21 @@ def merge_frequency_lists(*lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return merged
 
 
+_PYPDF_MISSING_WARNED = False
+
+
 def extract_frequencies_from_pdf_bytes(data: bytes, *, source: str) -> list[dict[str, Any]]:
-    text = ""
+    global _PYPDF_MISSING_WARNED
     try:
         from pypdf import PdfReader  # type: ignore
+    except ImportError:
+        # Never let a missing dependency silently strip VAC frequencies from the pack.
+        if not _PYPDF_MISSING_WARNED:
+            _PYPDF_MISSING_WARNED = True
+            print("WARNING: pypdf is not installed; VAC PDF frequency extraction is disabled. Run: python -m pip install -r requirements.txt", file=sys.stderr)
+        return []
+    text = ""
+    try:
         reader = PdfReader(io.BytesIO(data))
         pages = []
         for page in reader.pages[:3]:
@@ -1449,7 +1454,6 @@ def apply_frequency_index(fields: list[dict[str, Any]], frequency_index: dict[st
         existing = merge_frequency_lists(list(field.get("frequencies") or []), indexed)
         field["frequencies"] = existing
         field["frequency"] = format_frequency_short(existing)
-        field["radio"] = field["frequency"]
 
 
 def parse_vac_codes(vac_codes: str, raw_dir: Path) -> set[str]:
@@ -1576,7 +1580,6 @@ def make_open_airfield_entry(
         "widthM": runway.get("widthM"),
         "runwayDirectionDeg": runway.get("runwayDirectionDeg"),
         "frequency": format_frequency_short(frequencies),
-        "radio": format_frequency_short(frequencies),
         "frequencies": frequencies,
         "notes": notes,
         "source": {"name": "OpenAIP", "importedAt": dt.date.today().isoformat(), "packId": pack_id},
@@ -1662,7 +1665,6 @@ def import_vac_pdfs(
                     all_freqs = merge_frequency_lists(list(field.get("frequencies") or []), merged_freqs)
                     field["frequencies"] = all_freqs
                     field["frequency"] = format_frequency_short(all_freqs)
-                    field["radio"] = field["frequency"]
             progress.update(index, extra=f"{code}: attached | ok {downloaded}, miss {misses}, err {errors}")
             continue
 
@@ -1709,7 +1711,6 @@ def make_vac_airfield_entry(
         "widthM": runway.get("widthM"),
         "runwayDirectionDeg": runway.get("runwayDirectionDeg"),
         "frequency": format_frequency_short(frequencies),
-        "radio": format_frequency_short(frequencies),
         "frequencies": frequencies,
         "notes": notes,
         "source": {
@@ -1996,7 +1997,6 @@ def parse_streckenflug_detail(
         "widthM": width_m,
         "runwayDirectionDeg": runway_direction,
         "frequency": format_frequency_short(freqs),
-        "radio": format_frequency_short(freqs),
         "frequencies": freqs,
         "notes": notes,
         "source": {
@@ -2838,7 +2838,6 @@ def merge_field_group(group: list[dict[str, Any]]) -> dict[str, Any]:
     if all_freqs:
         merged["frequencies"] = all_freqs
         merged["frequency"] = format_frequency_short(all_freqs)
-        merged["radio"] = merged["frequency"]
 
     merged["media"] = merge_media_lists(*(field.get("media") or [] for field in group))
     docs: dict[str, Any] = {}
