@@ -1,4 +1,4 @@
-const APP_VERSION = '0.5.0-beta';
+const APP_VERSION = '0.6.0-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -101,7 +101,7 @@ const STRINGS = {
     cLicense: 'I made this photo/note and agree to publish it under the project’s terms.',
     cSubmit: 'Submit for review', cSubmitting: 'Submitting…',
     cGeoVerified: m => `📍 Photo ${m} m from the field — pre-verified.`,
-    cGeoFar: m => `📍 Photo ${m} m away — will need manual review.`,
+    cGeoFar: d => `📍 Photo ${d} away — will need manual review.`,
     cGeoDevice: m => `📍 You are ${m} m from the field — pre-verified.`,
     cGeoNone: 'No location on the photo — it will be reviewed manually.',
     cThanks: 'Sent for review',
@@ -175,7 +175,7 @@ const STRINGS = {
     cLicense: 'J’ai réalisé cette photo/note et j’accepte de la publier selon les conditions du projet.',
     cSubmit: 'Envoyer pour révision', cSubmitting: 'Envoi…',
     cGeoVerified: m => `📍 Photo à ${m} m du terrain — pré-vérifiée.`,
-    cGeoFar: m => `📍 Photo à ${m} m — révision manuelle nécessaire.`,
+    cGeoFar: d => `📍 Photo à ${d} — révision manuelle nécessaire.`,
     cGeoDevice: m => `📍 Vous êtes à ${m} m du terrain — pré-vérifié.`,
     cGeoNone: 'Aucune localisation sur la photo — révision manuelle.',
     cThanks: 'Envoyé pour révision',
@@ -249,7 +249,7 @@ const STRINGS = {
     cLicense: 'Ich habe dieses Foto/diese Notiz erstellt und stimme der Veröffentlichung gemäß den Projektbedingungen zu.',
     cSubmit: 'Zur Prüfung senden', cSubmitting: 'Wird gesendet…',
     cGeoVerified: m => `📍 Foto ${m} m vom Feld — vorab bestätigt.`,
-    cGeoFar: m => `📍 Foto ${m} m entfernt — manuelle Prüfung nötig.`,
+    cGeoFar: d => `📍 Foto ${d} entfernt — manuelle Prüfung nötig.`,
     cGeoDevice: m => `📍 Sie sind ${m} m vom Feld — vorab bestätigt.`,
     cGeoNone: 'Kein Standort im Foto — wird manuell geprüft.',
     cThanks: 'Zur Prüfung gesendet',
@@ -980,7 +980,7 @@ function showContribGeo(geo) {
   el.hidden = false;
   el.classList.remove('ok', 'warn');
   if (geo.verified) { el.classList.add('ok'); el.textContent = geo.source === 'device' ? t('cGeoDevice', geo.distanceM) : t('cGeoVerified', geo.distanceM); }
-  else if (geo.distanceM != null && geo.source === 'exif') { el.classList.add('warn'); el.textContent = t('cGeoFar', geo.distanceM); }
+  else if (geo.distanceM != null && geo.source === 'exif') { el.classList.add('warn'); el.textContent = t('cGeoFar', geo.distanceM >= 2000 ? fmtKm(geo.distanceM) : `${geo.distanceM} m`); }
   else { el.classList.add('warn'); el.textContent = t('cGeoNone'); }
 }
 
