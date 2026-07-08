@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- Turnstile diagnostic page (dev only — not part of the deployed site).
+     Serve the repo root (python3 -m http.server 4173) and open http://localhost:4173/tsdemo.html
+
+     How to read it:
+       - Both widgets fail            -> this BROWSER blocks challenges.cloudflare.com
+                                         (extension / shields / tracking protection). Try a
+                                         private window or another browser.
+       - Test widget passes, real one -> the real widget's HOSTNAME ALLOWLIST is missing the
+         fails (e.g. error 110200)       host in your URL bar. Add localhost AND 127.0.0.1 in
+                                         the Cloudflare Turnstile dashboard.
+       - Both pass                    -> Turnstile is fine; the problem is elsewhere. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Turnstile diagnostic</title>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; background: #0b1220; color: #e5e7eb; margin: 0; padding: 24px; }
+      section { background: #111827; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin: 0 0 16px; max-width: 480px; }
+      h1 { font-size: 18px; } h2 { font-size: 14px; margin: 0 0 10px; color: #94a3b8; }
+      p { font-size: 13px; color: #94a3b8; }
+    </style>
+  </head>
+  <body>
+    <h1>Turnstile diagnostic</h1>
+    <section>
+      <h2>1 · Cloudflare test key (works on any hostname, always passes)</h2>
+      <div class="cf-turnstile" data-sitekey="1x00000000000000000000AA"></div>
+      <p>Fails ⇒ this browser blocks challenges.cloudflare.com (extension/shields). Try a private window.</p>
+    </section>
+    <section>
+      <h2>2 · Real widget key (the one the app uses)</h2>
+      <div class="cf-turnstile" data-sitekey="0x4AAAAAADyIBMLj-XXHBK-v"></div>
+      <p>Only this one fails ⇒ add <code>localhost</code> and <code>127.0.0.1</code> to the widget's
+         hostname allowlist in the Turnstile dashboard, wait a minute, hard-refresh.</p>
+    </section>
+  </body>
+</html>
