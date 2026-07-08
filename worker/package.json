@@ -1,0 +1,17 @@
+{
+  "name": "mtc-contrib-intake",
+  "version": "0.1.0-proto",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that turns a Meet the Cows field contribution into a reviewable GitHub PR.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "exifr": "^7.1.3"
+  },
+  "devDependencies": {
+    "wrangler": "^3.80.0"
+  }
+}

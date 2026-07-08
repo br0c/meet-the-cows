@@ -14,3 +14,7 @@ data/packs/
 dist/packs/
 # Build status flag written by scripts/build_pack.py
 build-status.json
+
+# Cloudflare Worker deps / build
+worker/node_modules/
+worker/.wrangler/

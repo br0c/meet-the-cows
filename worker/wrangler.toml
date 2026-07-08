@@ -1,0 +1,15 @@
+# Cloudflare Worker: contribution intake for Meet the Cows.
+# Deploy:  cd worker && npm install && npx wrangler deploy
+# Secrets (never commit): npx wrangler secret put GITHUB_TOKEN
+#                         npx wrangler secret put TURNSTILE_SECRET
+name = "mtc-contrib-intake"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[vars]
+REPO = "br0c/meet-the-cows"          # owner/repo the PR is opened against
+BASE_BRANCH = "main"                 # branch PRs target
+ALLOWED_ORIGIN = "https://br0c.github.io"   # CORS: the app's origin
+GEO_RADIUS_M = "1000"                # within this of the field ⇒ geo-verified
+MAX_PHOTO_BYTES = "15728640"         # 15 MB
+MIN_PHOTO_LONG_EDGE = "2560"         # matches the pack image resize target
