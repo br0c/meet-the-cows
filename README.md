@@ -138,6 +138,16 @@ Meet the Cows stands on work published by several aviation and gliding data prov
 
 The exact sources used by a deployed pack are listed in that pack's `manifest.json`.
 
+## Licence
+
+- **Source code**: [PolyForm Noncommercial 1.0.0](LICENSE) — free for any noncommercial use
+  (pilots, clubs, personal forks); commercial use requires a licence. Versions published before
+  this change remain available under their original MIT licence.
+- **Data** (packs, notes, photos, documents, CUP exports, contributions): free for personal,
+  noncommercial use through the app; extracting, redistributing or building on the data is
+  **on request** — see [DATA-LICENCE.md](DATA-LICENCE.md). Third-party sources keep their own
+  terms.
+
 ## Deployment
 
 GitHub Pages deployment is split so app-only changes do not rebuild the data pack:
