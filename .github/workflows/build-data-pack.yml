@@ -8,6 +8,8 @@ on:
       - "scripts/smoke_test_pack.py"
       - "requirements.txt"
       - ".github/workflows/build-data-pack.yml"
+      # Merging a community-contribution PR must rebuild + redeploy the pack.
+      - "contributions/**"
   workflow_dispatch:
     inputs:
       force_full:

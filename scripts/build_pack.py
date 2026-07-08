@@ -139,7 +139,14 @@ _DEEPL_LOCK = threading.Lock()
 # v8: field notes are localized objects {"en","fr","de"} instead of a single string.
 # v9: major commercial/controlled airports and military bases are excluded from the pack.
 # v10: translation cache is published with the pack (self-heal for the evictable CI cache).
-PACK_SCHEMA_VERSION = 10
+# v11: merged community contributions (contributions/) are folded into notes and media.
+PACK_SCHEMA_VERSION = 11
+
+# Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
+CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
+# A contribution's stored field coordinates must be within this of a pack field to match by
+# position (the fallback when the field id/code changed between pack rebuilds).
+CONTRIB_MATCH_RADIUS_M = 1000.0
 
 # App languages. Notes are emitted per language so the app can show them in the pilot's
 # language; the map converts our short codes to the DeepL target-language codes.
@@ -284,6 +291,7 @@ def main() -> None:
             streckenflug_list_fingerprint(args.streckenflug_url, args.streckenflug_countries, raw_dir)
             if args.include_streckenflug else ""
         ),
+        contributions=contributions_fingerprint(root / "contributions"),
     )
     if args.state_url and not args.force_full:
         if source_states_match(read_previous_state(args.state_url), source_state):
@@ -399,6 +407,10 @@ def main() -> None:
     # other two. Merging then combines the per-language notes fragment by fragment.
     localize_field_notes(fields)
     fields = consolidate_duplicate_fields(fields)
+    # Fold in merged community contributions (reviewed via PR): localized dated note fragments
+    # plus pack-optimized copies of contributed photos. After consolidation so contribution
+    # field ids line up with the published pack.
+    contrib_notes, contrib_photos = merge_contributions(fields, root / "contributions", media_dir)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
     fields_path = out_dir / "fields.json"
     fields_path.write_text(json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -415,6 +427,8 @@ def main() -> None:
         "vacCount": vac_count,
         "vacOnlyAirfieldsCreated": vac_created_airfields,
         "streckenflugCount": streckenflug_count,
+        "contributionNotes": contrib_notes,
+        "contributionPhotos": contrib_photos,
         "sources": [
             {
                 "name": "planeur-net / Guide des Aires de Sécurité",
@@ -581,19 +595,38 @@ def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_d
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
 
 
-def build_source_state(*, cupx: str, vac: str, streckenflug: str) -> dict[str, Any]:
+def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "") -> dict[str, Any]:
     return {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "cupx": cupx,
         "vac": vac,
         "streckenflug": streckenflug,
+        "contributions": contributions,
     }
+
+
+def contributions_fingerprint(contrib_dir: Path) -> str:
+    """Change signal for merged community contributions: hash of every JSON path + content.
+
+    Part of the source fingerprint so merging a contribution PR triggers a rebuild+deploy on
+    the next run even when the upstream aviation sources are unchanged. Empty when there are
+    no contributions.
+    """
+    if not contrib_dir.exists():
+        return ""
+    entries: list[str] = []
+    for path in sorted(contrib_dir.rglob("*.json")):
+        entries.append(f"{path.relative_to(contrib_dir).as_posix()}:{hashlib.sha1(path.read_bytes()).hexdigest()[:12]}")
+    if not entries:
+        return ""
+    return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
 
 
 def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
     if not previous:
         return False
-    return all(str(previous.get(k)) == str(current.get(k)) for k in ("schemaVersion", "cupx", "vac", "streckenflug"))
+    keys = ("schemaVersion", "cupx", "vac", "streckenflug", "contributions")
+    return all(str(previous.get(k) or "") == str(current.get(k) or "") for k in keys)
 
 
 def source_state_version(source_state: dict[str, Any]) -> str:
@@ -2588,6 +2621,108 @@ def drop_major_airports(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
         labels = ", ".join(sorted({clean(f.get("code")) or clean(f.get("name")) or "?" for f in dropped}))
         print(f"Excluded {len(dropped)} major airport(s) not landable by glider: {labels}", file=sys.stderr)
     return kept
+
+
+def find_contribution_field(fields: list[dict[str, Any]], meta: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve which pack field a contribution belongs to.
+
+    Exact field id first; then ICAO/code; then nearest field within CONTRIB_MATCH_RADIUS_M of
+    the coordinates stored on the contribution. The fallbacks matter because pack field ids are
+    derived from upstream name/coords and can change between rebuilds.
+    """
+    contrib_id = clean(meta.get("fieldId"))
+    if contrib_id:
+        for field in fields:
+            if field.get("id") == contrib_id:
+                return field
+    code = clean(meta.get("fieldCode")).upper()
+    if code:
+        matches = [f for f in fields if clean(f.get("code")).upper() == code]
+        if len(matches) == 1:
+            return matches[0]
+    lat, lon = parse_float(meta.get("fieldLat")), parse_float(meta.get("fieldLon"))
+    if lat is not None and lon is not None:
+        best, best_d = None, CONTRIB_MATCH_RADIUS_M
+        for field in fields:
+            d = distance_m(lat, lon, field.get("latitude"), field.get("longitude"))
+            if d is not None and d <= best_d:
+                best, best_d = field, d
+        return best
+    return None
+
+
+def _fetch_contribution_asset(url: str) -> bytes:
+    """Download a contribution photo (release asset). Separate function so tests can stub it."""
+    request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.6"})
+    with urllib.request.urlopen(request, timeout=120) as response:
+        return response.read()
+
+
+def merge_contributions(fields: list[dict[str, Any]], contrib_dir: Path, media_dir: Path) -> tuple[int, int]:
+    """Fold merged community contributions into the pack fields.
+
+    Each contributions/<fieldId>/<stamp>.json (written by the intake Worker, reviewed and
+    merged as a PR) adds a localized, dated "Pilot report" fragment to its field's notes and —
+    when a photo asset is attached — a pack-optimized copy of the photo to the field's media.
+    Runs after consolidation so contribution field ids match the published pack. A malformed
+    contribution or a failed photo download degrades to a warning, never a failed build.
+    Returns (notes_added, photos_added).
+    """
+    if not contrib_dir.exists():
+        return (0, 0)
+    notes_added = 0
+    photos_added = 0
+    for path in sorted(contrib_dir.rglob("*.json")):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as error:  # noqa: BLE001
+            print(f"contribution skipped (bad JSON): {path}: {error}", file=sys.stderr)
+            continue
+        if not isinstance(meta, dict):
+            continue
+        field = find_contribution_field(fields, meta)
+        if field is None:
+            print(f"contribution skipped (no matching field): {path.name} -> {meta.get('fieldId')}", file=sys.stderr)
+            continue
+
+        date = clean(meta.get("date")) or clean(meta.get("submittedAt"))[:10]
+        handle = clean((meta.get("submitter") or {}).get("handle")) if isinstance(meta.get("submitter"), dict) else ""
+        attribution = f" ({handle})" if handle else ""
+
+        description = clean(meta.get("description"))
+        if description:
+            localized = localize_note(description)
+            notes = field.get("notes")
+            if not isinstance(notes, dict):
+                notes = {lang: clean(notes) for lang in APP_LANGUAGES}
+            for lang in APP_LANGUAGES:
+                fragment = f"{CONTRIB_NOTE_HEADER[lang]} {date}{attribution}: {localized.get(lang) or description}"
+                notes[lang] = f"{notes.get(lang, '')}\n\n---\n\n{fragment}".strip() if notes.get(lang) else fragment
+            field["notes"] = notes
+            notes_added += 1
+
+        asset = meta.get("photoAsset") if isinstance(meta.get("photoAsset"), dict) else None
+        if asset and clean(asset.get("url")):
+            try:
+                data = _fetch_contribution_asset(clean(asset.get("url")))
+                name = safe_filename(clean(asset.get("name")) or f"{path.stem}.jpg")
+                target_name = f"contrib-{Path(name).stem}.jpg"
+                field_dir = media_dir / field["id"]
+                field_dir.mkdir(parents=True, exist_ok=True)
+                write_optimized_jpeg_image(data, field_dir / target_name)
+                field.setdefault("media", []).append({
+                    "type": "image",
+                    "url": f"media/{field['id']}/{target_name}",
+                    "caption": f"Pilot photo · {date}{attribution}",
+                    "source": "Community contribution",
+                    "updatedAt": date,
+                })
+                photos_added += 1
+            except Exception as error:  # noqa: BLE001 - keep the note even when the photo fails
+                print(f"contribution photo skipped: {path.name}: {error}", file=sys.stderr)
+    if notes_added or photos_added:
+        print(f"Merged community contributions: {notes_added} note(s), {photos_added} photo(s)", file=sys.stderr)
+    return (notes_added, photos_added)
 
 
 def localize_field_notes(fields: list[dict[str, Any]]) -> None:

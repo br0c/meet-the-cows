@@ -96,6 +96,18 @@ Localization covers the whole app: menus and status text, field detail labels, w
 the field notes themselves. The exported SeeYou CUP file is generated in the language you have
 selected (its filename is suffixed with the language code).
 
+## Community contributions
+
+Pilots can crowd-source field updates from inside the app: search for a field, open it, and
+use **Contribute an update** to submit a dated note and/or a photo. Submissions go through a
+Cloudflare Worker (`worker/`) that spam-gates with Turnstile, reads the photo's EXIF GPS to
+**pre-verify the location** (within 1 km of the field; a far-away device position is ignored),
+strips EXIF, uploads the full-size original as a release asset, and opens a **pull request** —
+nothing is published until a maintainer merges it. On the next data-pack build, merged
+contributions are folded into the field's notes (as localized, dated "Pilot report" fragments)
+and media (photo resized like any other pack image). Contribution photos never enter git;
+originals live on the `contrib-originals` release.
+
 ## Data
 
 The public app loads a static data pack from same-origin GitHub Pages paths:

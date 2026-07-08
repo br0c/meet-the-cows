@@ -341,15 +341,113 @@ def test_deepl_retries_on_429_then_succeeds(monkeypatch=None):
 
 
 def test_source_states_match():
-    base = bp.build_source_state(cupx="etagA", vac="2026-06-11", streckenflug="hash1")
+    base = bp.build_source_state(cupx="etagA", vac="2026-06-11", streckenflug="hash1", contributions="c1")
     assert bp.source_states_match(dict(base), base) is True
     assert bp.source_states_match(None, base) is False
     # Any source change -> mismatch -> rebuild.
     assert bp.source_states_match({**base, "cupx": "etagB"}, base) is False
     assert bp.source_states_match({**base, "vac": "2026-07-09"}, base) is False
     assert bp.source_states_match({**base, "streckenflug": "hash2"}, base) is False
+    assert bp.source_states_match({**base, "contributions": "c2"}, base) is False
     # A schema bump forces a rebuild even if sources are identical.
     assert bp.source_states_match({**base, "schemaVersion": base["schemaVersion"] - 1}, base) is False
+    # A published state from before the contributions key existed still matches when there are
+    # no contributions (missing == empty).
+    old = {k: v for k, v in base.items() if k != "contributions"}
+    assert bp.source_states_match(old, {**base, "contributions": ""}) is True
+
+
+def test_contributions_fingerprint(tmp_path=None):
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp) / "contributions"
+        assert bp.contributions_fingerprint(d) == ""          # missing dir
+        d.mkdir()
+        assert bp.contributions_fingerprint(d) == ""          # empty dir
+        (d / "f1").mkdir()
+        (d / "f1" / "a.json").write_text('{"x":1}')
+        fp1 = bp.contributions_fingerprint(d)
+        assert fp1
+        (d / "f1" / "a.json").write_text('{"x":2}')           # content change
+        fp2 = bp.contributions_fingerprint(d)
+        assert fp2 and fp2 != fp1
+        (d / "f1" / "b.json").write_text('{"y":1}')           # new file
+        assert bp.contributions_fingerprint(d) not in (fp1, fp2)
+
+
+def test_find_contribution_field_matching():
+    fields = [
+        {"id": "id_a", "code": "LFNF", "latitude": 43.7378, "longitude": 5.7836},
+        {"id": "id_b", "code": "LFMX", "latitude": 44.0600, "longitude": 5.9900},
+    ]
+    # Exact id wins.
+    assert bp.find_contribution_field(fields, {"fieldId": "id_b"})["id"] == "id_b"
+    # Stale id falls back to unique code.
+    assert bp.find_contribution_field(fields, {"fieldId": "gone", "fieldCode": "LFNF"})["id"] == "id_a"
+    # No id/code: nearest within 1 km of the stored coordinates.
+    near = {"fieldId": "gone", "fieldCode": "", "fieldLat": 43.7380, "fieldLon": 5.7840}
+    assert bp.find_contribution_field(fields, near)["id"] == "id_a"
+    # Too far from anything -> no match.
+    far = {"fieldId": "gone", "fieldCode": "", "fieldLat": 48.85, "fieldLon": 2.35}
+    assert bp.find_contribution_field(fields, far) is None
+
+
+def test_merge_contributions_notes_and_photo():
+    import io as _io
+    import tempfile
+    from pathlib import Path
+    from PIL import Image
+
+    # No DeepL: localize_note falls back to the source text in every language slot.
+    bp.DEEPL_API_KEY = ""
+    bp.DEEPL_API_URL = ""
+    bp._DEEPL_DISABLED = False
+    bp._TRANSLATION_CACHE = {}
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (3000, 2000), (90, 120, 70)).save(buf, "JPEG", quality=60)
+    jpeg_bytes = buf.getvalue()
+    original_fetch = bp._fetch_contribution_asset
+    bp._fetch_contribution_asset = lambda url: jpeg_bytes
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            contrib = tmp / "contributions" / "id_a"
+            contrib.mkdir(parents=True)
+            (contrib / "2026-07-08_x1.json").write_text(json.dumps({
+                "schema": 2, "fieldId": "id_a", "fieldCode": "LFNF",
+                "fieldLat": 43.7378, "fieldLon": 5.7836, "fieldName": "Vinon",
+                "date": "2026-07-08",
+                "description": "New windsock at the north end.",
+                "photoAsset": {"id": 1, "name": "id_a_x1.jpg", "url": "https://example.org/a.jpg", "size": 123},
+                "submitter": {"handle": "smoke"},
+                "geo": {"verified": True, "source": "exif", "distanceM": 150},
+            }))
+            (contrib / "bad.json").write_text("{not json")  # must be skipped, not fatal
+
+            fields = [{
+                "id": "id_a", "code": "LFNF", "latitude": 43.7378, "longitude": 5.7836,
+                "notes": {"en": "Grass strip.", "fr": "Piste en herbe.", "de": "Graspiste."},
+                "media": [],
+            }]
+            media_dir = tmp / "media"
+            notes, photos = bp.merge_contributions(fields, tmp / "contributions", media_dir)
+            assert (notes, photos) == (1, 1)
+            f = fields[0]
+            for lang, header in (("en", "Pilot report"), ("fr", "Rapport pilote"), ("de", "Pilotenbericht")):
+                assert f"{header} 2026-07-08 (smoke): New windsock" in f["notes"][lang], lang
+                assert f["notes"][lang].startswith({"en": "Grass strip.", "fr": "Piste en herbe.", "de": "Graspiste."}[lang])
+            assert len(f["media"]) == 1
+            media = f["media"][0]
+            assert media["source"] == "Community contribution"
+            written = media_dir / "id_a" / Path(media["url"]).name
+            assert written.exists() and written.stat().st_size > 0
+            with Image.open(written) as img:
+                assert max(img.size) <= 2560, "photo must be pack-optimized"
+    finally:
+        bp._fetch_contribution_asset = original_fetch
 
 
 def test_extract_streckenflug_list_versions():
