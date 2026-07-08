@@ -117,7 +117,13 @@ _DEEPL_LOCK = threading.Lock()
 # Bump whenever the build LOGIC changes the pack output (parsing, merging, translation,
 # schema). A mismatch with the published state forces a full rebuild even if the upstream
 # sources are unchanged, so code changes always reach the deployed pack.
-PACK_SCHEMA_VERSION = 7
+# v8: field notes are localized objects {"en","fr","de"} instead of a single string.
+PACK_SCHEMA_VERSION = 8
+
+# App languages. Notes are emitted per language so the app can show them in the pilot's
+# language; the map converts our short codes to the DeepL target-language codes.
+APP_LANGUAGES = ("en", "fr", "de")
+LANG_TO_DEEPL = {"en": "EN-GB", "fr": "FR", "de": "DE"}
 
 
 
@@ -362,6 +368,9 @@ def main() -> None:
         fields.extend(streckenflug_fields)
 
     fields = consolidate_duplicate_fields(fields)
+    # Localize the merged notes into every app language (en/fr/de) so the app can show them
+    # in the pilot's language. Done once here, after merging, and memoised across builds.
+    localize_field_notes(fields)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
     fields_path = out_dir / "fields.json"
     fields_path.write_text(json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2385,12 +2394,23 @@ def translate_german_to_english(text: str) -> str:
     return dictionary_translate_german(text)
 
 
-def deepl_translate(text: str) -> str | None:
-    """Return an English translation of German text, or None when DeepL is unavailable.
+def deepl_translate(text: str, target_lang: str = "EN-GB") -> str | None:
+    """Return the translation of `text` into `target_lang`, or None when DeepL is unavailable.
 
-    French input is returned unchanged (German -> English only). Any auth/quota error
-    disables DeepL for the rest of the run so we degrade to the dictionary instead of
-    hammering the API.
+    Thin wrapper over deepl_translate_ex that drops the detected source language.
+    """
+    result = deepl_translate_ex(text, target_lang)
+    return None if result is None else result[0]
+
+
+def deepl_translate_ex(text: str, target_lang: str = "EN-GB") -> tuple[str, str] | None:
+    """Translate `text` into `target_lang`; return (translated, detected_source) or None.
+
+    When DeepL detects that the source language already matches the target, the original
+    text is returned unchanged (e.g. French Guide prose asked for French, German asked for
+    German) so we never round-trip a note through its own language. Any auth/quota error
+    disables DeepL for the rest of the run so we degrade to the dictionary/source instead of
+    hammering the API. `detected_source` is the upper-case DeepL code (e.g. "FR", "DE", "EN").
     """
     global _DEEPL_DISABLED, _DEEPL_CHARS_SPENT
     if _DEEPL_DISABLED or not DEEPL_API_KEY or not DEEPL_API_URL:
@@ -2409,7 +2429,7 @@ def deepl_translate(text: str) -> str | None:
             )
         _DEEPL_DISABLED = True
         return None
-    body = urllib.parse.urlencode({"text": stripped, "target_lang": "EN-GB"}).encode("utf-8")
+    body = urllib.parse.urlencode({"text": stripped, "target_lang": target_lang}).encode("utf-8")
     request = urllib.request.Request(
         DEEPL_API_URL,
         data=body,
@@ -2453,10 +2473,70 @@ def deepl_translate(text: str) -> str | None:
     first = translations[0]
     detected = clean(first.get("detected_source_language")).upper()
     translated = clean(first.get("text"))
-    # French stays French: keep the original when DeepL detects the source as French.
-    if detected == "FR":
-        return stripped
-    return translated or stripped
+    # Source already matches the target (e.g. FR asked for FR): keep the original text.
+    if detected == target_lang.split("-")[0].upper():
+        return stripped, detected
+    return (translated or stripped), detected
+
+
+def localize_note_cached(text: str, lang: str) -> tuple[str, str]:
+    """Translate `text` into app language `lang` ('en'|'fr'|'de'), memoised per (lang, text).
+
+    Returns (translated, detected_source_lower). The cache is language-qualified so the same
+    source string can hold a separate translation per target language; cache hits report an
+    empty detected-source (unknown after the fact). Falls back to the offline German
+    dictionary for English, and to the untouched source text for French/German, so a missing
+    DeepL key degrades gracefully instead of dropping notes.
+    """
+    key = f"{lang}\x1f{normalize_space(text)}"
+    with _DEEPL_LOCK:
+        cached = _TRANSLATION_CACHE.get(key)
+        if cached is not None:
+            _TRANSLATION_STATS["cache"] += 1
+            return cached, ""
+        result = deepl_translate_ex(text, LANG_TO_DEEPL[lang])
+        if result is not None:
+            translated, detected = result
+            _TRANSLATION_CACHE[key] = translated
+            _TRANSLATION_STATS["deepl"] += 1
+            return translated, detected.lower()[:2]
+        _TRANSLATION_STATS["fallback"] += 1
+    if lang == "en":
+        return dictionary_translate_german(text), ""
+    return text, ""
+
+
+def localize_note(text: str) -> dict[str, str]:
+    """Turn a canonical note string into {"en","fr","de"}.
+
+    The English slot is translated first so DeepL can report the source language; the note's
+    own language keeps the original text (no self round-trip) and the two remaining languages
+    are translated. Empty input yields empty strings in every slot.
+    """
+    text = clean(text)
+    if not text:
+        return {lang: "" for lang in APP_LANGUAGES}
+    english, source = localize_note_cached(text, "en")
+    out: dict[str, str] = {"en": text if source == "en" else english}
+    if source in ("fr", "de"):
+        out[source] = text
+    for lang in ("fr", "de"):
+        if lang not in out:
+            out[lang], _ = localize_note_cached(text, lang)
+    return {lang: out.get(lang, "") for lang in APP_LANGUAGES}
+
+
+def localize_field_notes(fields: list[dict[str, Any]]) -> None:
+    """Replace every field's `notes` string with a localized {"en","fr","de"} object.
+
+    Runs after merging so each note is translated once. DeepL access is serialised and
+    memoised across builds, so a routine rebuild only pays for new or changed notes.
+    """
+    progress = Progress(len(fields), "Localize notes")
+    for index, field in enumerate(fields, start=1):
+        field["notes"] = localize_note(clean(field.get("notes")))
+        progress.update(index, extra=f"{_TRANSLATION_STATS['deepl']} translated, {_TRANSLATION_STATS['cache']} cached")
+    progress.done(f"{_TRANSLATION_STATS['deepl']} translated, {_TRANSLATION_STATS['cache']} cached")
 
 
 def dictionary_translate_german(text: str) -> str:

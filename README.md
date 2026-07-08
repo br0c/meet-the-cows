@@ -25,6 +25,7 @@ Difficulty `C` and `D` fields are highly contraindicated. Treat them as hazardou
 - Manual altitude mode for ground testing
 - Filters for more difficult fields
 - Field detail view with notes, photos, and documents
+- Full French / English / German localization — the interface and field notes follow your device language, with a manual switch in Settings
 - Installable PWA with offline app shell that updates itself on next launch
 - Offline download of pack media and documents
 - In-app prompt when new field data is published, downloading only what changed
@@ -85,6 +86,16 @@ Manual altitude is useful for testing the app before flight.
 
 Turn manual altitude off before relying on live GPS altitude in flight.
 
+## Languages
+
+Meet the Cows is available in French, English, and German. On first launch it follows your
+device language and falls back to English for anything else. You can override it any time in
+Settings → App → Language; the choice is stored on the device.
+
+Localization covers the whole app: menus and status text, field detail labels, warnings, and
+the field notes themselves. The exported SeeYou CUP file is generated in the language you have
+selected (its filename is suffixed with the language code).
+
 ## Data
 
 The public app loads a static data pack from same-origin GitHub Pages paths:
@@ -122,7 +133,7 @@ GitHub Pages deployment is split so app-only changes do not rebuild the data pac
 - `.github/workflows/deploy-app.yml` deploys app-shell changes using the latest already-built pack.
 - `.github/workflows/build-data-pack.yml` rebuilds the data pack, assembles the full static site, and deploys it. It runs manually, on schedule, and when the data-build scripts change.
 
-The data-pack build is incremental: it fingerprints the upstream sources (Guide CUPX, SIA VAC cycle, streckenflug list) and skips the rebuild and deploy entirely when nothing has changed, so the daily run is a no-op on quiet days. It does a full refresh on pushes, on manual runs, and once a week. German streckenflug notes are translated to English via DeepL, cached across runs so only new or changed text is re-translated.
+The data-pack build is incremental: it fingerprints the upstream sources (Guide CUPX, SIA VAC cycle, streckenflug list) and skips the rebuild and deploy entirely when nothing has changed, so the daily run is a no-op on quiet days. It does a full refresh on pushes, on manual runs, and once a week. Field notes are localized into English, French, and German via DeepL and stored per language in `fields.json`, so the app can show each note in the pilot's language. Translations are cached across runs, so only new or changed text is re-translated. Without a DeepL key the notes fall back to their source language in every slot.
 
 ## Contributing
 

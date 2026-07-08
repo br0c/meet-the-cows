@@ -113,6 +113,15 @@ def main() -> int:
         if not isinstance(lon, (int, float)) or not (-180 <= float(lon) <= 180):
             errors.append(f"field {field_id or i} invalid longitude: {lon!r}")
 
+        # Notes are localized objects ({"en","fr","de"}) as of pack schema v8. Missing notes
+        # are fine, but a bare string means the localization pass did not run.
+        notes = field.get("notes")
+        if notes is not None:
+            if not isinstance(notes, dict):
+                errors.append(f"field {field_id or i} notes is not a localized object: {type(notes).__name__}")
+            elif not all(lang in notes for lang in ("en", "fr", "de")):
+                errors.append(f"field {field_id or i} notes missing a language: {sorted(notes)}")
+
         for media in as_list(field.get("media")):
             if not isinstance(media, dict):
                 errors.append(f"field {field_id or i} has non-object media entry")

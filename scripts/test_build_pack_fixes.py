@@ -92,29 +92,65 @@ def test_translation_cache_dedups_and_translates(monkeypatch=None):
         bp.deepl_translate = original
 
 
-def test_french_stays_french():
-    # Simulate a DeepL response whose detected source is French: keep the original.
-    class Resp:
-        def __enter__(self):
-            return self
+def test_source_language_matching_target_keeps_original():
+    # When DeepL detects that the source already matches the target language, keep the
+    # original text instead of round-tripping it (e.g. French prose asked for French).
+    def resp_detecting(source_lang):
+        class Resp:
+            def __enter__(self):
+                return self
 
-        def __exit__(self, *exc):
-            return False
+            def __exit__(self, *exc):
+                return False
 
-        def read(self):
-            return json.dumps(
-                {"translations": [{"detected_source_language": "FR", "text": "DISCARD ME"}]}
-            ).encode()
+            def read(self):
+                return json.dumps(
+                    {"translations": [{"detected_source_language": source_lang, "text": "DISCARD ME"}]}
+                ).encode()
+
+        return Resp
 
     bp.DEEPL_API_KEY = "key:fx"
     bp.DEEPL_API_URL = "http://mock"
     bp._DEEPL_DISABLED = False
+    bp._DEEPL_BUDGET_CHARS = None
+    bp._DEEPL_CHARS_SPENT = 0
     original = bp.urllib.request.urlopen
-    bp.urllib.request.urlopen = lambda *a, **k: Resp()
     try:
-        assert bp.deepl_translate("Terrain en herbe, pente douce") == "Terrain en herbe, pente douce"
+        # French text asked for French: unchanged.
+        bp.urllib.request.urlopen = lambda *a, **k: resp_detecting("FR")()
+        assert bp.deepl_translate("Terrain en herbe, pente douce", "FR") == "Terrain en herbe, pente douce"
+        # French text asked for English: DeepL's translation is used.
+        assert bp.deepl_translate("Terrain en herbe, pente douce", "EN-GB") == "DISCARD ME"
     finally:
         bp.urllib.request.urlopen = original
+
+
+def test_localize_note_covers_three_languages():
+    # localize_note must return an en/fr/de dict, keep the detected source's original text,
+    # and translate the other two languages.
+    bp.DEEPL_API_KEY = "key:fx"
+    bp.DEEPL_API_URL = "http://mock"
+    bp._DEEPL_DISABLED = False
+    bp._DEEPL_BUDGET_CHARS = None
+    bp._TRANSLATION_CACHE = {}
+    bp._TRANSLATION_STATS = {"deepl": 0, "cache": 0, "fallback": 0}
+
+    def fake_ex(text, target_lang):
+        # Pretend every source is German; echo a target-tagged translation.
+        return (f"{target_lang}:{text}", "DE")
+
+    original = bp.deepl_translate_ex
+    bp.deepl_translate_ex = fake_ex
+    try:
+        note = bp.localize_note("Wiese mit Zaun")
+        assert set(note.keys()) == {"en", "fr", "de"}
+        assert note["de"] == "Wiese mit Zaun", "detected German source keeps the original"
+        assert note["en"] == "EN-GB:Wiese mit Zaun"
+        assert note["fr"] == "FR:Wiese mit Zaun"
+        assert bp.localize_note("") == {"en": "", "fr": "", "de": ""}
+    finally:
+        bp.deepl_translate_ex = original
 
 
 def test_fallback_without_key_leaves_french_untouched():

@@ -1,4 +1,4 @@
-const APP_VERSION = '0.4.5-beta';
+const APP_VERSION = '0.5.0-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -12,6 +12,7 @@ const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
 
 const DEFAULT_SETTINGS = {
   packId: 'fr-alps',
+  language: 'auto',
   safetyMarginM: 250,
   hideC: true,
   hideD: true,
@@ -19,6 +20,221 @@ const DEFAULT_SETTINGS = {
   useManualAltitude: false,
   manualAltitudeM: 2500,
 };
+
+// Languages the app UI and pack notes are translated into. 'auto' follows the device.
+const SUPPORTED_LANGS = ['en', 'fr', 'de'];
+
+// UI string table. Plain strings, or functions for values that interpolate. Every user-facing
+// label in the app resolves through t(); pack field notes are localized in the pack itself.
+const STRINGS = {
+  en: {
+    settings: 'Settings', refreshPack: 'Refresh pack', done: 'Done',
+    app: 'App', version: 'Version', status: 'Status',
+    betaStatus: 'Beta — not for primary navigation',
+    language: 'Language', langAuto: 'Automatic (device)',
+    pack: 'Pack', selectedPack: 'Selected pack', name: 'Name', updated: 'Updated',
+    fieldsCount: 'Fields', offline: 'Offline', progress: 'Progress', noPackLoaded: 'No pack loaded',
+    downloadMedia: 'Download / verify media & docs', reloadPack: 'Reload pack',
+    exportCup: n => `Export CUP for SeeYou (${n} fields)`,
+    cupNote: 'Waypoint file for SeeYou Navigator and other nav apps. Brief a field here, then navigate to it in SeeYou.',
+    nearestList: 'Nearest list', sort: 'Sort',
+    sortGlide: 'Best glide ratio', sortDistance: 'Nearest distance',
+    safetyMargin: 'Safety arrival margin, m',
+    useManualAlt: 'Use manual altitude for testing', manualAlt: 'Manual altitude, m',
+    manualAltNote: 'Manual altitude is only for ground testing. In flight, leave it off and use phone GPS altitude.',
+    hideC: 'Hide C fields', hideD: 'Hide D fields',
+    cdNote: 'C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.',
+    colName: 'Name', colDist: 'Dist', colGlide: 'Glide', colDiff: 'Diff',
+    shown: 'Shown', noFields: 'No fields loaded.',
+    waitingGps: 'Waiting for GPS. Enable location permission.',
+    airfield: 'Airfield', field: 'Field', outlanding: 'Outlanding',
+    footerNote: 'Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.',
+    updateBanner: '🔄 New field data available.', update: 'Update',
+    sampleWarning: 'Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.',
+    gpsError: e => `GPS error: ${e}.`,
+    altMissingWarning: 'GPS altitude is missing, so required glide ratio cannot be computed. Add a manual altitude in Settings for ground testing.',
+    close: 'Close', bearing: 'Bearing', distance: 'Distance', reqGlide: 'Req glide',
+    deltaSafe: 'Δsafe', elevation: 'Elevation', runway: 'Runway', frequency: 'Frequency',
+    glideNotShown: r => `Glide not shown: ${r}.`,
+    notes: 'Notes', noNotes: 'No notes.', mediaHeading: 'Photos / docs / VAC',
+    noMedia: 'No media attached.', openPdf: 'Open PDF',
+    source: 'Source', imported: 'imported', unknown: 'unknown',
+    altMissing: 'missing', altManual: 'manual',
+    gpsOk: acc => `OK ±${acc}m`, gpsErr: 'Error',
+    gpsIdle: 'idle', gpsRequesting: 'requesting', gpsUnavailable: 'unavailable',
+    reasonGpsAlt: 'GPS altitude missing', reasonFieldElev: 'Field elevation missing',
+    reasonBelowSafe: m => `Below safe arrival by ${m} m`,
+    revealConfirm: (label, severity) => `Difficulty ${label} fields are ${severity} and possibly dangerous — last-resort emergency options only, not recommended. Show them in the nearest list anyway?`,
+    sevDifficult: 'difficult', sevVeryDifficult: 'very difficult',
+    noPackYet: 'No pack loaded yet.', noCacheApi: 'Cache Storage is not available in this browser.',
+    cacheReady: 'ready', cacheDownloading: 'downloading', cacheRefreshing: 'refreshing',
+    cacheIncomplete: 'incomplete', cacheNotDownloaded: 'not downloaded', cacheErrorStatus: 'error',
+    cacheUnknown: 'unknown',
+    cpNoMedia: 'No media/docs to cache', cpNoPack: 'No pack loaded',
+    cpCached: (c, total) => `${c}/${total} media/docs cached`,
+    cpCachedFailed: (ok, total, failed) => `${ok}/${total} media/docs cached · ${failed} failed`,
+    cpInit: total => `0/${total} media/docs`,
+    cpClearing: 'Clearing cached pack', cpCleared: n => `Cleared ${n} cached pack entries`,
+    cpFetchIndex: 'Fetching fresh pack index', cpFetchPack: 'Fetching fresh pack',
+    cpFresh: extra => `Fresh pack loaded · ${extra}`, cpNotChecked: 'media/docs not checked',
+    cpRefreshing: 'Refreshing field data…',
+    cpUpdating: (ok, total, failed) => `Updating ${ok}/${total} file(s)${failed ? ` · ${failed} failed` : ''}`,
+    cpUpdated: (ok, evicted, failed) => `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`,
+  },
+  fr: {
+    settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
+    app: 'Application', version: 'Version', status: 'Statut',
+    betaStatus: 'Bêta — pas pour la navigation principale',
+    language: 'Langue', langAuto: 'Automatique (appareil)',
+    pack: 'Pack', selectedPack: 'Pack sélectionné', name: 'Nom', updated: 'Mis à jour',
+    fieldsCount: 'Terrains', offline: 'Hors ligne', progress: 'Progression', noPackLoaded: 'Aucun pack chargé',
+    downloadMedia: 'Télécharger / vérifier médias & docs', reloadPack: 'Recharger le pack',
+    exportCup: n => `Exporter CUP pour SeeYou (${n} terrains)`,
+    cupNote: 'Fichier de points de virage pour SeeYou Navigator et autres apps de nav. Consultez un terrain ici, puis naviguez-y dans SeeYou.',
+    nearestList: 'Liste des plus proches', sort: 'Tri',
+    sortGlide: 'Meilleure finesse requise', sortDistance: 'Distance la plus courte',
+    safetyMargin: "Marge d'arrivée de sécurité, m",
+    useManualAlt: 'Altitude manuelle (test au sol)', manualAlt: 'Altitude manuelle, m',
+    manualAltNote: "L'altitude manuelle sert uniquement aux tests au sol. En vol, désactivez-la et utilisez l'altitude GPS du téléphone.",
+    hideC: 'Masquer les terrains C', hideD: 'Masquer les terrains D',
+    cdNote: "Les terrains C et D sont masqués par défaut. Ils sont difficiles et potentiellement dangereux — recommandés uniquement en dernier recours d'urgence.",
+    colName: 'Nom', colDist: 'Dist', colGlide: 'Finesse', colDiff: 'Diff',
+    shown: 'Affichés', noFields: 'Aucun terrain chargé.',
+    waitingGps: 'En attente du GPS. Autorisez la localisation.',
+    airfield: 'Aérodrome', field: 'Terrain', outlanding: 'Vache',
+    footerNote: "Pas pour la navigation principale. Distance/finesse à vol d'oiseau uniquement : ni vent, ni descendance, ni relief, ni espace aérien.",
+    updateBanner: '🔄 Nouvelles données de terrains disponibles.', update: 'Mettre à jour',
+    sampleWarning: "Données d'exemple uniquement — n'utilisez pas ce pack en vol. Lancez l'importateur pour construire le vrai pack Guide des Aires.",
+    gpsError: e => `Erreur GPS : ${e}.`,
+    altMissingWarning: "L'altitude GPS est absente, la finesse requise ne peut pas être calculée. Ajoutez une altitude manuelle dans les Réglages pour les tests au sol.",
+    close: 'Fermer', bearing: 'Relèvement', distance: 'Distance', reqGlide: 'Finesse req.',
+    deltaSafe: 'Δsécu', elevation: 'Altitude', runway: 'Piste', frequency: 'Fréquence',
+    glideNotShown: r => `Finesse non affichée : ${r}.`,
+    notes: 'Notes', noNotes: 'Aucune note.', mediaHeading: 'Photos / docs / VAC',
+    noMedia: 'Aucun média joint.', openPdf: 'Ouvrir le PDF',
+    source: 'Source', imported: 'importé le', unknown: 'inconnu',
+    altMissing: 'absente', altManual: 'manuelle',
+    gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Erreur',
+    gpsIdle: 'inactif', gpsRequesting: 'en cours', gpsUnavailable: 'indisponible',
+    reasonGpsAlt: 'Altitude GPS absente', reasonFieldElev: 'Altitude terrain absente',
+    reasonBelowSafe: m => `Sous l'arrivée sûre de ${m} m`,
+    revealConfirm: (label, severity) => `Les terrains de difficulté ${label} sont ${severity} et potentiellement dangereux — uniquement en dernier recours d'urgence, non recommandés. Les afficher quand même dans la liste ?`,
+    sevDifficult: 'difficiles', sevVeryDifficult: 'très difficiles',
+    noPackYet: 'Aucun pack chargé pour le moment.', noCacheApi: "Le stockage de cache n'est pas disponible dans ce navigateur.",
+    cacheReady: 'prêt', cacheDownloading: 'téléchargement', cacheRefreshing: 'actualisation',
+    cacheIncomplete: 'incomplet', cacheNotDownloaded: 'non téléchargé', cacheErrorStatus: 'erreur',
+    cacheUnknown: 'inconnu',
+    cpNoMedia: 'Aucun média/doc à mettre en cache', cpNoPack: 'Aucun pack chargé',
+    cpCached: (c, total) => `${c}/${total} médias/docs en cache`,
+    cpCachedFailed: (ok, total, failed) => `${ok}/${total} médias/docs en cache · ${failed} échec(s)`,
+    cpInit: total => `0/${total} médias/docs`,
+    cpClearing: 'Effacement du pack en cache', cpCleared: n => `${n} entrées de pack effacées`,
+    cpFetchIndex: "Récupération de l'index des packs", cpFetchPack: 'Récupération du pack',
+    cpFresh: extra => `Pack à jour chargé · ${extra}`, cpNotChecked: 'médias/docs non vérifiés',
+    cpRefreshing: 'Actualisation des données…',
+    cpUpdating: (ok, total, failed) => `Mise à jour ${ok}/${total} fichier(s)${failed ? ` · ${failed} échec(s)` : ''}`,
+    cpUpdated: (ok, evicted, failed) => `${ok} fichier(s) mis à jour${evicted ? `, ${evicted} supprimé(s)` : ''}${failed ? `, ${failed} échec(s)` : ''}`,
+  },
+  de: {
+    settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
+    app: 'App', version: 'Version', status: 'Status',
+    betaStatus: 'Beta — nicht zur primären Navigation',
+    language: 'Sprache', langAuto: 'Automatisch (Gerät)',
+    pack: 'Paket', selectedPack: 'Ausgewähltes Paket', name: 'Name', updated: 'Aktualisiert',
+    fieldsCount: 'Felder', offline: 'Offline', progress: 'Fortschritt', noPackLoaded: 'Kein Paket geladen',
+    downloadMedia: 'Medien & Dokumente laden / prüfen', reloadPack: 'Paket neu laden',
+    exportCup: n => `CUP für SeeYou exportieren (${n} Felder)`,
+    cupNote: 'Wegpunktdatei für SeeYou Navigator und andere Navi-Apps. Feld hier briefen, dann in SeeYou anfliegen.',
+    nearestList: 'Nächstgelegene Felder', sort: 'Sortierung',
+    sortGlide: 'Beste erforderliche Gleitzahl', sortDistance: 'Kürzeste Entfernung',
+    safetyMargin: 'Sicherheits-Ankunftsreserve, m',
+    useManualAlt: 'Manuelle Höhe (Bodentest)', manualAlt: 'Manuelle Höhe, m',
+    manualAltNote: 'Manuelle Höhe nur für Bodentests. Im Flug ausschalten und die GPS-Höhe des Telefons verwenden.',
+    hideC: 'C-Felder ausblenden', hideD: 'D-Felder ausblenden',
+    cdNote: 'C- und D-Felder sind standardmäßig ausgeblendet. Sie sind schwierig und möglicherweise gefährlich — nur als letzte Notfalloption empfohlen.',
+    colName: 'Name', colDist: 'Dist', colGlide: 'Gleit', colDiff: 'Diff',
+    shown: 'Angezeigt', noFields: 'Keine Felder geladen.',
+    waitingGps: 'Warte auf GPS. Standortzugriff erlauben.',
+    airfield: 'Flugplatz', field: 'Feld', outlanding: 'Außenlandung',
+    footerNote: 'Nicht zur primären Navigation. Nur Luftlinie/Gleitzahl: kein Wind, kein Sinken, keine Geländefreiheit, kein Luftraum.',
+    updateBanner: '🔄 Neue Felddaten verfügbar.', update: 'Aktualisieren',
+    sampleWarning: 'Nur Beispieldaten — dieses Paket nicht im Flug verwenden. Importer ausführen, um das echte Guide-des-Aires-Paket zu erstellen.',
+    gpsError: e => `GPS-Fehler: ${e}.`,
+    altMissingWarning: 'GPS-Höhe fehlt, daher kann die erforderliche Gleitzahl nicht berechnet werden. Für Bodentests eine manuelle Höhe in den Einstellungen angeben.',
+    close: 'Schließen', bearing: 'Peilung', distance: 'Entfernung', reqGlide: 'Erf. Gleit',
+    deltaSafe: 'Δsicher', elevation: 'Höhe', runway: 'Bahn', frequency: 'Frequenz',
+    glideNotShown: r => `Gleitzahl nicht angezeigt: ${r}.`,
+    notes: 'Notizen', noNotes: 'Keine Notizen.', mediaHeading: 'Fotos / Dokumente / VAC',
+    noMedia: 'Keine Medien angehängt.', openPdf: 'PDF öffnen',
+    source: 'Quelle', imported: 'importiert am', unknown: 'unbekannt',
+    altMissing: 'fehlt', altManual: 'manuell',
+    gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Fehler',
+    gpsIdle: 'inaktiv', gpsRequesting: 'anfordern', gpsUnavailable: 'nicht verfügbar',
+    reasonGpsAlt: 'GPS-Höhe fehlt', reasonFieldElev: 'Feldhöhe fehlt',
+    reasonBelowSafe: m => `${m} m unter sicherer Ankunft`,
+    revealConfirm: (label, severity) => `Felder der Schwierigkeit ${label} sind ${severity} und möglicherweise gefährlich — nur als letzte Notfalloption, nicht empfohlen. Trotzdem in der Liste anzeigen?`,
+    sevDifficult: 'schwierig', sevVeryDifficult: 'sehr schwierig',
+    noPackYet: 'Noch kein Paket geladen.', noCacheApi: 'Cache-Speicher ist in diesem Browser nicht verfügbar.',
+    cacheReady: 'bereit', cacheDownloading: 'lädt', cacheRefreshing: 'aktualisiert',
+    cacheIncomplete: 'unvollständig', cacheNotDownloaded: 'nicht geladen', cacheErrorStatus: 'Fehler',
+    cacheUnknown: 'unbekannt',
+    cpNoMedia: 'Keine Medien/Dokumente zum Zwischenspeichern', cpNoPack: 'Kein Paket geladen',
+    cpCached: (c, total) => `${c}/${total} Medien/Dokumente zwischengespeichert`,
+    cpCachedFailed: (ok, total, failed) => `${ok}/${total} Medien/Dokumente zwischengespeichert · ${failed} fehlgeschlagen`,
+    cpInit: total => `0/${total} Medien/Dokumente`,
+    cpClearing: 'Zwischengespeichertes Paket wird gelöscht', cpCleared: n => `${n} zwischengespeicherte Paketeinträge gelöscht`,
+    cpFetchIndex: 'Paketindex wird geladen', cpFetchPack: 'Paket wird geladen',
+    cpFresh: extra => `Aktuelles Paket geladen · ${extra}`, cpNotChecked: 'Medien/Dokumente nicht geprüft',
+    cpRefreshing: 'Felddaten werden aktualisiert…',
+    cpUpdating: (ok, total, failed) => `Aktualisiere ${ok}/${total} Datei(en)${failed ? ` · ${failed} fehlgeschlagen` : ''}`,
+    cpUpdated: (ok, evicted, failed) => `${ok} Datei(en) aktualisiert${evicted ? `, ${evicted} entfernt` : ''}${failed ? `, ${failed} fehlgeschlagen` : ''}`,
+  },
+};
+
+// Resolve the active UI language: an explicit setting wins, otherwise follow the device.
+function resolveLang() {
+  const setting = state.settings.language;
+  if (SUPPORTED_LANGS.includes(setting)) return setting;
+  const candidates = (navigator.languages && navigator.languages.length)
+    ? navigator.languages
+    : [navigator.language || 'en'];
+  for (const candidate of candidates) {
+    const base = String(candidate).toLowerCase().slice(0, 2);
+    if (SUPPORTED_LANGS.includes(base)) return base;
+  }
+  return 'en';
+}
+
+// Look up a UI string for the active language, falling back to English then the raw key.
+// Extra arguments are passed through to string values that are functions.
+function t(key, ...args) {
+  const lang = resolveLang();
+  let value = STRINGS[lang]?.[key];
+  if (value === undefined) value = STRINGS.en[key];
+  if (value === undefined) return key;
+  return typeof value === 'function' ? value(...args) : value;
+}
+
+// Field notes are a localized object ({en,fr,de}) in pack schema v8+, but old cached packs
+// may still hold a plain string. Return the best available text for the active language.
+function fieldNotes(field) {
+  const notes = field?.notes;
+  if (notes && typeof notes === 'object') {
+    const lang = resolveLang();
+    return notes[lang] || notes.en || notes.fr || notes.de || '';
+  }
+  return typeof notes === 'string' ? notes : '';
+}
+
+// Localized label for a cache status token, falling back to the raw token for anything new.
+function cacheStatusLabel(status) {
+  const map = {
+    ready: 'cacheReady', downloading: 'cacheDownloading', refreshing: 'cacheRefreshing',
+    incomplete: 'cacheIncomplete', 'not downloaded': 'cacheNotDownloaded',
+    error: 'cacheErrorStatus', unknown: 'cacheUnknown',
+  };
+  return map[status] ? t(map[status]) : String(status ?? '');
+}
 
 // Best-options shortlist: only difficulty A entries reachable at this required glide
 // ratio or better qualify for the pinned top-three picks.
@@ -126,27 +342,27 @@ function manifestUrlForPack(pack) {
 
 async function reloadSelectedPack() {
   state.cacheStatus = 'refreshing';
-  state.cacheProgress = 'Clearing cached pack';
+  state.cacheProgress = t('cpClearing');
   render();
 
   try {
     const pack = selectedPack();
     if (pack) {
       const deleted = await clearPackCache(pack.id);
-      state.cacheProgress = `Cleared ${deleted} cached pack entries`;
+      state.cacheProgress = t('cpCleared', deleted);
       render();
     }
 
-    state.cacheProgress = 'Fetching fresh pack index';
+    state.cacheProgress = t('cpFetchIndex');
     render();
     await loadPackIndex({ cacheMode: 'reload' });
 
-    state.cacheProgress = 'Fetching fresh pack';
+    state.cacheProgress = t('cpFetchPack');
     render();
     await loadSelectedPack({ cacheMode: 'reload' });
 
     if (state.cacheStatus !== 'error') {
-      state.cacheProgress = `Fresh pack loaded · ${state.cacheProgress || 'media/docs not checked'}`;
+      state.cacheProgress = t('cpFresh', state.cacheProgress || t('cpNotChecked'));
     }
   } catch (error) {
     console.error(error);
@@ -201,8 +417,8 @@ function activeAltitudeM() {
 
 function altitudeLabel() {
   const altitude = activeAltitudeM();
-  if (altitude === null) return 'missing';
-  return `${fmtM(altitude)}${state.settings.useManualAltitude ? ' manual' : ''}`;
+  if (altitude === null) return t('altMissing');
+  return `${fmtM(altitude)}${state.settings.useManualAltitude ? ` ${t('altManual')}` : ''}`;
 }
 
 function computeRows() {
@@ -223,10 +439,10 @@ function computeRows() {
     const glideReason = requiredGlideRatio !== null
       ? ''
       : altitudeM === null
-        ? 'GPS altitude missing'
+        ? t('reasonGpsAlt')
         : fieldElevationM === null
-          ? 'Field elevation missing'
-          : `Below safe arrival by ${Math.abs(Math.round(usableHeightM))} m`;
+          ? t('reasonFieldElev')
+          : t('reasonBelowSafe', Math.abs(Math.round(usableHeightM)));
     return { field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio, glideReason };
   });
   rows = rows.filter(row => {
@@ -258,15 +474,16 @@ function render() {
   const scrollY = window.scrollY;
   const activeDetail = document.querySelector('.detail');
   if (activeDetail) state.detailScrollTop = activeDetail.scrollTop;
+  document.documentElement.lang = resolveLang();
   computeRows();
   const selected = state.fields.find(f => f.id === state.selectedFieldId);
   app.innerHTML = `
     <div class="app-shell">
       <header class="header compact-header">
         <div class="title-row">
-          <button id="settingsToggle" class="icon-button" title="Settings" aria-label="Settings">⚙</button>
+          <button id="settingsToggle" class="icon-button" title="${t('settings')}" aria-label="${t('settings')}">⚙</button>
           <h1>🐄 Meet the Cows</h1>
-          <button id="refreshPack" class="icon-button" title="Refresh pack" aria-label="Refresh pack">↻</button>
+          <button id="refreshPack" class="icon-button" title="${t('refreshPack')}" aria-label="${t('refreshPack')}">↻</button>
         </div>
         ${renderStatus()}
       </header>
@@ -296,22 +513,23 @@ function renderStatus() {
       <span><strong>GPS</strong> ${escapeHtml(gpsLabel())}</span>
       <span><strong>Alt</strong> ${altitudeLabel()}</span>
       <span><strong>Fix</strong> ${age}</span>
-      <span><strong>Shown</strong> ${state.computedRows.length}/${state.fields.length}</span>
+      <span><strong>${t('shown')}</strong> ${state.computedRows.length}/${state.fields.length}</span>
     </div>
   `;
 }
 
 function gpsLabel() {
-  if (state.gpsStatus === 'ok') return `OK ±${Math.round(state.position?.accuracyM || 0)}m`;
-  if (state.gpsStatus === 'error') return `Error`;
-  return state.gpsStatus;
+  if (state.gpsStatus === 'ok') return t('gpsOk', Math.round(state.position?.accuracyM || 0));
+  if (state.gpsStatus === 'error') return t('gpsErr');
+  const map = { idle: 'gpsIdle', requesting: 'gpsRequesting', unavailable: 'gpsUnavailable' };
+  return map[state.gpsStatus] ? t(map[state.gpsStatus]) : state.gpsStatus;
 }
 
 function renderWarnings() {
   const items = [];
-  if (state.packManifest?.isSample) items.push('Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.');
-  if (state.gpsStatus === 'error') items.push(`GPS error: ${escapeHtml(state.gpsError)}.`);
-  if (state.position && state.position.altitudeM === null && !state.settings.useManualAltitude) items.push('GPS altitude is missing, so required glide ratio cannot be computed. Add a manual altitude in Settings for ground testing.');
+  if (state.packManifest?.isSample) items.push(escapeHtml(t('sampleWarning')));
+  if (state.gpsStatus === 'error') items.push(escapeHtml(t('gpsError', state.gpsError)));
+  if (state.position && state.position.altitudeM === null && !state.settings.useManualAltitude) items.push(escapeHtml(t('altMissingWarning')));
   if (!items.length) return '';
   return items.map(i => `<div class="warning">${i}</div>`).join('');
 }
@@ -321,7 +539,7 @@ function renderMainPage() {
     ${renderUpdateBanner()}
     ${renderWarnings()}
     ${renderFieldList()}
-    <p class="footer-note">Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.</p>
+    <p class="footer-note">${escapeHtml(t('footerNote'))}</p>
   `;
 }
 
@@ -329,8 +547,8 @@ function renderUpdateBanner() {
   if (!state.dataUpdateAvailable) return '';
   return `
     <div class="update-banner">
-      <span>🔄 New field data available.</span>
-      <button id="syncDataBtn" class="primary">Update</button>
+      <span>${escapeHtml(t('updateBanner'))}</span>
+      <button id="syncDataBtn" class="primary">${t('update')}</button>
     </div>
   `;
 }
@@ -338,68 +556,76 @@ function renderUpdateBanner() {
 function renderSettingsPage() {
   const packs = state.packs.map(p => `<option value="${p.id}" ${p.id === state.settings.packId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
   const manifest = state.packManifest;
+  const langOptions = [
+    ['auto', t('langAuto')],
+    ['en', 'English'],
+    ['fr', 'Français'],
+    ['de', 'Deutsch'],
+  ].map(([value, label]) => `<option value="${value}" ${state.settings.language === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
   return `
     <section class="settings-page">
       <div class="settings-head">
-        <h2>Settings</h2>
-        <button id="closeSettings">Done</button>
+        <h2>${t('settings')}</h2>
+        <button id="closeSettings">${t('done')}</button>
       </div>
 
       <div class="settings-card">
-        <h3>App</h3>
+        <h3>${t('app')}</h3>
+        <label for="languageSelect">${t('language')}</label>
+        <select id="languageSelect">${langOptions}</select>
         <dl class="meta-list">
-          <div><dt>Version</dt><dd>${escapeHtml(APP_VERSION)}</dd></div>
-          <div><dt>Status</dt><dd>Beta — not for primary navigation</dd></div>
+          <div><dt>${t('version')}</dt><dd>${escapeHtml(APP_VERSION)}</dd></div>
+          <div><dt>${t('status')}</dt><dd>${escapeHtml(t('betaStatus'))}</dd></div>
         </dl>
       </div>
 
       <div class="settings-card">
-        <h3>Pack</h3>
-        <label for="packSelect">Selected pack</label>
+        <h3>${t('pack')}</h3>
+        <label for="packSelect">${t('selectedPack')}</label>
         <select id="packSelect">${packs}</select>
         <dl class="meta-list">
-          <div><dt>Name</dt><dd>${escapeHtml(manifest?.name || 'No pack loaded')}</dd></div>
-          <div><dt>Version</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
-          <div><dt>Updated</dt><dd>${escapeHtml(manifest?.updatedAt || manifest?.generatedAt || manifest?.source?.updatedAt || '—')}</dd></div>
-          <div><dt>Fields</dt><dd>${state.fields.length}</dd></div>
-          <div><dt>Offline</dt><dd>${escapeHtml(state.cacheStatus)}</dd></div>
-          <div><dt>Progress</dt><dd>${escapeHtml(state.cacheProgress || '—')}</dd></div>
+          <div><dt>${t('name')}</dt><dd>${escapeHtml(manifest?.name || t('noPackLoaded'))}</dd></div>
+          <div><dt>${t('version')}</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
+          <div><dt>${t('updated')}</dt><dd>${escapeHtml(manifest?.updatedAt || manifest?.generatedAt || manifest?.source?.updatedAt || '—')}</dd></div>
+          <div><dt>${t('fieldsCount')}</dt><dd>${state.fields.length}</dd></div>
+          <div><dt>${t('offline')}</dt><dd>${escapeHtml(cacheStatusLabel(state.cacheStatus))}</dd></div>
+          <div><dt>${t('progress')}</dt><dd>${escapeHtml(state.cacheProgress || '—')}</dd></div>
         </dl>
         <div class="button-row">
-          <button class="primary" id="downloadPack">Download / verify media & docs</button>
-          <button id="reloadPackSettings">Reload pack</button>
+          <button class="primary" id="downloadPack">${t('downloadMedia')}</button>
+          <button id="reloadPackSettings">${t('reloadPack')}</button>
         </div>
         <div class="button-row single">
-          <button id="exportCup">Export CUP for SeeYou (${state.fields.length} fields)</button>
+          <button id="exportCup">${t('exportCup', state.fields.length)}</button>
         </div>
-        <p class="settings-note">Waypoint file for SeeYou Navigator and other nav apps. Brief a field here, then navigate to it in SeeYou.</p>
+        <p class="settings-note">${escapeHtml(t('cupNote'))}</p>
       </div>
 
       <div class="settings-card">
-        <h3>Nearest list</h3>
-        <label for="sortMode">Sort</label>
+        <h3>${t('nearestList')}</h3>
+        <label for="sortMode">${t('sort')}</label>
         <select id="sortMode">
-          <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>Best glide ratio</option>
-          <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>Nearest distance</option>
+          <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>${t('sortGlide')}</option>
+          <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>${t('sortDistance')}</option>
         </select>
-        <label for="safetyMarginM">Safety arrival margin, m</label>
+        <label for="safetyMarginM">${t('safetyMargin')}</label>
         <input id="safetyMarginM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.safetyMarginM}" />
         <div class="checkbox-row">
           <input id="useManualAltitude" type="checkbox" ${state.settings.useManualAltitude ? 'checked' : ''} />
-          <label for="useManualAltitude">Use manual altitude for testing</label>
+          <label for="useManualAltitude">${t('useManualAlt')}</label>
         </div>
-        <label for="manualAltitudeM">Manual altitude, m</label>
+        <label for="manualAltitudeM">${t('manualAlt')}</label>
         <input id="manualAltitudeM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.manualAltitudeM}" ${state.settings.useManualAltitude ? '' : 'disabled'} />
-        <p class="settings-note">Manual altitude is only for ground testing. In flight, leave it off and use iPhone GPS altitude.</p>
+        <p class="settings-note">${escapeHtml(t('manualAltNote'))}</p>
         <div class="checkbox-row">
           <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
-          <label for="hideC">Hide C fields</label>
+          <label for="hideC">${t('hideC')}</label>
         </div>
         <div class="checkbox-row">
           <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
-          <label for="hideD">Hide D fields</label>
+          <label for="hideD">${t('hideD')}</label>
         </div>
-        <p class="settings-note">C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.</p>
+        <p class="settings-note">${escapeHtml(t('cdNote'))}</p>
       </div>
     </section>
   `;
@@ -446,7 +672,7 @@ function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
       <span class="field-main">
         <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
-        <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Field'].filter(Boolean).join(' · '))}</span>
+        <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? t('airfield') : t('field')].filter(Boolean).join(' · '))}</span>
       </span>
       <span class="field-distance">${fmtKm(distanceM)}</span>
       <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
@@ -456,15 +682,15 @@ function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
 }
 
 function renderFieldList() {
-  if (!state.fields.length) return '<div class="warning">No fields loaded.</div>';
-  if (!state.position) return '<div class="warning">Waiting for GPS. Enable location permission.</div>';
+  if (!state.fields.length) return `<div class="warning">${escapeHtml(t('noFields'))}</div>`;
+  if (!state.position) return `<div class="warning">${escapeHtml(t('waitingGps'))}</div>`;
   const picks = topPickRows();
   const pickIds = new Set(picks.map(row => row.field.id));
   const rest = state.computedRows.filter(row => !pickIds.has(row.field.id)).slice(0, 120);
   return `
-    <section class="field-list" aria-label="Nearest landing fields">
+    <section class="field-list" aria-label="${t('nearestList')}">
       <div class="field-list-head">
-        <span>Name</span><span>Dist</span><span>Glide</span><span>Diff</span>
+        <span>${t('colName')}</span><span>${t('colDist')}</span><span>${t('colGlide')}</span><span>${t('colDiff')}</span>
       </div>
       ${picks.map(renderFieldRow).join('')}
       ${picks.length && rest.length ? '<div class="top-picks-divider" role="separator"></div>' : ''}
@@ -475,32 +701,33 @@ function renderFieldList() {
 
 function renderDetail(field) {
   const row = state.computedRows.find(r => r.field.id === field.id);
-  const glideNote = row?.glideReason ? `<p class="inline-note">Glide not shown: ${escapeHtml(row.glideReason)}.</p>` : '';
-  const media = (field.media || []).map(item => renderMediaItem(item)).join('') || '<p class="footer-note">No media attached.</p>';
+  const glideNote = row?.glideReason ? `<p class="inline-note">${escapeHtml(t('glideNotShown', row.glideReason))}</p>` : '';
+  const media = (field.media || []).map(item => renderMediaItem(item)).join('') || `<p class="footer-note">${escapeHtml(t('noMedia'))}</p>`;
+  const kindLabel = field.kind === 'airfield' ? t('airfield') : t('outlanding');
   return `
     <div class="detail-backdrop" id="detailBackdrop">
       <article class="detail" role="dialog" aria-modal="true">
-        <button id="closeDetail">Close</button>
+        <button id="closeDetail">${t('close')}</button>
         <div class="detail-title-row">
           <h2>${escapeHtml(field.name)}</h2>
           <span class="badge detail-badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
         </div>
-        <div class="detail-meta">${escapeHtml([field.code, field.kind === 'airfield' ? 'Airfield' : 'Outlanding', field.rawDifficulty].filter(Boolean).join(' · '))}</div>
+        <div class="detail-meta">${escapeHtml([field.code, kindLabel, field.rawDifficulty].filter(Boolean).join(' · '))}</div>
         <div class="detail-grid">
-          <div class="detail-card"><span class="status-label">Bearing</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Distance</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Req glide</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Δsafe</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Elevation</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
-          <div class="detail-card"><span class="status-label">Runway</span><strong>${escapeHtml(formatRunwayDimensions(field))}</strong></div>
-          <div class="detail-card"><span class="status-label">Frequency</span><strong>${escapeHtml(formatFrequency(field))}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('bearing')}</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('distance')}</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('reqGlide')}</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('deltaSafe')}</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('elevation')}</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('runway')}</span><strong>${escapeHtml(formatRunwayDimensions(field))}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('frequency')}</span><strong>${escapeHtml(formatFrequency(field))}</strong></div>
         </div>
         ${glideNote}
-        <h3>Notes</h3>
-        <div class="notes">${escapeHtml(field.notes || 'No notes.')}</div>
-        <h3>Photos / docs / VAC</h3>
+        <h3>${t('notes')}</h3>
+        <div class="notes">${escapeHtml(fieldNotes(field) || t('noNotes'))}</div>
+        <h3>${t('mediaHeading')}</h3>
         <div class="media-grid">${media}</div>
-        <p class="footer-note">Source: ${escapeHtml(field.source?.name || 'unknown')} ${field.source?.importedAt ? `· imported ${escapeHtml(field.source.importedAt)}` : ''}</p>
+        <p class="footer-note">${t('source')}: ${escapeHtml(field.source?.name || t('unknown'))} ${field.source?.importedAt ? `· ${t('imported')} ${escapeHtml(field.source.importedAt)}` : ''}</p>
       </article>
     </div>
   `;
@@ -531,7 +758,7 @@ function renderMediaItem(item) {
   const caption = item.caption || item.source || item.type;
   const mediaUrl = new URL(item.url, state.currentManifestUrl || BASE_URL).toString();
   if (item.type === 'pdf') {
-    return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">Open PDF</a> · ${escapeHtml(caption)}</div></div>`;
+    return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">${t('openPdf')}</a> · ${escapeHtml(caption)}</div></div>`;
   }
   return `<div class="media-card"><img src="${mediaUrl}" alt="${escapeHtml(caption)}" loading="lazy" /><div class="caption">${escapeHtml(caption)}</div></div>`;
 }
@@ -541,6 +768,11 @@ function attachEvents() {
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#refreshPack')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
   document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
+  document.querySelector('#languageSelect')?.addEventListener('change', e => {
+    state.settings.language = e.target.value;
+    saveSettings();
+    render();
+  });
   document.querySelector('#packSelect')?.addEventListener('change', async e => {
     state.settings.packId = e.target.value;
     saveSettings();
@@ -567,8 +799,8 @@ function attachEvents() {
       if ((id === 'hideC' || id === 'hideD') && !e.target.checked) {
         // Revealing difficult fields — make the pilot acknowledge the risk before showing them.
         const label = id === 'hideC' ? 'C' : 'D';
-        const severity = label === 'D' ? 'very difficult' : 'difficult';
-        const ok = confirm(`Difficulty ${label} fields are ${severity} and possibly dangerous — last-resort emergency options only, not recommended. Show them in the nearest list anyway?`);
+        const severity = label === 'D' ? t('sevVeryDifficult') : t('sevDifficult');
+        const ok = confirm(t('revealConfirm', label, severity));
         if (!ok) {
           e.target.checked = true; // decline: leave them hidden
           return;
@@ -633,21 +865,21 @@ function buildOfflineMediaUrls() {
 
 async function downloadOfflinePack() {
   if (!('caches' in window)) {
-    alert('Cache Storage is not available in this browser.');
+    alert(t('noCacheApi'));
     return;
   }
 
   const urls = buildOfflineMediaUrls();
   if (!urls.length) {
     state.cacheStatus = state.packManifest ? 'ready' : 'unknown';
-    state.cacheProgress = state.packManifest ? 'No media/docs to cache' : 'No pack loaded';
+    state.cacheProgress = state.packManifest ? t('cpNoMedia') : t('cpNoPack');
     render();
     return;
   }
 
   const cache = await caches.open(DATA_CACHE);
   state.cacheStatus = 'downloading';
-  state.cacheProgress = `0/${urls.length} media/docs`;
+  state.cacheProgress = t('cpInit', urls.length);
   render();
 
   let ok = 0;
@@ -669,7 +901,7 @@ async function downloadOfflinePack() {
       }
     }
 
-    state.cacheProgress = `${ok}/${urls.length} media/docs cached · ${failed} failed`;
+    state.cacheProgress = t('cpCachedFailed', ok, urls.length, failed);
     render();
     await new Promise(resolve => setTimeout(resolve, 0));
   }
@@ -682,7 +914,7 @@ async function downloadOfflinePack() {
   }
 
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
-  state.cacheProgress = `${ok}/${urls.length} media/docs cached · ${failed} failed`;
+  state.cacheProgress = t('cpCachedFailed', ok, urls.length, failed);
   render();
 }
 
@@ -695,7 +927,7 @@ async function checkCacheStatus() {
   const urls = buildOfflineMediaUrls();
   if (!urls.length) {
     state.cacheStatus = 'ready';
-    state.cacheProgress = 'No media/docs to cache';
+    state.cacheProgress = t('cpNoMedia');
     return;
   }
 
@@ -706,7 +938,7 @@ async function checkCacheStatus() {
     if (cachedUrls.has(url)) cached += 1;
   }
   state.cacheStatus = cached === urls.length ? 'ready' : cached > 0 ? 'incomplete' : 'not downloaded';
-  state.cacheProgress = `${cached}/${urls.length} media/docs cached`;
+  state.cacheProgress = t('cpCached', cached, urls.length);
 }
 
 function updateDataUpdateFlag(packId) {
@@ -746,12 +978,12 @@ function isPackMediaOrDocUrl(url) {
 // content hash changed (per media-manifest.json), and evict files no longer referenced.
 async function syncPackDelta() {
   if (!('caches' in window)) {
-    alert('Cache Storage is not available in this browser.');
+    alert(t('noCacheApi'));
     return;
   }
   const packId = selectedPack()?.id;
   state.cacheStatus = 'downloading';
-  state.cacheProgress = 'Refreshing field data…';
+  state.cacheProgress = t('cpRefreshing');
   render();
 
   await loadSelectedPack({ cacheMode: 'reload' });
@@ -801,7 +1033,7 @@ async function syncPackDelta() {
     } catch (error) {
       if (await cache.match(abs)) ok += 1; else failed += 1;
     }
-    state.cacheProgress = `Updating ${ok}/${toDownload.length} file(s)${failed ? ` · ${failed} failed` : ''}`;
+    state.cacheProgress = t('cpUpdating', ok, toDownload.length, failed);
     render();
     await new Promise(resolve => setTimeout(resolve, 0));
   }
@@ -817,7 +1049,7 @@ async function syncPackDelta() {
 
   storeSyncedManifest(packId, manifest);
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
-  state.cacheProgress = `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`;
+  state.cacheProgress = t('cpUpdated', ok, evicted, failed);
   render();
 }
 
@@ -844,24 +1076,41 @@ function cupFrequency(field) {
   return match ? match[0] : '';
 }
 
+// Structured note labels the build writes, with the forms DeepL emits in French/German, so the
+// CUP builder can pull values out of a note in whichever language the pilot exported.
+const CUP_LABELS = {
+  surface: ['Surface', 'Oberfläche', 'Oberflaeche'],
+  direction: ['Direction', 'Richtung'],
+};
+// All localized structured-block labels, used only to strip those lines out of CUP prose.
+const CUP_STRUCTURED_LABELS = [
+  'Info', 'Surface', 'Direction', 'Slope', 'Visit', 'Modified', 'Feedback', 'Reported hazards',
+  'Oberfläche', 'Oberflaeche', 'Richtung', 'Neigung', 'Besichtigung', 'Geändert', 'Geaendert', 'Rückmeldungen', 'Rueckmeldungen', 'Gemeldete Gefahren',
+  'Pente', 'Visite', 'Modifié', 'Modifie', 'Retours', 'Dangers signalés', 'Dangers signales',
+];
+const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Pull a labelled value ("Surface: grass", "Direction: 07/25") out of the notes block. The
-// streckenflug import writes these as their own lines; returns '' when the label is absent.
-function cupNoteValue(notes, label) {
-  const match = new RegExp(`^\\s*${label}\\s*:\\s*(.+)$`, 'im').exec(String(notes || ''));
+// streckenflug import writes these as their own lines; returns '' when no variant is present.
+function cupNoteValue(notes, labels) {
+  const alt = (Array.isArray(labels) ? labels : [labels]).map(escapeRegExp).join('|');
+  const match = new RegExp(`^\\s*(?:${alt})\\s*:\\s*(.+)$`, 'im').exec(String(notes || ''));
   if (!match) return '';
   return match[1].split(/[.;\n]/)[0].trim().replace(/\s+/g, ' ').slice(0, 40);
 }
 
 // The Guide des Aires ("guide des vaches") free-text field description, kept alongside the
-// structured summary. Strips the streckenflug labelled block, OpenAIP/VAC import boilerplate,
-// URLs, and a leading runway token so info already shown above (difficulty, direction…) is not
-// duplicated. Only guide-sourced fields carry this prose; streckenflug fields stay compact.
-function cupGuideNotes(field) {
+// structured summary. Strips the streckenflug labelled block (any language), OpenAIP/VAC import
+// boilerplate, URLs, and a leading runway token so info already shown above (difficulty,
+// direction…) is not duplicated. Only guide-sourced fields carry this prose; other sources stay
+// compact. `notes` is the note already resolved to the export language.
+function cupGuideNotes(field, notes) {
   if (!/Guide des Aires|planeur-net/i.test(field.source?.name || '')) return '';
-  const text = String(field.notes || '')
+  const labelAlt = CUP_STRUCTURED_LABELS.map(escapeRegExp).join('|');
+  const text = String(notes || '')
     .replace(/^\s*streckenflug\.at source:.*$/gim, '')
     .replace(/^\s*(?:Landout Field|Airstrip|Airfield|Airport)\b.*$/gim, '')
-    .replace(/^\s*(?:Info|Surface|Direction|Slope|Visit|Modified|Feedback|Reported hazards)\s*:.*$/gim, '')
+    .replace(new RegExp(`^\\s*(?:${labelAlt})\\s*:.*$`, 'gim'), '')
     .replace(/^\s*-{2,}\s*$/gim, '')
     .replace(/Glider-relevant airfield imported from OpenAIP[^.]*\.?/gi, '')
     .replace(/Official aerodrome entry created from SIA VAC import\.?/gi, '')
@@ -874,7 +1123,9 @@ function cupGuideNotes(field) {
 
 // Compact waypoint description: difficulty, frequency, length×width, surface, direction/pistes,
 // then the Guide des Aires prose. The full field notes stay in the app; the CUP stays readable.
+// Prose and structured values come from the note in the pilot's current language.
 function cupDescription(field) {
+  const notes = fieldNotes(field);
   const parts = [];
   if (field.difficulty && field.difficulty !== 'UNKNOWN') parts.push(`[${field.difficulty}]`);
   const freq = cupFrequency(field);
@@ -886,12 +1137,12 @@ function cupDescription(field) {
   } else if (Number.isFinite(length) && length > 0) {
     parts.push(`${Math.round(length)} m`);
   }
-  const surface = cupNoteValue(field.notes, 'Surface');
+  const surface = cupNoteValue(notes, CUP_LABELS.surface);
   if (surface) parts.push(surface);
-  const direction = cupNoteValue(field.notes, 'Direction')
+  const direction = cupNoteValue(notes, CUP_LABELS.direction)
     || (Number.isFinite(field.runwayDirectionDeg) ? `${String(Math.round(field.runwayDirectionDeg)).padStart(3, '0')}°` : '');
   if (direction) parts.push(direction);
-  const prose = cupGuideNotes(field);
+  const prose = cupGuideNotes(field, notes);
   if (prose) parts.push(prose);
   return parts.join(' · ');
 }
@@ -923,8 +1174,8 @@ function generateCupText() {
 }
 
 async function exportCup() {
-  if (!state.fields.length) { alert('No pack loaded yet.'); return; }
-  const filename = `meet-the-cows-${selectedPack()?.id || 'pack'}.cup`;
+  if (!state.fields.length) { alert(t('noPackYet')); return; }
+  const filename = `meet-the-cows-${selectedPack()?.id || 'pack'}-${resolveLang()}.cup`;
   const text = generateCupText();
   // Prefer the share sheet on phones (Save to Files, or open straight into SeeYou).
   try {

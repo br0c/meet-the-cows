@@ -12,3 +12,5 @@ __pycache__/
 data/packs/
 # Generated offline data packs
 dist/packs/
+# Build status flag written by scripts/build_pack.py
+build-status.json
