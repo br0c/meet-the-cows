@@ -80,6 +80,8 @@ const STRINGS = {
     cpRefreshing: 'Refreshing field data…',
     cpUpdating: (ok, total, failed) => `Updating ${ok}/${total} file(s)${failed ? ` · ${failed} failed` : ''}`,
     cpUpdated: (ok, evicted, failed) => `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`,
+    searchPlaceholder: 'Search a field by name or code', clearSearch: 'Clear search',
+    searchResults: 'Search results', noMatches: q => `No fields match “${q}”.`,
   },
   fr: {
     settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
@@ -134,6 +136,8 @@ const STRINGS = {
     cpRefreshing: 'Actualisation des données…',
     cpUpdating: (ok, total, failed) => `Mise à jour ${ok}/${total} fichier(s)${failed ? ` · ${failed} échec(s)` : ''}`,
     cpUpdated: (ok, evicted, failed) => `${ok} fichier(s) mis à jour${evicted ? `, ${evicted} supprimé(s)` : ''}${failed ? `, ${failed} échec(s)` : ''}`,
+    searchPlaceholder: 'Rechercher un terrain (nom ou code)', clearSearch: 'Effacer la recherche',
+    searchResults: 'Résultats de recherche', noMatches: q => `Aucun terrain ne correspond à « ${q} ».`,
   },
   de: {
     settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
@@ -188,6 +192,8 @@ const STRINGS = {
     cpRefreshing: 'Felddaten werden aktualisiert…',
     cpUpdating: (ok, total, failed) => `Aktualisiere ${ok}/${total} Datei(en)${failed ? ` · ${failed} fehlgeschlagen` : ''}`,
     cpUpdated: (ok, evicted, failed) => `${ok} Datei(en) aktualisiert${evicted ? `, ${evicted} entfernt` : ''}${failed ? `, ${failed} fehlgeschlagen` : ''}`,
+    searchPlaceholder: 'Feld suchen (Name oder Code)', clearSearch: 'Suche löschen',
+    searchResults: 'Suchergebnisse', noMatches: q => `Keine Felder für „${q}“.`,
   },
 };
 
@@ -254,6 +260,7 @@ let state = {
   gpsError: '',
   selectedFieldId: null,
   view: 'main',
+  searchQuery: '',
   computedRows: [],
   cacheStatus: 'unknown',
   cacheProgress: '',
@@ -421,6 +428,26 @@ function altitudeLabel() {
   return `${fmtM(altitude)}${state.settings.useManualAltitude ? ` ${t('altManual')}` : ''}`;
 }
 
+// Distance/bearing/required-glide for one field from the current position. Shared by the
+// nearest list (computeRows) and the search results, so both agree.
+function metricsForField(field, altitudeM, safetyMarginM) {
+  const distanceM = haversineMeters(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
+  const bearingDeg = bearingDegrees(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
+  const fieldElevationM = Number.isFinite(field.elevationM) ? field.elevationM : null;
+  const usableHeightM = altitudeM !== null && fieldElevationM !== null
+    ? altitudeM - fieldElevationM - safetyMarginM
+    : null;
+  const requiredGlideRatio = usableHeightM !== null && usableHeightM > 0 ? distanceM / usableHeightM : null;
+  const glideReason = requiredGlideRatio !== null
+    ? ''
+    : altitudeM === null
+      ? t('reasonGpsAlt')
+      : fieldElevationM === null
+        ? t('reasonFieldElev')
+        : t('reasonBelowSafe', Math.abs(Math.round(usableHeightM)));
+  return { field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio, glideReason };
+}
+
 function computeRows() {
   if (!state.position) {
     state.computedRows = [];
@@ -428,23 +455,7 @@ function computeRows() {
   }
   const altitudeM = activeAltitudeM();
   const safetyMarginM = Number(state.settings.safetyMarginM) || 0;
-  let rows = state.fields.map(field => {
-    const distanceM = haversineMeters(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
-    const bearingDeg = bearingDegrees(state.position.latitude, state.position.longitude, field.latitude, field.longitude);
-    const fieldElevationM = Number.isFinite(field.elevationM) ? field.elevationM : null;
-    const usableHeightM = altitudeM !== null && fieldElevationM !== null
-      ? altitudeM - fieldElevationM - safetyMarginM
-      : null;
-    const requiredGlideRatio = usableHeightM !== null && usableHeightM > 0 ? distanceM / usableHeightM : null;
-    const glideReason = requiredGlideRatio !== null
-      ? ''
-      : altitudeM === null
-        ? t('reasonGpsAlt')
-        : fieldElevationM === null
-          ? t('reasonFieldElev')
-          : t('reasonBelowSafe', Math.abs(Math.round(usableHeightM)));
-    return { field, distanceM, bearingDeg, usableHeightM, requiredGlideRatio, glideReason };
-  });
+  let rows = state.fields.map(field => metricsForField(field, altitudeM, safetyMarginM));
   rows = rows.filter(row => {
     if (state.settings.hideD && row.field.difficulty === 'D') return false;
     if (state.settings.hideC && row.field.difficulty === 'C') return false;
@@ -474,6 +485,10 @@ function render() {
   const scrollY = window.scrollY;
   const activeDetail = document.querySelector('.detail');
   if (activeDetail) state.detailScrollTop = activeDetail.scrollTop;
+  // Preserve search focus + caret: render() replaces innerHTML on every keystroke.
+  const searchEl = document.querySelector('#fieldSearch');
+  const searchWasFocused = !!searchEl && document.activeElement === searchEl;
+  const searchCaret = searchEl ? searchEl.selectionStart : null;
   document.documentElement.lang = resolveLang();
   computeRows();
   const selected = state.fields.find(f => f.id === state.selectedFieldId);
@@ -499,6 +514,14 @@ function render() {
     if (detail) {
       detail.scrollTop = state.detailScrollTop || 0;
     } else if (state.view === 'main') {
+      if (searchWasFocused) {
+        const s = document.querySelector('#fieldSearch');
+        if (s) {
+          s.focus();
+          const caret = searchCaret == null ? s.value.length : searchCaret;
+          try { s.setSelectionRange(caret, caret); } catch { /* ignore */ }
+        }
+      }
       window.scrollTo({ top: scrollY, behavior: 'instant' });
     }
   });
@@ -536,6 +559,7 @@ function renderWarnings() {
 
 function renderMainPage() {
   return `
+    ${renderSearchBox()}
     ${renderUpdateBanner()}
     ${renderWarnings()}
     ${renderFieldList()}
@@ -667,6 +691,51 @@ function topPickRows() {
     .slice(0, 3);
 }
 
+const SEARCH_RESULT_LIMIT = 80;
+
+// Lowercase + strip accents so "pre" matches "Pré" and "amberieu" matches "Ambérieu".
+function normalizeSearch(value) {
+  return String(value ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+// Fields whose name or code contain every search token. Unlike the nearest list this searches
+// the whole pack (including hidden C/D fields and beyond the distance cap) because the pilot
+// asked for a specific place — e.g. to open it and contribute an update.
+function searchMatches(query) {
+  const tokens = normalizeSearch(query).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return [];
+  const matched = state.fields.filter(field => {
+    const hay = normalizeSearch(`${field.name || ''} ${field.code || ''}`);
+    return tokens.every(tok => hay.includes(tok));
+  });
+  if (state.position) {
+    const altitudeM = activeAltitudeM();
+    const safetyMarginM = Number(state.settings.safetyMarginM) || 0;
+    return matched
+      .map(field => metricsForField(field, altitudeM, safetyMarginM))
+      .sort((a, b) => a.distanceM - b.distanceM)
+      .slice(0, SEARCH_RESULT_LIMIT);
+  }
+  return matched
+    .slice()
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .slice(0, SEARCH_RESULT_LIMIT)
+    .map(field => ({ field, distanceM: null, requiredGlideRatio: null, glideReason: '' }));
+}
+
+function renderSearchBox() {
+  const q = state.searchQuery;
+  return `
+    <div class="search-box">
+      <span class="search-ic" aria-hidden="true">🔍</span>
+      <input id="fieldSearch" type="text" inputmode="search" enterkeyhint="search" autocomplete="off"
+        placeholder="${escapeHtml(t('searchPlaceholder'))}" aria-label="${escapeHtml(t('searchPlaceholder'))}"
+        value="${escapeHtml(q)}" />
+      ${q ? `<button id="clearSearch" class="search-clear" title="${escapeHtml(t('clearSearch'))}" aria-label="${escapeHtml(t('clearSearch'))}">✕</button>` : ''}
+    </div>
+  `;
+}
+
 function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
   return `
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
@@ -674,7 +743,7 @@ function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
         <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
         <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? t('airfield') : t('field')].filter(Boolean).join(' · '))}</span>
       </span>
-      <span class="field-distance">${fmtKm(distanceM)}</span>
+      <span class="field-distance">${Number.isFinite(distanceM) ? fmtKm(distanceM) : '—'}</span>
       <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
       <span class="badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
     </button>
@@ -683,6 +752,19 @@ function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
 
 function renderFieldList() {
   if (!state.fields.length) return `<div class="warning">${escapeHtml(t('noFields'))}</div>`;
+  const query = state.searchQuery.trim();
+  if (query) {
+    const rows = searchMatches(query);
+    if (!rows.length) return `<div class="warning">${escapeHtml(t('noMatches', query))}</div>`;
+    return `
+      <section class="field-list" aria-label="${escapeHtml(t('searchResults'))}">
+        <div class="field-list-head">
+          <span>${t('colName')}</span><span>${t('colDist')}</span><span>${t('colGlide')}</span><span>${t('colDiff')}</span>
+        </div>
+        ${rows.map(renderFieldRow).join('')}
+      </section>
+    `;
+  }
   if (!state.position) return `<div class="warning">${escapeHtml(t('waitingGps'))}</div>`;
   const picks = topPickRows();
   const pickIds = new Set(picks.map(row => row.field.id));
@@ -764,6 +846,12 @@ function renderMediaItem(item) {
 }
 
 function attachEvents() {
+  document.querySelector('#fieldSearch')?.addEventListener('input', e => { state.searchQuery = e.target.value; render(); });
+  document.querySelector('#clearSearch')?.addEventListener('click', () => {
+    state.searchQuery = '';
+    render();
+    document.querySelector('#fieldSearch')?.focus();
+  });
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#refreshPack')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
