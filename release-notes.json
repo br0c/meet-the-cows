@@ -1,0 +1,28 @@
+[
+  {
+    "version": "0.6.0-beta",
+    "date": "2026-07-09",
+    "en": [
+      "Search any field by name or code — accents don't matter",
+      "Contribute updates and photos from a field's page; every submission is reviewed before publication",
+      "Photos taken at the field are pre-verified from their location; far-away photos are flagged for manual review",
+      "Release notes (this screen) and licence links in Settings"
+    ]
+  },
+  {
+    "version": "0.5.0-beta",
+    "date": "2026-07-08",
+    "en": [
+      "Full French / English / German localization — menus, field notes and the CUP export follow your language",
+      "Language switch in Settings (automatic from your device by default)",
+      "Major airports and military bases where a glider must not land no longer appear as landing options"
+    ]
+  },
+  {
+    "version": "0.4.5-beta",
+    "date": "2026-06-28",
+    "en": [
+      "Earlier releases: nearest-field list with required glide, offline data packs with photos and VAC documents, incremental pack updates, CUP export for SeeYou"
+    ]
+  }
+]

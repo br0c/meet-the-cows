@@ -11,6 +11,7 @@ const APP_SHELL = [
   u('styles.css'),
   u('src/app.js'),
   u('manifest.webmanifest'),
+  u('release-notes.json'),
   u('icons/icon.svg'),
 ];
 const PACK_CORE = [

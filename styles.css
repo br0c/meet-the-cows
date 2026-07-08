@@ -243,3 +243,13 @@ a { color: var(--accent); }
   .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .button-row { grid-template-columns: 1fr; }
 }
+
+.release-list { display: grid; gap: 12px; margin-top: 10px; }
+.release-entry { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.release-entry.past { opacity: .75; }
+.release-head { display: flex; justify-content: space-between; align-items: baseline; }
+.release-head strong { font-size: 16px; }
+.release-head span { color: var(--muted); font-size: 12px; }
+.release-entry ul { margin: 8px 0 0; padding-left: 18px; }
+.release-entry li { margin: 4px 0; font-size: 14px; line-height: 1.45; }
+.meta-list a { color: var(--accent); }

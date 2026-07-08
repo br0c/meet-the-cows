@@ -8,6 +8,7 @@ on:
       - "manifest.webmanifest"
       - "service-worker.js"
       - "styles.css"
+      - "release-notes.json"
       - "src/**"
       - "icons/**"
       - "scripts/fetch_pages_pack.py"
@@ -44,13 +45,20 @@ jobs:
 
       # APP_VERSION is declared in both files (the SW cannot import the module); a mismatch
       # would leave clients on a stale shell cache. Fail fast instead of deploying drift.
-      - name: Check APP_VERSION consistency
+      # Every release must also ship its release note: fail when release-notes.json has no
+      # entry for the current APP_VERSION.
+      - name: Check APP_VERSION consistency and release note
         run: |
           app=$(grep -o "APP_VERSION = '[^']*'" src/app.js | head -1)
           sw=$(grep -o "APP_VERSION = '[^']*'" service-worker.js | head -1)
           echo "src/app.js:        ${app}"
           echo "service-worker.js: ${sw}"
           [ -n "${app}" ] && [ "${app}" = "${sw}" ] || { echo "ERROR: APP_VERSION mismatch"; exit 1; }
+
+          version=$(echo "${app}" | sed "s/.*'\(.*\)'/\1/")
+          jq -e --arg v "${version}" '.[] | select(.version == $v)' release-notes.json > /dev/null \
+            || { echo "ERROR: release-notes.json has no entry for ${version} — write the release note before deploying"; exit 1; }
+          echo "release note present for ${version}"
 
       - name: Detect data-pack changes
         id: data_changes
@@ -105,7 +113,7 @@ jobs:
         run: |
           mkdir -p dist/site/packs
 
-          cp index.html styles.css service-worker.js manifest.webmanifest dist/site/
+          cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json dist/site/
           if [ -d icons ]; then cp -R icons dist/site/icons; fi
           mkdir -p dist/site/src
           cp src/app.js dist/site/src/app.js

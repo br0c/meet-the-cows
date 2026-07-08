@@ -135,7 +135,7 @@ jobs:
         run: |
           mkdir -p dist/site/packs
 
-          cp index.html styles.css service-worker.js manifest.webmanifest dist/site/
+          cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json dist/site/
           if [ -d icons ]; then cp -R icons dist/site/icons; fi
           mkdir -p dist/site/src
           cp src/app.js dist/site/src/app.js

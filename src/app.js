@@ -35,6 +35,12 @@ const CONTRIB_GEO_RADIUS_M = 1000;            // keep in step with GEO_RADIUS_M
 // never triggers a full re-render that would wipe the inputs).
 let contribForm = null;
 
+// Release notes: shipped with the app shell; shown from Settings and once as a banner after an
+// app update (last seen version remembered per device).
+const RELEASE_NOTES_URL = new URL('release-notes.json', BASE_URL).toString();
+const LAST_SEEN_VERSION_KEY = 'mtc-last-seen-version';
+const DATA_LICENCE_URL = 'https://github.com/br0c/meet-the-cows/blob/main/DATA-LICENCE.md';
+
 // UI string table. Plain strings, or functions for values that interpolate. Every user-facing
 // label in the app resolves through t(); pack field notes are localized in the pack itself.
 const STRINGS = {
@@ -93,6 +99,9 @@ const STRINGS = {
     cpUpdated: (ok, evicted, failed) => `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`,
     searchPlaceholder: 'Search a field by name or code', clearSearch: 'Clear search',
     searchResults: 'Search results', noMatches: q => `No fields match “${q}”.`,
+    whatsNew: 'What’s new', updatedTo: v => `🆕 Updated to ${v}`,
+    licenceLabel: 'Licence', licenceValue: 'Personal use · data reuse on request',
+    noNotesFile: 'Release notes are unavailable offline.',
     contribute: 'Contribute an update', contribTitle: 'Contribute an update',
     cDate: 'Date observed', cDesc: 'What changed?',
     cDescPlaceholder: 'New windsock, surface change, obstacle, hazard…',
@@ -167,6 +176,9 @@ const STRINGS = {
     cpUpdated: (ok, evicted, failed) => `${ok} fichier(s) mis à jour${evicted ? `, ${evicted} supprimé(s)` : ''}${failed ? `, ${failed} échec(s)` : ''}`,
     searchPlaceholder: 'Rechercher un terrain (nom ou code)', clearSearch: 'Effacer la recherche',
     searchResults: 'Résultats de recherche', noMatches: q => `Aucun terrain ne correspond à « ${q} ».`,
+    whatsNew: 'Nouveautés', updatedTo: v => `🆕 Mise à jour ${v}`,
+    licenceLabel: 'Licence', licenceValue: 'Usage personnel · réutilisation des données sur demande',
+    noNotesFile: 'Notes de version indisponibles hors ligne.',
     contribute: 'Proposer une mise à jour', contribTitle: 'Proposer une mise à jour',
     cDate: 'Date d’observation', cDesc: 'Qu’est-ce qui a changé ?',
     cDescPlaceholder: 'Nouvelle manche à air, surface, obstacle, danger…',
@@ -241,6 +253,9 @@ const STRINGS = {
     cpUpdated: (ok, evicted, failed) => `${ok} Datei(en) aktualisiert${evicted ? `, ${evicted} entfernt` : ''}${failed ? `, ${failed} fehlgeschlagen` : ''}`,
     searchPlaceholder: 'Feld suchen (Name oder Code)', clearSearch: 'Suche löschen',
     searchResults: 'Suchergebnisse', noMatches: q => `Keine Felder für „${q}“.`,
+    whatsNew: 'Neuigkeiten', updatedTo: v => `🆕 Aktualisiert auf ${v}`,
+    licenceLabel: 'Lizenz', licenceValue: 'Private Nutzung · Datenweiterverwendung auf Anfrage',
+    noNotesFile: 'Versionshinweise offline nicht verfügbar.',
     contribute: 'Update beitragen', contribTitle: 'Update beitragen',
     cDate: 'Beobachtungsdatum', cDesc: 'Was hat sich geändert?',
     cDescPlaceholder: 'Neuer Windsack, Oberfläche, Hindernis, Gefahr…',
@@ -325,6 +340,9 @@ let state = {
   gpsError: '',
   selectedFieldId: null,
   contribFor: null,
+  releaseNotes: [],
+  showReleaseNotes: false,
+  updateNoteAvailable: false,
   view: 'main',
   searchQuery: '',
   computedRows: [],
@@ -341,9 +359,38 @@ init();
 async function init() {
   render();
   registerServiceWorker();
+  initReleaseNotes();
   await loadPackIndex();
   await loadSelectedPack();
   startGps();
+  render();
+}
+
+// Load the shipped release notes and decide whether to show the one-time "updated" banner.
+// A fresh install just records the current version silently; the banner only appears when a
+// previously-seen version differs from the running one (i.e. the app shell was updated).
+async function initReleaseNotes() {
+  try {
+    const res = await fetch(RELEASE_NOTES_URL);
+    if (res.ok) {
+      const notes = await res.json();
+      if (Array.isArray(notes)) state.releaseNotes = notes;
+    }
+  } catch { /* offline first visit: the sheet shows a fallback message */ }
+  let seen = null;
+  try { seen = localStorage.getItem(LAST_SEEN_VERSION_KEY); } catch { /* private mode */ }
+  if (!seen) {
+    try { localStorage.setItem(LAST_SEEN_VERSION_KEY, APP_VERSION); } catch { /* ignore */ }
+  } else if (seen !== APP_VERSION) {
+    state.updateNoteAvailable = true;
+    render();
+  }
+}
+
+function openReleaseNotes() {
+  state.showReleaseNotes = true;
+  state.updateNoteAvailable = false;
+  try { localStorage.setItem(LAST_SEEN_VERSION_KEY, APP_VERSION); } catch { /* ignore */ }
   render();
 }
 
@@ -573,6 +620,7 @@ function render() {
       </main>
       ${selected ? renderDetail(selected) : ''}
       ${state.contribFor ? renderContribute(state.fields.find(f => f.id === state.contribFor)) : ''}
+      ${state.showReleaseNotes ? renderReleaseNotes() : ''}
     </div>
   `;
   attachEvents();
@@ -627,10 +675,44 @@ function renderWarnings() {
 function renderMainPage() {
   return `
     ${renderSearchBox()}
+    ${renderReleaseBanner()}
     ${renderUpdateBanner()}
     ${renderWarnings()}
     ${renderFieldList()}
     <p class="footer-note">${escapeHtml(t('footerNote'))}</p>
+  `;
+}
+
+// One-time banner after an app-shell update; opening the notes (or any later visit after
+// openReleaseNotes records the version) makes it disappear.
+function renderReleaseBanner() {
+  if (!state.updateNoteAvailable) return '';
+  return `
+    <div class="update-banner">
+      <span>${escapeHtml(t('updatedTo', APP_VERSION))}</span>
+      <button id="releaseBannerBtn" class="primary">${t('whatsNew')}</button>
+    </div>
+  `;
+}
+
+function renderReleaseNotes() {
+  const lang = resolveLang();
+  const entries = (Array.isArray(state.releaseNotes) ? state.releaseNotes : []).map(entry => {
+    const bullets = (Array.isArray(entry[lang]) ? entry[lang] : entry.en) || [];
+    return `
+      <div class="release-entry${entry.version === APP_VERSION ? '' : ' past'}">
+        <div class="release-head"><strong>${escapeHtml(entry.version || '')}</strong><span>${escapeHtml(entry.date || '')}</span></div>
+        <ul>${bullets.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      </div>`;
+  }).join('');
+  return `
+    <div class="detail-backdrop" id="notesBackdrop">
+      <article class="detail" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('whatsNew'))}">
+        <button id="closeNotes">${t('close')}</button>
+        <div class="detail-title-row"><h2>${t('whatsNew')}</h2></div>
+        <div class="release-list">${entries || `<p class="footer-note">${escapeHtml(t('noNotesFile'))}</p>`}</div>
+      </article>
+    </div>
   `;
 }
 
@@ -665,7 +747,8 @@ function renderSettingsPage() {
         <label for="languageSelect">${t('language')}</label>
         <select id="languageSelect">${langOptions}</select>
         <dl class="meta-list">
-          <div><dt>${t('version')}</dt><dd>${escapeHtml(APP_VERSION)}</dd></div>
+          <div><dt>${t('version')}</dt><dd>${escapeHtml(APP_VERSION)} · <a href="#" id="whatsNewLink">${t('whatsNew')}</a></dd></div>
+          <div><dt>${t('licenceLabel')}</dt><dd><a href="${DATA_LICENCE_URL}" target="_blank" rel="noopener">${escapeHtml(t('licenceValue'))}</a></dd></div>
           <div><dt>${t('status')}</dt><dd>${escapeHtml(t('betaStatus'))}</dd></div>
         </dl>
       </div>
@@ -1208,6 +1291,12 @@ function attachEvents() {
     const contribField = state.fields.find(f => f.id === state.contribFor);
     if (contribField) wireContribForm(contribField);
   }
+  document.querySelector('#releaseBannerBtn')?.addEventListener('click', openReleaseNotes);
+  document.querySelector('#whatsNewLink')?.addEventListener('click', e => { e.preventDefault(); openReleaseNotes(); });
+  document.querySelector('#closeNotes')?.addEventListener('click', () => { state.showReleaseNotes = false; render(); });
+  document.querySelector('#notesBackdrop')?.addEventListener('click', e => {
+    if (e.target.id === 'notesBackdrop') { state.showReleaseNotes = false; render(); }
+  });
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#refreshPack')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
