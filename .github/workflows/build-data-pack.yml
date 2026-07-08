@@ -89,6 +89,12 @@ jobs:
         env:
           OPENAIP_API_KEY: ${{ secrets.OPENAIP_API_KEY }}
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          # Lifetime (developer-tier) DeepL key: disable the per-build character cap so a full
+          # rebuild — such as the schema bump that adds three-language notes — can finish
+          # translating in one run instead of one 300k chunk per weekly full rebuild. The build
+          # is still bounded by the remaining lifetime quota, and translations are cached, so
+          # this is a one-time cost; routine incremental rebuilds spend almost nothing.
+          DEEPL_MAX_CHARS: "0"
           PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/${{ env.PACK_ID }}/state.json
           FORCE_FULL: ${{ steps.mode.outputs.force_full }}
         run: |
