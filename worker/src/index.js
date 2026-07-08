@@ -76,20 +76,26 @@ async function handleSubmit(request, env, origin) {
   const shortId = (crypto.randomUUID && crypto.randomUUID().slice(0, 8)) || Math.random().toString(16).slice(2, 10);
   const base = `contributions/${sanitize(fieldId)}/${stamp}_${shortId}`;
 
+  // The full-size (EXIF-stripped) original goes to a release asset, not into git — the repo
+  // stays lean and the pack build later downloads + resizes it like any other pack photo.
+  let photoAsset = null;
+  if (photoBytes) {
+    photoAsset = await uploadReleaseAsset(env, `${sanitize(fieldId)}_${stamp}_${shortId}.jpg`, photoBytes);
+  }
+
   const meta = {
-    schema: 1, fieldId, fieldCode, fieldLat, fieldLon, fieldName,
+    schema: 2, fieldId, fieldCode, fieldLat, fieldLon, fieldName,
     date: date || new Date().toISOString().slice(0, 10),
     description,
-    photo: photoBytes ? `${base.split('/').pop()}.jpg` : null,
+    photoAsset, // { id, name, url, size } | null — full-size original in the release
     submitter: submitter ? { handle: submitter } : null,
     geo,
     submittedAt: new Date().toISOString(),
   };
 
   const files = [{ path: `${base}.json`, content: b64(new TextEncoder().encode(JSON.stringify(meta, null, 2))) }];
-  if (photoBytes) files.push({ path: `${base}.jpg`, content: b64(photoBytes) });
 
-  const pr = await openPr(env, { fieldId, fieldName, fieldCode, description, geo, files });
+  const pr = await openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset });
   return json(origin, 200, { ok: true, prUrl: pr.html_url, prNumber: pr.number, geo });
 }
 
@@ -103,8 +109,10 @@ function geoVerdict(gps, deviceLat, deviceLon, fieldLat, fieldLon, radiusM) {
   }
   if (Number.isFinite(deviceLat) && Number.isFinite(deviceLon)) {
     const d = haversine(deviceLat, deviceLon, fieldLat, fieldLon);
+    // Device GPS only ever counts IN FAVOUR: on-site ⇒ verified. A far-away device says
+    // nothing about the photo (submitted later from home), so it is silently ignored —
+    // no mention in the verdict, the PR, or the UI.
     if (d <= radiusM) return { verified: true, source: 'device', distanceM: Math.round(d) };
-    return { verified: false, source: 'device', distanceM: Math.round(d) };
   }
   return { verified: false, source: 'none', distanceM: null };
 }
@@ -168,8 +176,17 @@ function stripExif(b) {
 
 // ---------- GitHub ----------
 
-async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, files }) {
-  const repo = env.REPO, baseBranch = env.BASE_BRANCH || 'main';
+// Geo line for the PR body. Device GPS is only ever mentioned when it verified the
+// submission (on-site); a far-away or absent device signal reads as "no location data".
+function geoSummary(geo) {
+  if (geo.source === 'exif' && geo.verified) return `✅ pre-verified — photo GPS, ${geo.distanceM} m from the field`;
+  if (geo.source === 'exif') return `⚠️ photo GPS is ${geo.distanceM} m from the field — needs review`;
+  if (geo.source === 'device') return `✅ pre-verified — submitted on-site (device GPS, ${geo.distanceM} m from the field; photo has no location data)`;
+  return '⚠️ no location data — needs review';
+}
+
+async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset }) {
+  const baseBranch = env.BASE_BRANCH || 'main';
   const branch = `contrib/${sanitize(fieldId)}-${Date.now().toString(36)}`;
 
   const baseRef = await gh(env, `/git/ref/heads/${baseBranch}`);
@@ -186,8 +203,8 @@ async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, fi
   const body = [
     `**Field:** ${fieldName || '—'} (${fieldCode || fieldId})`,
     description ? `\n**Update:**\n${description}` : '',
-    `\n**Geo-check:** ${geo.verified ? '✅ verified' : '⚠️ needs review'} · source \`${geo.source}\`` +
-      (geo.distanceM != null ? ` · ${geo.distanceM} m from field` : ''),
+    `\n**Geo-check:** ${geoSummary(geo)}`,
+    photoAsset ? `\n**Photo** (full-size original, EXIF-stripped):\n\n![contribution photo](${photoAsset.url})` : '',
     `\n_Submitted via the in-app contribution form. A maintainer must review and merge before this goes live._`,
   ].join('\n');
 
@@ -198,6 +215,43 @@ async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, fi
 
   try { await gh(env, `/issues/${pr.number}/labels`, 'POST', { labels: ['contribution', label] }); } catch { /* labels are cosmetic */ }
   return pr;
+}
+
+// Rolling release that stores full-size contribution photos as assets (git stays lean).
+// Created on first use; the tag lands on the base branch head.
+async function ensureRelease(env) {
+  const tag = env.RELEASE_TAG || 'contrib-originals';
+  try {
+    return await gh(env, `/releases/tags/${tag}`);
+  } catch {
+    return gh(env, '/releases', 'POST', {
+      tag_name: tag,
+      name: 'Contribution photo originals',
+      body: 'Full-size (EXIF-stripped) originals of community-contributed field photos. The pack build resizes these for the app.',
+      draft: false,
+      prerelease: false,
+    });
+  }
+}
+
+async function uploadReleaseAsset(env, name, bytes) {
+  const release = await ensureRelease(env);
+  const url = `https://uploads.github.com/repos/${env.REPO}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'mtc-contrib-intake',
+      'Content-Type': 'image/jpeg',
+      'Content-Length': String(bytes.length),
+    },
+    body: bytes,
+  });
+  if (!res.ok) throw new Error(`GitHub asset upload → ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const asset = await res.json();
+  return { id: asset.id, name: asset.name, url: asset.browser_download_url, size: asset.size };
 }
 
 async function gh(env, path, method = 'GET', body) {

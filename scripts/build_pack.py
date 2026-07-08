@@ -138,7 +138,8 @@ _DEEPL_LOCK = threading.Lock()
 # sources are unchanged, so code changes always reach the deployed pack.
 # v8: field notes are localized objects {"en","fr","de"} instead of a single string.
 # v9: major commercial/controlled airports and military bases are excluded from the pack.
-PACK_SCHEMA_VERSION = 9
+# v10: translation cache is published with the pack (self-heal for the evictable CI cache).
+PACK_SCHEMA_VERSION = 10
 
 # App languages. Notes are emitted per language so the app can show them in the pilot's
 # language; the map converts our short codes to the DeepL target-language codes.
@@ -257,8 +258,10 @@ def main() -> None:
     docs_dir = out_dir / "docs" / "vac"
 
     # Persisted across runs (not under the per-pack cache_dir that gets wiped each build)
-    # so the daily rebuild only translates new/changed strings.
+    # so the daily rebuild only translates new/changed strings. If the CI cache was evicted,
+    # recover the copy published with the last deployed pack instead of re-translating.
     load_translation_cache(root / ".cache" / "translation-cache.json")
+    seed_translation_cache_from_url(args.state_url)
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -460,6 +463,13 @@ def main() -> None:
     write_build_status(root, changed=True)
 
     save_translation_cache()
+
+    # Publish the cache with the pack (next to state.json) so an evicted CI cache can be
+    # re-seeded on the next build — see seed_translation_cache_from_url.
+    (out_dir / "translation-cache.json").write_text(
+        json.dumps(_TRANSLATION_CACHE, ensure_ascii=False, sort_keys=True, indent=0),
+        encoding="utf-8",
+    )
 
     if not args.keep_raw:
         shutil.rmtree(cache_dir, ignore_errors=True)
@@ -2627,6 +2637,29 @@ def deepl_usage() -> tuple[int, int] | None:
     except Exception as error:  # noqa: BLE001
         print(f"DeepL usage check failed: {error}", file=sys.stderr)
         return None
+
+
+def seed_translation_cache_from_url(state_url: str) -> None:
+    """Re-seed an empty translation cache from the copy published next to the pack.
+
+    The CI cache (actions/cache) is evictable; the deployed pack is not. Each build publishes
+    the cache alongside state.json, and a build that starts with an empty cache pulls that copy
+    back — so losing the CI cache costs one download instead of re-spending DeepL quota on a
+    full re-translation. No-op when the cache already has entries or no state URL is set.
+    """
+    global _TRANSLATION_CACHE
+    if _TRANSLATION_CACHE or not state_url:
+        return
+    url = urllib.parse.urljoin(state_url, "translation-cache.json")
+    try:
+        request = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            loaded = json.loads(response.read().decode("utf-8"))
+        if isinstance(loaded, dict) and loaded:
+            _TRANSLATION_CACHE = {str(k): str(v) for k, v in loaded.items()}
+            print(f"Translation cache seeded from published pack: {len(_TRANSLATION_CACHE):,} entries", file=sys.stderr)
+    except Exception as error:  # noqa: BLE001 - seed is best-effort; DeepL cache/quota still guard
+        print(f"translation cache seed skipped ({url}): {error}", file=sys.stderr)
 
 
 def load_translation_cache(path: Path) -> None:

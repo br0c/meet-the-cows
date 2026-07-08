@@ -13,3 +13,4 @@ ALLOWED_ORIGIN = "https://br0c.github.io"   # CORS: the app's origin
 GEO_RADIUS_M = "1000"                # within this of the field ⇒ geo-verified
 MAX_PHOTO_BYTES = "15728640"         # 15 MB
 MIN_PHOTO_LONG_EDGE = "2560"         # matches the pack image resize target
+RELEASE_TAG = "contrib-originals"    # release that stores full-size photo originals

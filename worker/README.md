@@ -12,9 +12,15 @@ GPS. The app stays on GitHub Pages and just POSTs here.
 1. Accepts `multipart/form-data` at `POST /` (Turnstile-gated).
 2. If a photo is attached: checks type/size/resolution, reads **EXIF GPS**, and computes the
    distance to the field. Within `GEO_RADIUS_M` (1 km) ⇒ label `geo-verified`, else
-   `needs-location-review`. EXIF is then **stripped** so no GPS is stored in the repo.
-3. Opens a PR that adds `contributions/<fieldId>/<stamp>_<id>.json` (+ `.jpg`) on a new branch,
-   labelled for review. **Nothing is public until a maintainer merges.**
+   `needs-location-review`. EXIF is then **stripped** before the photo is stored anywhere.
+   Device GPS is a fallback that only ever counts **in favour**: on-site ⇒ verified; far away ⇒
+   silently ignored (never shown in the PR or the app).
+3. Uploads the full-size EXIF-stripped original as an asset on the rolling `RELEASE_TAG`
+   release — **no image bytes enter git**. The pack build later downloads and resizes it
+   (2560 px) like any other pack photo.
+4. Opens a PR that adds `contributions/<fieldId>/<stamp>_<id>.json` (metadata + asset link) on a
+   new branch, labelled for review, with the photo embedded in the PR body. **Nothing is public
+   until a maintainer merges.**
 
 ## Setup
 

@@ -119,6 +119,37 @@ def test_localize_note_keeps_native_source_and_skips_self_translation():
         bp.deepl_translate_ex = original
 
 
+def test_translation_cache_seeds_from_published_pack_only_when_empty():
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"en\x1fWiese": "Meadow", "fr\x1fWiese": "Prairie"}).encode()
+
+    original = bp.urllib.request.urlopen
+    bp.urllib.request.urlopen = lambda *a, **k: Resp()
+    try:
+        # Empty cache + state URL -> seeded from the sibling translation-cache.json.
+        bp._TRANSLATION_CACHE = {}
+        bp.seed_translation_cache_from_url("https://example.org/packs/fr-alps/state.json")
+        assert bp._TRANSLATION_CACHE == {"en\x1fWiese": "Meadow", "fr\x1fWiese": "Prairie"}
+        # Non-empty cache -> untouched (CI cache hit wins).
+        bp._TRANSLATION_CACHE = {"en\x1fZaun": "Fence"}
+        bp.seed_translation_cache_from_url("https://example.org/packs/fr-alps/state.json")
+        assert bp._TRANSLATION_CACHE == {"en\x1fZaun": "Fence"}
+        # No state URL -> no-op.
+        bp._TRANSLATION_CACHE = {}
+        bp.seed_translation_cache_from_url("")
+        assert bp._TRANSLATION_CACHE == {}
+    finally:
+        bp.urllib.request.urlopen = original
+        bp._TRANSLATION_CACHE = {}
+
+
 def test_is_major_airport_excludes_big_airfields_only():
     # Long paved runway or an explicit major/military ICAO -> excluded.
     assert bp.is_major_airport({"kind": "airfield", "code": "LFML", "lengthM": 3490}) is True   # Marseille
