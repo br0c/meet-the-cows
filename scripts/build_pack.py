@@ -97,6 +97,25 @@ DEDUPE_STRONG_NAME_DISTANCE_M = 800.0
 PACK_IMAGE_MAX_LONG_EDGE = 2560
 PACK_IMAGE_JPEG_QUALITY = 85
 
+# Major airports where a glider must not land are dropped from the pack. OpenAIP's type filter
+# does not catch them all — most leak in from the streckenflug landout list — so this is a
+# source-agnostic rule on the assembled fields. Real gliding aerodromes in this dataset top out
+# around 1300 m of runway, and every field at/above this paved length is a major commercial or
+# controlled airport or an active military base, so the length rule is a clean discriminator.
+MAJOR_AIRFIELD_MIN_RUNWAY_M = 2000.0
+# Major commercial/controlled airports and active military bases with runways under the length
+# threshold (gliders still prohibited). Kept explicit and short so it is easy to audit and tune.
+MAJOR_AIRFIELD_ICAO = {
+    "LFLP",  # Annecy (controlled commercial)
+    "LFMD",  # Cannes-Mandelieu (busy Class D business aviation)
+    "LFMV",  # Avignon-Caumont
+    "LFMU",  # Béziers-Vias
+    "LFLY",  # Lyon-Bron (controlled business airport)
+    "LFXA",  # Ambérieu (BA 278 military)
+    "LFMY",  # Salon-de-Provence (BA 701 military)
+    "LFTF",  # Cuers-Pierrefeu (naval air station)
+}
+
 # DeepL translation of German streckenflug notes. Configured in main(); when no key is
 # available the code falls back to the offline STRECKENFLUG_GERMAN_PHRASES dictionary.
 DEEPL_API_KEY = ""
@@ -118,7 +137,8 @@ _DEEPL_LOCK = threading.Lock()
 # schema). A mismatch with the published state forces a full rebuild even if the upstream
 # sources are unchanged, so code changes always reach the deployed pack.
 # v8: field notes are localized objects {"en","fr","de"} instead of a single string.
-PACK_SCHEMA_VERSION = 8
+# v9: major commercial/controlled airports and military bases are excluded from the pack.
+PACK_SCHEMA_VERSION = 9
 
 # App languages. Notes are emitted per language so the app can show them in the pilot's
 # language; the map converts our short codes to the DeepL target-language codes.
@@ -366,6 +386,10 @@ def main() -> None:
 
     if streckenflug_fields:
         fields.extend(streckenflug_fields)
+
+    # Drop major airports / military bases (any source) before translating or merging: a glider
+    # must not land there, and they otherwise dominate the pinned "best options" list.
+    fields = drop_major_airports(fields)
 
     # Localize each note into every app language (en/fr/de) while the field still has a single
     # source, so the note stays native in its source language and is translated only into the
@@ -2528,6 +2552,32 @@ def note_source_lang(field: dict[str, Any]) -> str | None:
     if "openaip" in name or "sia" in name or "vac" in name or "aerodrome" in name:
         return "en"
     return None
+
+
+def is_major_airport(field: dict[str, Any]) -> bool:
+    """True for a major commercial/controlled airport or active military base a glider must not
+    land at, identified by a long paved runway or an explicit ICAO list. Never true for
+    outlanding fields — only airfields are ever dropped.
+    """
+    if clean(field.get("kind")) != "airfield":
+        return False
+    if clean(field.get("code")).upper() in MAJOR_AIRFIELD_ICAO:
+        return True
+    length = field.get("lengthM")
+    return isinstance(length, (int, float)) and length >= MAJOR_AIRFIELD_MIN_RUNWAY_M
+
+
+def drop_major_airports(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove major airports/military bases before translating and merging, so they never appear
+    as landing options (they otherwise dominate the pinned 'best options')."""
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for field in fields:
+        (dropped if is_major_airport(field) else kept).append(field)
+    if dropped:
+        labels = ", ".join(sorted({clean(f.get("code")) or clean(f.get("name")) or "?" for f in dropped}))
+        print(f"Excluded {len(dropped)} major airport(s) not landable by glider: {labels}", file=sys.stderr)
+    return kept
 
 
 def localize_field_notes(fields: list[dict[str, Any]]) -> None:

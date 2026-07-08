@@ -119,6 +119,29 @@ def test_localize_note_keeps_native_source_and_skips_self_translation():
         bp.deepl_translate_ex = original
 
 
+def test_is_major_airport_excludes_big_airfields_only():
+    # Long paved runway or an explicit major/military ICAO -> excluded.
+    assert bp.is_major_airport({"kind": "airfield", "code": "LFML", "lengthM": 3490}) is True   # Marseille
+    assert bp.is_major_airport({"kind": "airfield", "code": "LFLP", "lengthM": 1630}) is True    # Annecy (list)
+    assert bp.is_major_airport({"kind": "airfield", "code": "LFXA", "lengthM": 1990}) is True    # Ambérieu mil (list)
+    # Real gliding aerodromes are kept, even the longer ones.
+    assert bp.is_major_airport({"kind": "airfield", "code": "LFMX", "lengthM": 1200}) is False   # St-Auban
+    assert bp.is_major_airport({"kind": "airfield", "code": "LFMA", "lengthM": 1590}) is False   # Aix-les-Milles gliding
+    # Outlanding fields are never dropped, whatever their (rare) length value.
+    assert bp.is_major_airport({"kind": "outlanding", "code": "", "lengthM": 3000}) is False
+    assert bp.is_major_airport({"kind": "airfield", "code": "", "lengthM": None}) is False
+
+
+def test_drop_major_airports_filters_and_keeps_order():
+    fields = [
+        {"kind": "outlanding", "code": "", "name": "Grass field", "lengthM": None},
+        {"kind": "airfield", "code": "LFML", "name": "Marseille", "lengthM": 3490},
+        {"kind": "airfield", "code": "LFMX", "name": "St-Auban", "lengthM": 1200},
+    ]
+    kept = bp.drop_major_airports(fields)
+    assert [f["code"] for f in kept] == ["", "LFMX"]
+
+
 def test_note_source_lang_by_source_name():
     assert bp.note_source_lang({"source": {"name": STRK}}) == "de"
     assert bp.note_source_lang({"source": {"name": GUIDE}}) == "fr"
