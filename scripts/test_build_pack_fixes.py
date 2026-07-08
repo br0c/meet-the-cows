@@ -77,19 +77,65 @@ def test_translation_cache_dedups_and_translates(monkeypatch=None):
     bp._TRANSLATION_STATS = {"deepl": 0, "cache": 0, "fallback": 0}
     calls = {"n": 0}
 
-    def fake(text: str):
+    def fake_ex(text: str, target_lang: str):
         calls["n"] += 1
-        return "EN:" + text
+        return ("EN:" + text, "DE")
 
-    original = bp.deepl_translate
-    bp.deepl_translate = fake
+    original = bp.deepl_translate_ex
+    bp.deepl_translate_ex = fake_ex
     try:
-        assert bp.translate_german_to_english("Achtung Hochspannung") == "EN:Achtung Hochspannung"
-        assert bp.translate_german_to_english("Achtung Hochspannung") == "EN:Achtung Hochspannung"
+        assert bp.localize_note_cached("Achtung Hochspannung", "en")[0] == "EN:Achtung Hochspannung"
+        assert bp.localize_note_cached("Achtung Hochspannung", "en")[0] == "EN:Achtung Hochspannung"
         assert calls["n"] == 1, "second identical string must come from cache"
         assert bp._TRANSLATION_STATS == {"deepl": 1, "cache": 1, "fallback": 0}
     finally:
-        bp.deepl_translate = original
+        bp.deepl_translate_ex = original
+
+
+def test_localize_note_keeps_native_source_and_skips_self_translation():
+    # A German-sourced note must keep its native German verbatim and never be sent to DeepL for
+    # German (no round-trip, no wasted characters) — only English and French are requested.
+    bp.DEEPL_API_KEY = "key:fx"
+    bp.DEEPL_API_URL = "http://mock"
+    bp._DEEPL_DISABLED = False
+    bp._DEEPL_BUDGET_CHARS = None
+    bp._TRANSLATION_CACHE = {}
+    bp._TRANSLATION_STATS = {"deepl": 0, "cache": 0, "fallback": 0}
+    seen = []
+
+    def fake_ex(text, target_lang):
+        seen.append(target_lang)
+        return (f"{target_lang}:{text}", "DE")
+
+    original = bp.deepl_translate_ex
+    bp.deepl_translate_ex = fake_ex
+    try:
+        note = bp.localize_note("Wiese mit Zaun", source_lang="de")
+        assert note["de"] == "Wiese mit Zaun", "native German kept verbatim"
+        assert note["en"] == "EN-GB:Wiese mit Zaun"
+        assert note["fr"] == "FR:Wiese mit Zaun"
+        assert sorted(seen) == ["EN-GB", "FR"], "German source is never re-translated to German"
+    finally:
+        bp.deepl_translate_ex = original
+
+
+def test_note_source_lang_by_source_name():
+    assert bp.note_source_lang({"source": {"name": STRK}}) == "de"
+    assert bp.note_source_lang({"source": {"name": GUIDE}}) == "fr"
+    assert bp.note_source_lang({"source": {"name": "OpenAIP"}}) == "en"
+    assert bp.note_source_lang({"source": {"name": "SIA VAC + OpenAIP/airport coordinates"}}) == "en"
+    assert bp.note_source_lang({"source": {"name": "mystery source"}}) is None
+
+
+def test_merge_notes_merges_each_language_natively():
+    group = [
+        {"notes": {"en": "Grass field", "fr": "Terrain en herbe", "de": "Wiese"}},
+        {"notes": {"en": "Power lines", "fr": "Lignes électriques", "de": "Stromleitungen"}},
+    ]
+    merged = bp.merge_notes(group)
+    assert merged["fr"] == "Terrain en herbe\n\n---\n\nLignes électriques"
+    assert merged["de"] == "Wiese\n\n---\n\nStromleitungen"
+    assert "Grass field" in merged["en"] and "Power lines" in merged["en"]
 
 
 def test_source_language_matching_target_keeps_original():
@@ -153,14 +199,20 @@ def test_localize_note_covers_three_languages():
         bp.deepl_translate_ex = original
 
 
-def test_fallback_without_key_leaves_french_untouched():
+def test_fallback_without_key_leaves_source_untouched():
+    # No DeepL key: every language slot falls back to the source text (the offline German
+    # dictionary leaves non-German text alone), so French input stays French everywhere.
     bp.DEEPL_API_KEY = ""
     bp.DEEPL_API_URL = ""
     bp._DEEPL_DISABLED = False
     bp._DEEPL_BUDGET_CHARS = None
     bp._TRANSLATION_CACHE = {}
     french = "Terrain en herbe, attention au maïs"
-    assert bp.translate_german_to_english(french) == french
+    assert bp.localize_note_cached(french, "fr")[0] == french
+    assert bp.localize_note_cached(french, "de")[0] == french
+    assert bp.localize_note_cached(french, "en")[0] == french
+    note = bp.localize_note(french, source_lang="fr")
+    assert note == {"en": french, "fr": french, "de": french}
 
 
 def test_budget_guard_stops_spending():

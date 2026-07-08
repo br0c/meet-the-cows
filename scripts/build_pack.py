@@ -367,10 +367,11 @@ def main() -> None:
     if streckenflug_fields:
         fields.extend(streckenflug_fields)
 
-    fields = consolidate_duplicate_fields(fields)
-    # Localize the merged notes into every app language (en/fr/de) so the app can show them
-    # in the pilot's language. Done once here, after merging, and memoised across builds.
+    # Localize each note into every app language (en/fr/de) while the field still has a single
+    # source, so the note stays native in its source language and is translated only into the
+    # other two. Merging then combines the per-language notes fragment by fragment.
     localize_field_notes(fields)
+    fields = consolidate_duplicate_fields(fields)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
     fields_path = out_dir / "fields.json"
     fields_path.write_text(json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2297,31 +2298,37 @@ GERMAN_TEXT_HINT_RE = re.compile(
 
 
 def build_streckenflug_notes_from_json(data: dict[str, Any]) -> str:
+    """Assemble the streckenflug note in its native German.
+
+    Labels and hazard phrases are German and the free-text values are left untranslated, so the
+    note is coherent German. localize_note() then keeps this German text as the "de" slot (no
+    round-trip) and translates it once into English and French.
+    """
     parts: list[str] = []
     for label, key in [
         ("Info", "info"),
-        ("Surface", "oberflaeche"),
-        ("Direction", "richtung"),
-        ("Slope", "steigung"),
-        ("Visit", "last_check_year"),
-        ("Modified", "modified"),
+        ("Oberfläche", "oberflaeche"),
+        ("Richtung", "richtung"),
+        ("Neigung", "steigung"),
+        ("Besichtigung", "last_check_year"),
+        ("Geändert", "modified"),
     ]:
         value = clean(data.get(key))
         if value:
-            value = translate_streckenflug_text(value)
+            value = clean_streckenflug_text(value)
             parts.append(f"{label}: {value}")
     obstacles: list[str] = []
     if clean(data.get("z_uneben")) == "1":
-        obstacles.append("uneven ground")
+        obstacles.append("unebener Boden")
     if clean(data.get("z_bodenhindernis")) == "1":
-        obstacles.append("ground obstacles")
+        obstacles.append("Bodenhindernisse")
     if clean(data.get("z_leitungen")) == "1":
-        obstacles.append("power/other lines")
+        obstacles.append("Strom-/andere Leitungen")
     if obstacles:
-        parts.append("Reported hazards: " + ", ".join(obstacles))
+        parts.append("Gemeldete Gefahren: " + ", ".join(obstacles))
     feedback_entries = extract_streckenflug_feedback_entries(clean(data.get("feedback")))
     if feedback_entries:
-        parts.append("Feedback:\n" + "\n".join(f"- {entry}" for entry in feedback_entries[:4]))
+        parts.append("Rückmeldungen:\n" + "\n".join(f"- {entry}" for entry in feedback_entries[:4]))
     return "\n".join(parts).strip()
 
 
@@ -2335,13 +2342,13 @@ def extract_streckenflug_feedback_entries(value: str) -> list[str]:
     )
     for match in pattern.finditer(value):
         header = tidy_streckenflug_text(strip_html(match.group("header")))
-        body = translate_streckenflug_text(streckenflug_html_text(match.group("body")))
+        body = streckenflug_html_text(match.group("body"))
         if not body:
             continue
         entries.append(f"{header}: {body}" if header else body)
     if entries:
         return entries
-    fallback = translate_streckenflug_text(streckenflug_html_text(value))
+    fallback = streckenflug_html_text(value)
     return [fallback] if fallback else []
 
 
@@ -2352,46 +2359,18 @@ def streckenflug_html_text(value: str) -> str:
     return tidy_streckenflug_text(value)
 
 
-def translate_streckenflug_text(value: str) -> str:
+def clean_streckenflug_text(value: str) -> str:
+    """Tidy a streckenflug free-text value without translating it.
+
+    Notes are kept in their native language and translated later by localize_note(); this only
+    strips URLs and the trailing "Inspection video" marker and normalises whitespace/casing.
+    """
     text = normalize_space(value)
     if not text:
         return ""
     text = re.sub(r"https?://\S+", "", text, flags=re.I)
-    translated = "".join(translate_streckenflug_chunk(part) for part in re.split(r"(\s+---\s+)", text))
-    translated = re.sub(r"\bInspection video:\s*(?:[.;]\s*)?$", "", translated, flags=re.I)
-    return tidy_streckenflug_text(translated)
-
-
-def translate_streckenflug_chunk(text: str) -> str:
-    if not text or re.fullmatch(r"\s+---\s+", text):
-        return text
-    return translate_german_to_english(text)
-
-
-def translate_german_to_english(text: str) -> str:
-    """Translate German streckenflug text to English via DeepL, with an offline fallback.
-
-    French is left untouched (DeepL's detected source language is checked). Results are
-    memoised in a run-persistent cache so the daily rebuild only pays for new/changed text.
-    """
-    key = normalize_space(text)
-    if not key:
-        return text
-    # Serialise: worker threads must not call DeepL concurrently (rate limits), and this keeps
-    # the cache and char counter consistent. Cache hits are cheap, so locking them is fine.
-    with _DEEPL_LOCK:
-        cached = _TRANSLATION_CACHE.get(key)
-        if cached is not None:
-            _TRANSLATION_STATS["cache"] += 1
-            return cached
-        result = deepl_translate(key)
-        if result is not None:
-            _TRANSLATION_CACHE[key] = result
-            _TRANSLATION_STATS["deepl"] += 1
-            return result
-        _TRANSLATION_STATS["fallback"] += 1
-    # DeepL unavailable or failed: best-effort dictionary substitution (no shared state).
-    return dictionary_translate_german(text)
+    text = re.sub(r"\bInspection video:\s*(?:[.;]\s*)?$", "", text, flags=re.I)
+    return tidy_streckenflug_text(text)
 
 
 def deepl_translate(text: str, target_lang: str = "EN-GB") -> str | None:
@@ -2506,35 +2485,61 @@ def localize_note_cached(text: str, lang: str) -> tuple[str, str]:
     return text, ""
 
 
-def localize_note(text: str) -> dict[str, str]:
-    """Turn a canonical note string into {"en","fr","de"}.
+def localize_note(text: str, source_lang: str | None = None) -> dict[str, str]:
+    """Turn a native note string into {"en","fr","de"}.
 
-    The English slot is translated first so DeepL can report the source language; the note's
-    own language keeps the original text (no self round-trip) and the two remaining languages
-    are translated. Empty input yields empty strings in every slot.
+    When the note's source language is known (Guide = French, streckenflug = German, our own
+    airfield boilerplate = English), that slot keeps the original text verbatim and only the two
+    other languages are translated — no round-trip through a third language, and no DeepL
+    characters spent re-encoding a note into its own language. When the source is unknown (e.g.
+    a legacy mixed note), the English slot is translated first so DeepL can report the source and
+    that language is kept native. Empty input yields empty strings in every slot.
     """
     text = clean(text)
     if not text:
         return {lang: "" for lang in APP_LANGUAGES}
-    english, source = localize_note_cached(text, "en")
-    out: dict[str, str] = {"en": text if source == "en" else english}
-    if source in ("fr", "de"):
-        out[source] = text
+    if source_lang in APP_LANGUAGES:
+        out: dict[str, str] = {source_lang: text}
+        for lang in APP_LANGUAGES:
+            if lang != source_lang:
+                out[lang], _ = localize_note_cached(text, lang)
+        return {lang: out.get(lang, "") for lang in APP_LANGUAGES}
+    english, detected = localize_note_cached(text, "en")
+    out = {"en": text if detected == "en" else english}
+    if detected in ("fr", "de"):
+        out[detected] = text
     for lang in ("fr", "de"):
         if lang not in out:
             out[lang], _ = localize_note_cached(text, lang)
     return {lang: out.get(lang, "") for lang in APP_LANGUAGES}
 
 
-def localize_field_notes(fields: list[dict[str, Any]]) -> None:
-    """Replace every field's `notes` string with a localized {"en","fr","de"} object.
+def note_source_lang(field: dict[str, Any]) -> str | None:
+    """Best-effort native language of a field's note, from its (single) source name.
 
-    Runs after merging so each note is translated once. DeepL access is serialised and
-    memoised across builds, so a routine rebuild only pays for new or changed notes.
+    Called before duplicate fields are merged, so every field still has one source. Returns
+    None for anything unrecognised, letting localize_note fall back to language detection.
+    """
+    name = clean((field.get("source") or {}).get("name")).lower()
+    if "streckenflug" in name:
+        return "de"
+    if "guide" in name or "planeur-net" in name:
+        return "fr"
+    if "openaip" in name or "sia" in name or "vac" in name or "aerodrome" in name:
+        return "en"
+    return None
+
+
+def localize_field_notes(fields: list[dict[str, Any]]) -> None:
+    """Replace every field's native `notes` string with a localized {"en","fr","de"} object.
+
+    Runs BEFORE duplicate fields are merged so each note is localized while it still has a single
+    known source language and is kept native in that language. DeepL access is memoised across
+    builds, so a routine rebuild only pays for new or changed notes.
     """
     progress = Progress(len(fields), "Localize notes")
     for index, field in enumerate(fields, start=1):
-        field["notes"] = localize_note(clean(field.get("notes")))
+        field["notes"] = localize_note(clean(field.get("notes")), note_source_lang(field))
         progress.update(index, extra=f"{_TRANSLATION_STATS['deepl']} translated, {_TRANSLATION_STATS['cache']} cached")
     progress.done(f"{_TRANSLATION_STATS['deepl']} translated, {_TRANSLATION_STATS['cache']} cached")
 
@@ -3107,21 +3112,35 @@ def merge_media_lists(*media_lists: list[dict[str, Any]]) -> list[dict[str, Any]
     return merged
 
 
-def merge_notes(group: list[dict[str, Any]]) -> str:
-    parts: list[str] = []
-    seen: set[str] = set()
-    for field in group:
-        note = clean(field.get("notes"))
+def merge_notes(group: list[dict[str, Any]]) -> dict[str, str]:
+    """Combine the localized notes of a merged group, per language.
+
+    Notes are already localized dicts at merge time, so each language is merged independently:
+    a French fragment stays native French in the "fr" slot, a German one native German in "de",
+    etc. A legacy plain-string note (older path) is placed in every language.
+    """
+    parts: dict[str, list[str]] = {lang: [] for lang in APP_LANGUAGES}
+    seen: dict[str, set[str]] = {lang: set() for lang in APP_LANGUAGES}
+
+    def add(lang: str, note: str) -> None:
+        note = clean(note)
         if not note:
-            continue
+            return
         key = normalize_name_for_match(note[:300])
-        if key in seen:
-            continue
-        parts.append(note)
-        seen.add(key)
-    if not parts:
-        return ""
-    return "\n\n---\n\n".join(parts)
+        if key in seen[lang]:
+            return
+        parts[lang].append(note)
+        seen[lang].add(key)
+
+    for field in group:
+        notes = field.get("notes")
+        if isinstance(notes, dict):
+            for lang in APP_LANGUAGES:
+                add(lang, notes.get(lang, ""))
+        else:
+            for lang in APP_LANGUAGES:
+                add(lang, notes if isinstance(notes, str) else "")
+    return {lang: "\n\n---\n\n".join(parts[lang]) for lang in APP_LANGUAGES}
 
 
 def merge_sources(group: list[dict[str, Any]]) -> dict[str, Any]:
