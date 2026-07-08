@@ -207,6 +207,33 @@ a { color: var(--accent); }
 .caption { color: var(--muted); margin-top: 6px; font-size: 13px; }
 .footer-note { color: var(--muted); font-size: 12px; margin: 12px 2px; }
 
+.contribute-btn { width: 100%; }
+.contrib-backdrop { z-index: 20; }
+.contrib-form { display: grid; gap: 10px; margin-top: 8px; }
+.contrib-form > label:not(.checkbox-row) { color: var(--muted); font-size: 12px; margin-bottom: -4px; }
+.contrib-form input[type="date"],
+.contrib-form input[type="text"],
+.contrib-form textarea {
+  width: 100%; border: 1px solid var(--line); background: #030712; color: var(--text);
+  border-radius: 10px; padding: 10px; font: inherit;
+}
+.contrib-form textarea { resize: vertical; min-height: 76px; }
+.contrib-photo-btn { justify-self: start; }
+.contrib-photo-info { color: var(--muted); font-size: 12px; }
+.contrib-geo { border-radius: 10px; padding: 9px 10px; font-size: 13px; border: 1px solid var(--line); }
+.contrib-geo.ok { background: #0c2a19; border-color: #14532d; color: #bbf7d0; }
+.contrib-geo.warn { background: #2a1f06; border-color: #78350f; color: #fde68a; }
+.contrib-geo.inline { display: inline-flex; justify-self: center; }
+.contrib-license { align-items: flex-start; }
+.contrib-license span { font-size: 13px; color: var(--text); }
+.contrib-error { background: #3b0d0d; border: 1px solid #7f1d1d; color: #fecaca; border-radius: 10px; padding: 9px 10px; font-size: 13px; }
+.contrib-submit { margin-top: 2px; }
+.contrib-done { display: grid; gap: 12px; justify-items: center; text-align: center; padding: 18px 8px; }
+.contrib-tick { width: 52px; height: 52px; border-radius: 50%; background: #0c2a19; border: 1px solid #14532d; color: #4ade80; display: flex; align-items: center; justify-content: center; font-size: 26px; }
+.contrib-done-title { font-size: 17px; font-weight: 800; }
+.contrib-done-body { color: var(--muted); font-size: 13px; max-width: 30ch; }
+.contrib-pr { font-weight: 700; }
+
 @media (max-width: 390px) {
   .gps-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .field-list-head,

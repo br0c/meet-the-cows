@@ -24,6 +24,17 @@ const DEFAULT_SETTINGS = {
 // Languages the app UI and pack notes are translated into. 'auto' follows the device.
 const SUPPORTED_LANGS = ['en', 'fr', 'de'];
 
+// Community contributions: the intake Worker + the Turnstile widget site key (public).
+const CONTRIB_ENDPOINT = 'https://mtc-contrib-intake.br0c.workers.dev';
+const TURNSTILE_SITEKEY = '0x4AAAAAADyIBMLj-XXHBK-v';
+const CONTRIB_MAX_BYTES = 15 * 1024 * 1024;   // keep in step with the Worker's MAX_PHOTO_BYTES
+const CONTRIB_MIN_LONG_EDGE = 2560;           // keep in step with MIN_PHOTO_LONG_EDGE
+const CONTRIB_GEO_RADIUS_M = 1000;            // keep in step with GEO_RADIUS_M
+
+// Transient state for the open contribution form (kept out of app state so typing in the form
+// never triggers a full re-render that would wipe the inputs).
+let contribForm = null;
+
 // UI string table. Plain strings, or functions for values that interpolate. Every user-facing
 // label in the app resolves through t(); pack field notes are localized in the pack itself.
 const STRINGS = {
@@ -82,6 +93,24 @@ const STRINGS = {
     cpUpdated: (ok, evicted, failed) => `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`,
     searchPlaceholder: 'Search a field by name or code', clearSearch: 'Clear search',
     searchResults: 'Search results', noMatches: q => `No fields match “${q}”.`,
+    contribute: 'Contribute an update', contribTitle: 'Contribute an update',
+    cDate: 'Date observed', cDesc: 'What changed?',
+    cDescPlaceholder: 'New windsock, surface change, obstacle, hazard…',
+    cAddPhoto: 'Add photo (JPEG)', cChangePhoto: 'Change photo', cRemovePhoto: 'Remove',
+    cSubmitter: 'Your name or handle (optional)',
+    cLicense: 'I made this photo/note and agree to publish it under the project’s terms.',
+    cSubmit: 'Submit for review', cSubmitting: 'Submitting…',
+    cGeoVerified: m => `📍 Photo ${m} m from the field — pre-verified.`,
+    cGeoFar: m => `📍 Photo ${m} m away — will need manual review.`,
+    cGeoDevice: m => `📍 You are ${m} m from the field — pre-verified.`,
+    cGeoNone: 'No location on the photo — it will be reviewed manually.',
+    cThanks: 'Sent for review',
+    cThanksBody: n => `Opened as pull request #${n}. It appears once a maintainer approves it.`,
+    cViewPr: 'View on GitHub →', cErr: 'Could not submit',
+    cTooLarge: 'Photo is too large (max 15 MB).',
+    cTooSmall: px => `Photo resolution too low (min ${px} px on the long edge).`,
+    cJpegOnly: 'Please choose a JPEG photo.',
+    cNeedContent: 'Add a note or a photo.', cNeedTurnstile: 'Please complete the anti-spam check.',
   },
   fr: {
     settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
@@ -138,6 +167,24 @@ const STRINGS = {
     cpUpdated: (ok, evicted, failed) => `${ok} fichier(s) mis à jour${evicted ? `, ${evicted} supprimé(s)` : ''}${failed ? `, ${failed} échec(s)` : ''}`,
     searchPlaceholder: 'Rechercher un terrain (nom ou code)', clearSearch: 'Effacer la recherche',
     searchResults: 'Résultats de recherche', noMatches: q => `Aucun terrain ne correspond à « ${q} ».`,
+    contribute: 'Proposer une mise à jour', contribTitle: 'Proposer une mise à jour',
+    cDate: 'Date d’observation', cDesc: 'Qu’est-ce qui a changé ?',
+    cDescPlaceholder: 'Nouvelle manche à air, surface, obstacle, danger…',
+    cAddPhoto: 'Ajouter une photo (JPEG)', cChangePhoto: 'Changer la photo', cRemovePhoto: 'Retirer',
+    cSubmitter: 'Votre nom ou pseudo (facultatif)',
+    cLicense: 'J’ai réalisé cette photo/note et j’accepte de la publier selon les conditions du projet.',
+    cSubmit: 'Envoyer pour révision', cSubmitting: 'Envoi…',
+    cGeoVerified: m => `📍 Photo à ${m} m du terrain — pré-vérifiée.`,
+    cGeoFar: m => `📍 Photo à ${m} m — révision manuelle nécessaire.`,
+    cGeoDevice: m => `📍 Vous êtes à ${m} m du terrain — pré-vérifié.`,
+    cGeoNone: 'Aucune localisation sur la photo — révision manuelle.',
+    cThanks: 'Envoyé pour révision',
+    cThanksBody: n => `Ouvert comme pull request #${n}. Visible après validation par un mainteneur.`,
+    cViewPr: 'Voir sur GitHub →', cErr: 'Échec de l’envoi',
+    cTooLarge: 'Photo trop volumineuse (max 15 Mo).',
+    cTooSmall: px => `Résolution trop faible (min ${px} px sur le côté long).`,
+    cJpegOnly: 'Veuillez choisir une photo JPEG.',
+    cNeedContent: 'Ajoutez une note ou une photo.', cNeedTurnstile: 'Veuillez compléter la vérification anti-spam.',
   },
   de: {
     settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
@@ -194,6 +241,24 @@ const STRINGS = {
     cpUpdated: (ok, evicted, failed) => `${ok} Datei(en) aktualisiert${evicted ? `, ${evicted} entfernt` : ''}${failed ? `, ${failed} fehlgeschlagen` : ''}`,
     searchPlaceholder: 'Feld suchen (Name oder Code)', clearSearch: 'Suche löschen',
     searchResults: 'Suchergebnisse', noMatches: q => `Keine Felder für „${q}“.`,
+    contribute: 'Update beitragen', contribTitle: 'Update beitragen',
+    cDate: 'Beobachtungsdatum', cDesc: 'Was hat sich geändert?',
+    cDescPlaceholder: 'Neuer Windsack, Oberfläche, Hindernis, Gefahr…',
+    cAddPhoto: 'Foto hinzufügen (JPEG)', cChangePhoto: 'Foto ändern', cRemovePhoto: 'Entfernen',
+    cSubmitter: 'Name oder Kürzel (optional)',
+    cLicense: 'Ich habe dieses Foto/diese Notiz erstellt und stimme der Veröffentlichung gemäß den Projektbedingungen zu.',
+    cSubmit: 'Zur Prüfung senden', cSubmitting: 'Wird gesendet…',
+    cGeoVerified: m => `📍 Foto ${m} m vom Feld — vorab bestätigt.`,
+    cGeoFar: m => `📍 Foto ${m} m entfernt — manuelle Prüfung nötig.`,
+    cGeoDevice: m => `📍 Sie sind ${m} m vom Feld — vorab bestätigt.`,
+    cGeoNone: 'Kein Standort im Foto — wird manuell geprüft.',
+    cThanks: 'Zur Prüfung gesendet',
+    cThanksBody: n => `Als Pull Request #${n} geöffnet. Erscheint, sobald ein Maintainer zustimmt.`,
+    cViewPr: 'Auf GitHub ansehen →', cErr: 'Senden fehlgeschlagen',
+    cTooLarge: 'Foto zu groß (max. 15 MB).',
+    cTooSmall: px => `Auflösung zu niedrig (mind. ${px} px an der langen Kante).`,
+    cJpegOnly: 'Bitte ein JPEG-Foto wählen.',
+    cNeedContent: 'Notiz oder Foto hinzufügen.', cNeedTurnstile: 'Bitte die Anti-Spam-Prüfung abschließen.',
   },
 };
 
@@ -259,6 +324,7 @@ let state = {
   gpsStatus: 'idle',
   gpsError: '',
   selectedFieldId: null,
+  contribFor: null,
   view: 'main',
   searchQuery: '',
   computedRows: [],
@@ -506,6 +572,7 @@ function render() {
         ${state.view === 'settings' ? renderSettingsPage() : renderMainPage()}
       </main>
       ${selected ? renderDetail(selected) : ''}
+      ${state.contribFor ? renderContribute(state.fields.find(f => f.id === state.contribFor)) : ''}
     </div>
   `;
   attachEvents();
@@ -810,6 +877,9 @@ function renderDetail(field) {
         <h3>${t('mediaHeading')}</h3>
         <div class="media-grid">${media}</div>
         <p class="footer-note">${t('source')}: ${escapeHtml(field.source?.name || t('unknown'))} ${field.source?.importedAt ? `· ${t('imported')} ${escapeHtml(field.source.importedAt)}` : ''}</p>
+        <div class="button-row single">
+          <button id="openContribute" class="primary contribute-btn">📷 ${t('contribute')}</button>
+        </div>
       </article>
     </div>
   `;
@@ -845,6 +915,287 @@ function renderMediaItem(item) {
   return `<div class="media-card"><img src="${mediaUrl}" alt="${escapeHtml(caption)}" loading="lazy" /><div class="caption">${escapeHtml(caption)}</div></div>`;
 }
 
+// --- Community contribution form (Phase 2) ---
+
+function renderContribute(field) {
+  if (!field) return '';
+  const today = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="detail-backdrop contrib-backdrop" id="contribBackdrop">
+      <article class="detail contrib" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('contribTitle'))}">
+        <button id="closeContribute">${t('close')}</button>
+        <div class="detail-title-row"><h2>${escapeHtml(t('contribTitle'))}</h2></div>
+        <div class="detail-meta">${escapeHtml([shortFieldName(field.name), field.code].filter(Boolean).join(' · '))}</div>
+        <div id="contribBody" class="contrib-form">
+          <label for="cDate">${t('cDate')}</label>
+          <input id="cDate" type="date" value="${today}" />
+          <label for="cDesc">${t('cDesc')}</label>
+          <textarea id="cDesc" rows="4" placeholder="${escapeHtml(t('cDescPlaceholder'))}"></textarea>
+          <input id="cPhoto" type="file" accept="image/*" capture="environment" hidden />
+          <button type="button" id="cPhotoBtn" class="contrib-photo-btn">🖼️ ${t('cAddPhoto')}</button>
+          <div id="cPhotoInfo" class="contrib-photo-info" hidden></div>
+          <div id="cGeo" class="contrib-geo" hidden></div>
+          <input id="cSubmitter" type="text" autocomplete="off" placeholder="${escapeHtml(t('cSubmitter'))}" />
+          <label class="checkbox-row contrib-license"><input id="cLicense" type="checkbox" /><span>${escapeHtml(t('cLicense'))}</span></label>
+          <div id="cTurnstile" class="contrib-turnstile"></div>
+          <div id="cError" class="contrib-error" hidden></div>
+          <button id="cSubmit" class="primary contrib-submit" disabled>${t('cSubmit')}</button>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+function openContribute(fieldId) {
+  contribForm = { photoBlob: null, photoName: null, geo: null, busy: false, turnstileWidget: null };
+  state.contribFor = fieldId;
+  render();
+}
+
+function closeContribute() {
+  state.contribFor = null;
+  contribForm = null;
+  render();
+}
+
+function contribShowError(message) {
+  const el = document.querySelector('#cError');
+  if (!el) return;
+  if (!message) { el.hidden = true; el.textContent = ''; return; }
+  el.hidden = false;
+  el.textContent = message;
+}
+
+function updateContribValidity() {
+  const submit = document.querySelector('#cSubmit');
+  if (!submit || !contribForm) return;
+  const hasNote = (document.querySelector('#cDesc')?.value || '').trim().length > 0;
+  const licensed = !!document.querySelector('#cLicense')?.checked;
+  submit.disabled = contribForm.busy || !licensed || !(hasNote || contribForm.photoBlob);
+}
+
+function showContribGeo(geo) {
+  const el = document.querySelector('#cGeo');
+  if (!el) return;
+  el.hidden = false;
+  el.classList.remove('ok', 'warn');
+  if (geo.verified) { el.classList.add('ok'); el.textContent = geo.source === 'device' ? t('cGeoDevice', geo.distanceM) : t('cGeoVerified', geo.distanceM); }
+  else if (geo.distanceM != null && geo.source === 'exif') { el.classList.add('warn'); el.textContent = t('cGeoFar', geo.distanceM); }
+  else { el.classList.add('warn'); el.textContent = t('cGeoNone'); }
+}
+
+// Advisory client-side geo hint. The Worker re-checks authoritatively; this just gives feedback.
+function contribGeoHint(field, exifGps) {
+  if (exifGps) {
+    const d = Math.round(haversineMeters(exifGps.lat, exifGps.lon, field.latitude, field.longitude));
+    return { verified: d <= CONTRIB_GEO_RADIUS_M, source: 'exif', distanceM: d };
+  }
+  if (state.position) {
+    const d = Math.round(haversineMeters(state.position.latitude, state.position.longitude, field.latitude, field.longitude));
+    if (d <= CONTRIB_GEO_RADIUS_M) return { verified: true, source: 'device', distanceM: d };
+  }
+  return { verified: false, source: 'none', distanceM: null };
+}
+
+async function onContribFile(field, file) {
+  contribShowError('');
+  if (!file) return;
+  const maxLong = CONTRIB_MIN_LONG_EDGE;
+  let blob = file;
+  let name = file.name || 'photo.jpg';
+  let exifGps = null;
+  try {
+    if (file.type === 'image/jpeg') {
+      const buf = await file.arrayBuffer();
+      exifGps = readJpegGps(buf);
+    } else {
+      // Convert HEIC/PNG/etc to JPEG so the Worker (JPEG-only) accepts it. EXIF is lost, so the
+      // geo hint falls back to device GPS.
+      blob = await imageToJpeg(file);
+      name = name.replace(/\.[^.]+$/, '') + '.jpg';
+    }
+  } catch (err) {
+    contribShowError(t('cJpegOnly'));
+    return;
+  }
+  if (blob.size > CONTRIB_MAX_BYTES) { contribShowError(t('cTooLarge')); return; }
+  const longEdge = await imageLongEdge(blob);
+  if (longEdge != null && longEdge < maxLong) { contribShowError(t('cTooSmall', maxLong)); return; }
+
+  contribForm.photoBlob = blob;
+  contribForm.photoName = name;
+  contribForm.geo = contribGeoHint(field, exifGps);
+
+  const info = document.querySelector('#cPhotoInfo');
+  if (info) { info.hidden = false; info.textContent = `${name} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`; }
+  const btn = document.querySelector('#cPhotoBtn');
+  if (btn) btn.textContent = `🖼️ ${t('cChangePhoto')}`;
+  showContribGeo(contribForm.geo);
+  updateContribValidity();
+}
+
+async function imageToJpeg(file) {
+  const bmp = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = bmp.width; canvas.height = bmp.height;
+  canvas.getContext('2d').drawImage(bmp, 0, 0);
+  bmp.close?.();
+  return await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('encode failed')), 'image/jpeg', 0.9));
+}
+
+async function imageLongEdge(blob) {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const edge = Math.max(bmp.width, bmp.height);
+    bmp.close?.();
+    return edge;
+  } catch {
+    return null; // can't decode here; the Worker still checks
+  }
+}
+
+// Minimal EXIF GPS reader for JPEG (advisory). Returns {lat, lon} or null.
+function readJpegGps(buffer) {
+  try {
+    const view = new DataView(buffer);
+    if (view.getUint16(0) !== 0xffd8) return null;
+    let off = 2;
+    while (off + 4 < view.byteLength) {
+      const marker = view.getUint16(off);
+      if (marker === 0xffe1) return parseExifGps(view, off + 4);
+      if ((marker & 0xff00) !== 0xff00) break;
+      off += 2 + view.getUint16(off + 2);
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+function parseExifGps(view, start) {
+  if (view.getUint32(start) !== 0x45786966) return null; // "Exif"
+  const tiff = start + 6;
+  const le = view.getUint16(tiff) === 0x4949;
+  const u16 = o => view.getUint16(o, le);
+  const u32 = o => view.getUint32(o, le);
+  const ifd0 = tiff + u32(tiff + 4);
+  const count0 = u16(ifd0);
+  let gpsOff = 0;
+  for (let i = 0; i < count0; i++) {
+    const e = ifd0 + 2 + i * 12;
+    if (u16(e) === 0x8825) { gpsOff = tiff + u32(e + 8); break; }
+  }
+  if (!gpsOff) return null;
+  const gCount = u16(gpsOff);
+  let latRef = 'N', lonRef = 'E', lat = null, lon = null;
+  const dms = valueOff => {
+    const o = tiff + valueOff;
+    const r = p => u32(o + p) / (u32(o + p + 4) || 1);
+    return r(0) + r(8) / 60 + r(16) / 3600;
+  };
+  for (let i = 0; i < gCount; i++) {
+    const e = gpsOff + 2 + i * 12;
+    const tag = u16(e);
+    if (tag === 0x0001) latRef = String.fromCharCode(view.getUint8(e + 8));
+    else if (tag === 0x0003) lonRef = String.fromCharCode(view.getUint8(e + 8));
+    else if (tag === 0x0002) lat = dms(u32(e + 8));
+    else if (tag === 0x0004) lon = dms(u32(e + 8));
+  }
+  if (lat == null || lon == null) return null;
+  return {
+    lat: latRef === 'S' ? -lat : lat,
+    lon: lonRef === 'W' ? -lon : lon,
+  };
+}
+
+function ensureTurnstile(callback) {
+  if (window.turnstile) return callback();
+  const existing = document.querySelector('#turnstile-script');
+  if (!existing) {
+    const s = document.createElement('script');
+    s.id = 'turnstile-script';
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.async = true; s.defer = true;
+    document.head.appendChild(s);
+  }
+  const timer = setInterval(() => { if (window.turnstile) { clearInterval(timer); callback(); } }, 120);
+  setTimeout(() => clearInterval(timer), 8000);
+}
+
+async function submitContribution(field) {
+  if (!contribForm || contribForm.busy) return;
+  contribShowError('');
+  let token = '';
+  if (window.turnstile && contribForm.turnstileWidget != null) {
+    token = window.turnstile.getResponse(contribForm.turnstileWidget) || '';
+    if (!token) { contribShowError(t('cNeedTurnstile')); return; }
+  }
+  const description = (document.querySelector('#cDesc')?.value || '').trim();
+  const submit = document.querySelector('#cSubmit');
+
+  contribForm.busy = true;
+  if (submit) { submit.disabled = true; submit.textContent = t('cSubmitting'); }
+
+  const fd = new FormData();
+  fd.set('fieldId', field.id);
+  fd.set('fieldCode', field.code || '');
+  fd.set('fieldName', field.name || '');
+  fd.set('fieldLat', String(field.latitude));
+  fd.set('fieldLon', String(field.longitude));
+  fd.set('date', document.querySelector('#cDate')?.value || new Date().toISOString().slice(0, 10));
+  fd.set('description', description);
+  fd.set('submitter', (document.querySelector('#cSubmitter')?.value || '').trim());
+  if (state.position) { fd.set('deviceLat', String(state.position.latitude)); fd.set('deviceLon', String(state.position.longitude)); }
+  if (token) fd.set('turnstileToken', token);
+  if (contribForm.photoBlob) fd.set('photo', contribForm.photoBlob, contribForm.photoName || 'photo.jpg');
+
+  try {
+    const res = await fetch(CONTRIB_ENDPOINT, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) { showContribSuccess(data); return; }
+    contribShowError(`${t('cErr')}: ${escapeHtml(String(data.error || res.status))}`);
+  } catch (err) {
+    contribShowError(`${t('cErr')}: ${escapeHtml(String(err && err.message || err))}`);
+  }
+  contribForm.busy = false;
+  if (submit) { submit.textContent = t('cSubmit'); }
+  updateContribValidity();
+}
+
+function showContribSuccess(data) {
+  const body = document.querySelector('#contribBody');
+  if (!body) return;
+  const verified = data.geo && data.geo.verified;
+  body.innerHTML = `
+    <div class="contrib-done">
+      <div class="contrib-tick">✓</div>
+      <div class="contrib-done-title">${escapeHtml(t('cThanks'))}</div>
+      <div class="contrib-done-body">${escapeHtml(t('cThanksBody', data.prNumber))}</div>
+      ${verified ? '<span class="contrib-geo ok inline">● geo-verified</span>' : ''}
+      ${data.prUrl ? `<a href="${escapeHtml(data.prUrl)}" target="_blank" rel="noopener" class="contrib-pr">${t('cViewPr')}</a>` : ''}
+      <button id="cDone" class="primary">${t('done')}</button>
+    </div>
+  `;
+  document.querySelector('#cDone')?.addEventListener('click', closeContribute);
+}
+
+function wireContribForm(field) {
+  document.querySelector('#closeContribute')?.addEventListener('click', closeContribute);
+  document.querySelector('#contribBackdrop')?.addEventListener('click', e => { if (e.target.id === 'contribBackdrop') closeContribute(); });
+  document.querySelector('#cPhotoBtn')?.addEventListener('click', () => document.querySelector('#cPhoto')?.click());
+  document.querySelector('#cPhoto')?.addEventListener('change', e => onContribFile(field, e.target.files && e.target.files[0]));
+  document.querySelector('#cDesc')?.addEventListener('input', updateContribValidity);
+  document.querySelector('#cLicense')?.addEventListener('change', updateContribValidity);
+  document.querySelector('#cSubmit')?.addEventListener('click', () => submitContribution(field));
+  if (contribForm && contribForm.turnstileWidget == null) {
+    ensureTurnstile(() => {
+      const holder = document.querySelector('#cTurnstile');
+      if (holder && window.turnstile && contribForm && contribForm.turnstileWidget == null) {
+        try { contribForm.turnstileWidget = window.turnstile.render(holder, { sitekey: TURNSTILE_SITEKEY }); } catch { /* already rendered */ }
+      }
+    });
+  }
+  updateContribValidity();
+}
+
 function attachEvents() {
   document.querySelector('#fieldSearch')?.addEventListener('input', e => { state.searchQuery = e.target.value; render(); });
   document.querySelector('#clearSearch')?.addEventListener('click', () => {
@@ -852,6 +1203,11 @@ function attachEvents() {
     render();
     document.querySelector('#fieldSearch')?.focus();
   });
+  document.querySelector('#openContribute')?.addEventListener('click', () => openContribute(state.selectedFieldId));
+  if (state.contribFor) {
+    const contribField = state.fields.find(f => f.id === state.contribFor);
+    if (contribField) wireContribForm(contribField);
+  }
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#refreshPack')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
