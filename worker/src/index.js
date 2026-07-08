@@ -12,17 +12,18 @@ import exifr from 'exifr';
 
 export default {
   async fetch(request, env) {
-    if (request.method === 'OPTIONS') return new Response(null, { headers: cors(env) });
-    if (request.method !== 'POST') return json(env, 405, { error: 'Use POST.' });
+    const origin = resolveOrigin(request, env);
+    if (request.method === 'OPTIONS') return new Response(null, { headers: cors(origin) });
+    if (request.method !== 'POST') return json(origin, 405, { error: 'Use POST.' });
     try {
-      return await handleSubmit(request, env);
+      return await handleSubmit(request, env, origin);
     } catch (err) {
-      return json(env, 500, { error: 'Submission failed.', detail: String(err && err.message || err) });
+      return json(origin, 500, { error: 'Submission failed.', detail: String(err && err.message || err) });
     }
   },
 };
 
-async function handleSubmit(request, env) {
+async function handleSubmit(request, env, origin) {
   const form = await request.formData();
   const get = k => (form.get(k) ?? '').toString().trim();
 
@@ -40,27 +41,27 @@ async function handleSubmit(request, env) {
 
   // --- validation ---
   if (!fieldId || !Number.isFinite(fieldLat) || !Number.isFinite(fieldLon)) {
-    return json(env, 400, { error: 'Missing field reference.' });
+    return json(origin, 400, { error: 'Missing field reference.' });
   }
   if (!description && !(photo && photo.size)) {
-    return json(env, 400, { error: 'Add a note, a photo, or both.' });
+    return json(origin, 400, { error: 'Add a note, a photo, or both.' });
   }
   const ok = await verifyTurnstile(get('turnstileToken'), env, request.headers.get('CF-Connecting-IP'));
-  if (!ok) return json(env, 403, { error: 'Spam check failed. Please retry.' });
+  if (!ok) return json(origin, 403, { error: 'Spam check failed. Please retry.' });
 
   let photoBytes = null;
   let geo = { verified: false, source: 'none', distanceM: null };
 
   if (photo && photo.size) {
-    if (photo.type !== 'image/jpeg') return json(env, 415, { error: 'Photo must be a JPEG.' });
+    if (photo.type !== 'image/jpeg') return json(origin, 415, { error: 'Photo must be a JPEG.' });
     const maxBytes = Number(env.MAX_PHOTO_BYTES || 15728640);
-    if (photo.size > maxBytes) return json(env, 413, { error: 'Photo is too large.' });
+    if (photo.size > maxBytes) return json(origin, 413, { error: 'Photo is too large.' });
 
     const raw = new Uint8Array(await photo.arrayBuffer());
     const longEdge = jpegLongEdge(raw);
     const minEdge = Number(env.MIN_PHOTO_LONG_EDGE || 2560);
     if (longEdge != null && longEdge < minEdge) {
-      return json(env, 422, { error: `Photo resolution too low (min ${minEdge}px on the long edge).` });
+      return json(origin, 422, { error: `Photo resolution too low (min ${minEdge}px on the long edge).` });
     }
 
     // Read GPS BEFORE stripping EXIF; then store an EXIF-free copy so no location lands in git.
@@ -89,7 +90,7 @@ async function handleSubmit(request, env) {
   if (photoBytes) files.push({ path: `${base}.jpg`, content: b64(photoBytes) });
 
   const pr = await openPr(env, { fieldId, fieldName, fieldCode, description, geo, files });
-  return json(env, 200, { ok: true, prUrl: pr.html_url, prNumber: pr.number, geo });
+  return json(origin, 200, { ok: true, prUrl: pr.html_url, prNumber: pr.number, geo });
 }
 
 // ---------- geolocation ----------
@@ -237,18 +238,31 @@ function b64(bytes) {
 
 function sanitize(s) { return String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80); }
 
-function cors(env) {
+// Echo the request Origin when it is the configured app origin or a localhost dev server;
+// anything else gets the configured origin (and the browser blocks it). Lets the deployed app
+// AND a locally served dev app talk to the same Worker.
+function resolveOrigin(request, env) {
+  const allow = env.ALLOWED_ORIGIN || '*';
+  if (allow === '*') return '*';
+  const origin = request.headers.get('Origin') || '';
+  if (origin === allow) return origin;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin; // local dev
+  return allow;
+}
+
+function cors(origin) {
   return {
-    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
+    'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
+    'Vary': 'Origin',
   };
 }
 
-function json(env, status, obj) {
+function json(origin, status, obj) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { 'Content-Type': 'application/json', ...cors(env) },
+    headers: { 'Content-Type': 'application/json', ...cors(origin) },
   });
 }
