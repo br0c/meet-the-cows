@@ -1,0 +1,23 @@
+{
+  "schema": 2,
+  "fieldId": "fr_lfnf_vinon_43p7378_5p7836",
+  "fieldCode": "LFNF",
+  "fieldLat": 43.7377833,
+  "fieldLon": 5.7836167,
+  "fieldName": "Vinon",
+  "date": "2026-07-08",
+  "description": "Updated photo",
+  "photoAsset": {
+    "id": 470631035,
+    "name": "fr_lfnf_vinon_43p7378_5p7836_2026-07-08T20-25-52-992_558f3acf.jpg",
+    "url": "https://github.com/br0c/meet-the-cows/releases/download/contrib-originals/fr_lfnf_vinon_43p7378_5p7836_2026-07-08T20-25-52-992_558f3acf.jpg",
+    "size": 72772
+  },
+  "submitter": null,
+  "geo": {
+    "verified": true,
+    "source": "exif",
+    "distanceM": 212
+  },
+  "submittedAt": "2026-07-08T20:25:54.897Z"
+}
