@@ -2552,6 +2552,62 @@ def localize_note_cached(text: str, lang: str) -> tuple[str, str]:
     return text, ""
 
 
+# A "Label: value" line: a short label (no colon in it) followed by a non-empty value.
+_LABEL_LINE_RE = re.compile(r"^([^:]{1,24}):\s+(\S.*)$", re.S)
+# A "- feedback" bullet: leading marker kept, body translated.
+_BULLET_RE = re.compile(r"^(\s*-\s+)(.*)$", re.S)
+
+
+def _translate_line(line: str, lang: str) -> str:
+    """Translate one note line into `lang`, reusing sub-segments.
+
+    A "Label: value" line translates the label and the value separately, so the (highly
+    repetitive) German labels — "Oberfläche:", "Richtung:", "Besichtigung:" … — are cached
+    once across every field instead of once per distinct value. A "- feedback" bullet keeps its
+    marker and translates only the body. Blank lines pass through untouched.
+    """
+    if not line.strip():
+        return line
+    prefix = ""
+    content = line
+    bullet = _BULLET_RE.match(content)
+    if bullet:
+        prefix, content = bullet.group(1), bullet.group(2)
+    labelled = _LABEL_LINE_RE.match(content)
+    if labelled:
+        label, value = labelled.group(1), labelled.group(2)
+        t_label, _ = localize_note_cached(f"{label}:", lang)
+        t_value, _ = localize_note_cached(value, lang)
+        return f"{prefix}{t_label} {t_value}"
+    translated, _ = localize_note_cached(content, lang)
+    return f"{prefix}{translated}"
+
+
+def localize_note_reusing_segments(text: str, lang: str) -> str:
+    """Translate `text` into `lang`, reusing already-translated lines/labels (a lightweight
+    translation memory).
+
+    Whole-note exact matches short-circuit first: a note we already paid to translate — or any
+    identical repeat — is free, so this never re-spends on the FR/CH/IT notes already cached and
+    only sends genuinely new lines to DeepL. Multi-line notes are translated line by line and
+    reassembled in order; a single-line note falls straight through to the line translator.
+    """
+    whole_key = f"{lang}\x1f{normalize_space(text)}"
+    with _DEEPL_LOCK:
+        hit = _TRANSLATION_CACHE.get(whole_key)
+    if hit is not None:
+        _TRANSLATION_STATS["cache"] += 1
+        return hit
+    lines = text.split("\n")
+    if len(lines) <= 1:
+        return _translate_line(text, lang)
+    assembled = "\n".join(_translate_line(line, lang) for line in lines)
+    # Remember the assembled note so an identical multi-line note is O(1) next build.
+    with _DEEPL_LOCK:
+        _TRANSLATION_CACHE.setdefault(whole_key, assembled)
+    return assembled
+
+
 def localize_note(text: str, source_lang: str | None = None) -> dict[str, str]:
     """Turn a native note string into {"en","fr","de"}.
 
@@ -2569,7 +2625,7 @@ def localize_note(text: str, source_lang: str | None = None) -> dict[str, str]:
         out: dict[str, str] = {source_lang: text}
         for lang in APP_LANGUAGES:
             if lang != source_lang:
-                out[lang], _ = localize_note_cached(text, lang)
+                out[lang] = localize_note_reusing_segments(text, lang)
         return {lang: out.get(lang, "") for lang in APP_LANGUAGES}
     english, detected = localize_note_cached(text, "en")
     out = {"en": text if detected == "en" else english}
