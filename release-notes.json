@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.7.1-beta",
+    "date": "2026-07-09",
+    "en": [
+      "New: Report a bug from Settings — opens a pre-filled GitHub issue",
+      "New: You can deselect every pack; the app then runs GPS-only until you pick one again",
+      "Fix: Updating field data downloads only new or changed files — no longer the whole pack",
+      "Fix: The 'new field data' banner works again with the multi-pack format",
+      "Fix: Typing in the field search no longer makes the keyboard flicker",
+      "Fix: Pack checkboxes sit properly inside their cards; the redundant progress line in Settings is gone"
+    ],
+    "fr": [
+      "Nouveau : Signalez un bug depuis les Réglages — ouvre un ticket GitHub pré-rempli",
+      "Nouveau : Vous pouvez décocher tous les packs ; l'app fonctionne alors en GPS seul jusqu'à ce que vous en choisissiez un",
+      "Correctif : La mise à jour des données ne télécharge plus que les fichiers nouveaux ou modifiés — plus le pack entier",
+      "Correctif : La bannière « nouvelles données de terrains » fonctionne à nouveau avec le format multi-packs",
+      "Correctif : La saisie dans la recherche ne fait plus clignoter le clavier",
+      "Correctif : Les cases des packs sont bien alignées dans leurs cartes ; la ligne de progression redondante des Réglages a été retirée"
+    ],
+    "de": [
+      "Neu: Fehler direkt aus den Einstellungen melden — öffnet ein vorausgefülltes GitHub-Issue",
+      "Neu: Alle Pakete lassen sich abwählen; die App läuft dann nur mit GPS, bis wieder eines gewählt wird",
+      "Fix: Datenupdates laden nur noch neue oder geänderte Dateien — nicht mehr das ganze Paket",
+      "Fix: Der Hinweis auf neue Felddaten funktioniert wieder mit dem Multi-Pack-Format",
+      "Fix: Die Eingabe in der Feldsuche lässt die Tastatur nicht mehr flackern",
+      "Fix: Die Paket-Kästchen sitzen sauber in ihren Karten; die redundante Fortschrittszeile in den Einstellungen ist entfernt"
+    ]
+  },
+  {
     "version": "0.7.0-beta",
     "date": "2026-07-09",
     "en": [

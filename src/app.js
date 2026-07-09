@@ -1,4 +1,4 @@
-const APP_VERSION = '0.7.0-beta';
+const APP_VERSION = '0.7.1-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -73,6 +73,23 @@ async function shareApp() {
   }
 }
 
+// Open a GitHub issue pre-filled with a bug template plus the diagnostics a report needs
+// (app/pack versions, selection, language, offline state, device).
+function reportBug() {
+  const packs = (state.activePacks || [])
+    .map(({ pack, manifest }) => `${pack.id}@${manifest?.version || '?'}`)
+    .join(', ') || 'none';
+  const diagnostics = [
+    `App: ${APP_VERSION}`,
+    `Packs: ${packs}`,
+    `Language: ${state.settings.language} (${resolveLang()})`,
+    `Offline: ${state.cacheStatus}${state.cacheProgress ? ` — ${state.cacheProgress}` : ''}`,
+    `Device: ${navigator.userAgent}`,
+  ].join('\n');
+  const body = `**${t('bugWhat')}**\n\n\n\n**${t('bugSteps')}**\n1. \n\n---\n\`\`\`\n${diagnostics}\n\`\`\`\n`;
+  window.open(`${BUG_REPORT_URL}?labels=bug&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
+}
+
 // Community contributions: the intake Worker + the Turnstile widget site key (public).
 const CONTRIB_ENDPOINT = 'https://mtc-contrib-intake.br0c.workers.dev';
 const TURNSTILE_SITEKEY = '0x4AAAAAADyIBMLj-XXHBK-v';
@@ -89,6 +106,7 @@ let contribForm = null;
 const RELEASE_NOTES_URL = new URL('release-notes.json', BASE_URL).toString();
 const LAST_SEEN_VERSION_KEY = 'mtc-last-seen-version';
 const DATA_LICENCE_URL = 'https://github.com/br0c/meet-the-cows/blob/main/DATA-LICENCE.md';
+const BUG_REPORT_URL = 'https://github.com/br0c/meet-the-cows/issues/new';
 
 // UI string table. Plain strings, or functions for values that interpolate. Every user-facing
 // label in the app resolves through t(); pack field notes are localized in the pack itself.
@@ -96,6 +114,8 @@ const STRINGS = {
   en: {
     settings: 'Settings', refreshPack: 'Refresh pack', done: 'Done',
     share: 'Share app', shareText: 'Meet the Cows — glider outlanding cockpit aid',
+    reportBug: 'Report a bug', bugNote: 'Opens a pre-filled GitHub issue (GitHub account required).',
+    bugWhat: 'What happened?', bugSteps: 'Steps to reproduce',
     shareCopied: 'Link copied to clipboard.', shareCopyPrompt: 'Copy this link:',
     selectedPacks: 'Selected packs', fieldsWord: 'fields', downloadSize: 'Download size',
     app: 'App', version: 'Version', status: 'Status',
@@ -178,6 +198,8 @@ const STRINGS = {
   fr: {
     settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
     share: 'Partager l’app', shareText: 'Meet the Cows — aide cockpit pour vaches (vols de campagne)',
+    reportBug: 'Signaler un bug', bugNote: 'Ouvre un ticket GitHub pré-rempli (compte GitHub requis).',
+    bugWhat: 'Que s’est-il passé ?', bugSteps: 'Étapes pour reproduire',
     shareCopied: 'Lien copié dans le presse-papiers.', shareCopyPrompt: 'Copiez ce lien :',
     selectedPacks: 'Packs sélectionnés', fieldsWord: 'terrains', downloadSize: 'Taille du téléchargement',
     app: 'Application', version: 'Version', status: 'Statut',
@@ -260,6 +282,8 @@ const STRINGS = {
   de: {
     settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
     share: 'App teilen', shareText: 'Meet the Cows — Cockpit-Hilfe für Außenlandungen',
+    reportBug: 'Fehler melden', bugNote: 'Öffnet ein vorausgefülltes GitHub-Issue (GitHub-Konto erforderlich).',
+    bugWhat: 'Was ist passiert?', bugSteps: 'Schritte zum Reproduzieren',
     shareCopied: 'Link in die Zwischenablage kopiert.', shareCopyPrompt: 'Diesen Link kopieren:',
     selectedPacks: 'Ausgewählte Pakete', fieldsWord: 'Felder', downloadSize: 'Downloadgröße',
     app: 'App', version: 'Version', status: 'Status',
@@ -933,6 +957,10 @@ function renderSettingsPage() {
           <div><dt>${t('licenceLabel')}</dt><dd><a href="${DATA_LICENCE_URL}" target="_blank" rel="noopener">${escapeHtml(t('licenceValue'))}</a></dd></div>
           <div><dt>${t('status')}</dt><dd>${escapeHtml(t('betaStatus'))}</dd></div>
         </dl>
+        <div class="button-row single">
+          <button id="reportBug">🐞 ${t('reportBug')}</button>
+        </div>
+        <p class="settings-note">${escapeHtml(t('bugNote'))}</p>
       </div>
 
       <div class="settings-card">
@@ -1533,6 +1561,7 @@ function attachEvents() {
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#sharePack')?.addEventListener('click', shareApp);
+  document.querySelector('#reportBug')?.addEventListener('click', reportBug);
   document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
   document.querySelector('#languageSelect')?.addEventListener('change', e => {
     state.settings.language = e.target.value;
