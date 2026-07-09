@@ -55,6 +55,27 @@ npx wrangler deploy   # publish; note the *.workers.dev URL (or bind a custom ro
 
 Put the resulting URL in the app's `CONTRIB_ENDPOINT` constant (Phase 2).
 
+### Continuous deployment (GitHub Actions)
+
+`.github/workflows/deploy-worker.yml` runs `wrangler deploy` for you, so the live
+Worker stays in sync with the repo instead of a manual push from a laptop. It is
+**manual for now** — run it from the repo's **Actions** tab (*Deploy contribution
+Worker → Run workflow*). Once the contribution flow is validated end-to-end,
+uncomment the `push:` trigger in that file to auto-deploy on merges that touch
+`worker/**`.
+
+Two **repo** secrets are required (Settings → Secrets and variables → Actions):
+
+| secret | value |
+|--------|-------|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with **Account → Workers Scripts → Edit**, Account Resources scoped to your account. Nothing else. |
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account id. |
+
+The Worker's own runtime secrets (`GITHUB_TOKEN`, `TURNSTILE_SECRET`) live in the
+Cloudflare secret store and are **not** needed by the Action — `wrangler deploy`
+only uploads code + `[vars]`, and secrets set with `wrangler secret put` persist
+across deploys. So the GitHub PAT never enters GitHub Actions.
+
 ## Request shape (what the app sends)
 
 `multipart/form-data`:

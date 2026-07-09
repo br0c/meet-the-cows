@@ -1,0 +1,47 @@
+name: Deploy contribution Worker
+
+# Deploys the Cloudflare Worker in worker/ (the contribution intake endpoint) so
+# the live Worker stays in sync with the repo instead of a manual `wrangler deploy`.
+#
+# Manual for now: run it from the Actions tab ("Run workflow") once the
+# contribution flow is validated end-to-end. To auto-deploy on merges that touch
+# the Worker, uncomment the push trigger below.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN   - token with Account -> Workers Scripts -> Edit, scoped to your account
+#   CLOUDFLARE_ACCOUNT_ID  - your Cloudflare account id
+# The Worker's own runtime secrets (GITHUB_TOKEN, TURNSTILE_SECRET) stay in the
+# Cloudflare secret store; `wrangler deploy` never touches them, so they are not
+# needed here.
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "worker/**"
+  #     - ".github/workflows/deploy-worker.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Worker dependencies
+        working-directory: worker
+        run: npm install
+      - name: Deploy Worker
+        working-directory: worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
