@@ -1,4 +1,4 @@
-const APP_VERSION = '0.6.0-beta';
+const APP_VERSION = '0.6.1-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -85,6 +85,7 @@ const STRINGS = {
     sevDifficult: 'difficult', sevVeryDifficult: 'very difficult',
     noPackYet: 'No pack loaded yet.', noCacheApi: 'Cache Storage is not available in this browser.',
     cacheReady: 'ready', cacheDownloading: 'downloading', cacheRefreshing: 'refreshing',
+    dlSaving: 'Saving offline', dlFailed: 'failed',
     cacheIncomplete: 'incomplete', cacheNotDownloaded: 'not downloaded', cacheErrorStatus: 'error',
     cacheUnknown: 'unknown',
     cpNoMedia: 'No media/docs to cache', cpNoPack: 'No pack loaded',
@@ -162,6 +163,7 @@ const STRINGS = {
     sevDifficult: 'difficiles', sevVeryDifficult: 'très difficiles',
     noPackYet: 'Aucun pack chargé pour le moment.', noCacheApi: "Le stockage de cache n'est pas disponible dans ce navigateur.",
     cacheReady: 'prêt', cacheDownloading: 'téléchargement', cacheRefreshing: 'actualisation',
+    dlSaving: 'Enregistrement hors ligne', dlFailed: 'échec(s)',
     cacheIncomplete: 'incomplet', cacheNotDownloaded: 'non téléchargé', cacheErrorStatus: 'erreur',
     cacheUnknown: 'inconnu',
     cpNoMedia: 'Aucun média/doc à mettre en cache', cpNoPack: 'Aucun pack chargé',
@@ -239,6 +241,7 @@ const STRINGS = {
     sevDifficult: 'schwierig', sevVeryDifficult: 'sehr schwierig',
     noPackYet: 'Noch kein Paket geladen.', noCacheApi: 'Cache-Speicher ist in diesem Browser nicht verfügbar.',
     cacheReady: 'bereit', cacheDownloading: 'lädt', cacheRefreshing: 'aktualisiert',
+    dlSaving: 'Offline speichern', dlFailed: 'fehlgeschlagen',
     cacheIncomplete: 'unvollständig', cacheNotDownloaded: 'nicht geladen', cacheErrorStatus: 'Fehler',
     cacheUnknown: 'unbekannt',
     cpNoMedia: 'Keine Medien/Dokumente zum Zwischenspeichern', cpNoPack: 'Kein Paket geladen',
@@ -348,6 +351,9 @@ let state = {
   computedRows: [],
   cacheStatus: 'unknown',
   cacheProgress: '',
+  // When an offline download/sync is running: { done, total, failed }. Drives a floating
+  // progress bar updated in place (no full re-render), so the rest of the app stays usable.
+  offlineSync: null,
   detailScrollTop: 0,
   dataUpdateAvailable: false,
 };
@@ -594,6 +600,30 @@ function scheduleRender() {
   }, 1000);
 }
 
+function renderOfflineBar() {
+  const s = state.offlineSync;
+  if (!s) return '';
+  const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+  const failed = s.failed ? ` · ${s.failed} ${t('dlFailed')}` : '';
+  return `
+    <div class="offline-bar" role="status" aria-live="polite">
+      <div class="offline-bar-track"><div class="offline-bar-fill" id="offlineBarFill" style="width:${pct}%"></div></div>
+      <div class="offline-bar-label" id="offlineBarLabel">${escapeHtml(t('dlSaving'))} · ${pct}%${failed}</div>
+    </div>`;
+}
+
+// Update the floating download bar in place (no full re-render), so the field list, search box
+// and keyboard stay put while media downloads in the background.
+function updateOfflineBar() {
+  const s = state.offlineSync;
+  if (!s) return;
+  const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+  const fill = document.querySelector('#offlineBarFill');
+  const label = document.querySelector('#offlineBarLabel');
+  if (fill) fill.style.width = pct + '%';
+  if (label) label.textContent = `${t('dlSaving')} · ${pct}%${s.failed ? ` · ${s.failed} ${t('dlFailed')}` : ''}`;
+}
+
 function render() {
   const scrollY = window.scrollY;
   const activeDetail = document.querySelector('.detail');
@@ -621,6 +651,7 @@ function render() {
       ${selected ? renderDetail(selected) : ''}
       ${state.contribFor ? renderContribute(state.fields.find(f => f.id === state.contribFor)) : ''}
       ${state.showReleaseNotes ? renderReleaseNotes() : ''}
+      ${renderOfflineBar()}
     </div>
   `;
   attachEvents();
@@ -1441,8 +1472,8 @@ async function downloadOfflinePack() {
 
   const cache = await caches.open(DATA_CACHE);
   state.cacheStatus = 'downloading';
-  state.cacheProgress = t('cpInit', urls.length);
-  render();
+  state.offlineSync = { done: 0, total: urls.length, failed: 0 };
+  render();  // once: shows the floating bar; per-file updates below are in place (no re-render)
 
   let ok = 0;
   let failed = 0;
@@ -1463,8 +1494,8 @@ async function downloadOfflinePack() {
       }
     }
 
-    state.cacheProgress = t('cpCachedFailed', ok, urls.length, failed);
-    render();
+    state.offlineSync = { done: i + 1, total: urls.length, failed };
+    updateOfflineBar();
     await new Promise(resolve => setTimeout(resolve, 0));
   }
 
@@ -1475,9 +1506,10 @@ async function downloadOfflinePack() {
     console.warn('Could not record synced media manifest', error);
   }
 
+  state.offlineSync = null;
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
   state.cacheProgress = t('cpCachedFailed', ok, urls.length, failed);
-  render();
+  render();  // once at the end: hides the bar, refreshes the offline status line
 }
 
 async function checkCacheStatus() {
@@ -1583,6 +1615,10 @@ async function syncPackDelta() {
     if (changed || !cachedUrls.has(abs)) toDownload.push(abs);
   }
 
+  if (toDownload.length) {
+    state.offlineSync = { done: 0, total: toDownload.length, failed: 0 };
+    render();  // once: show the floating bar; updates below are in place
+  }
   let ok = 0;
   let failed = 0;
   for (let i = 0; i < toDownload.length; i += 1) {
@@ -1595,8 +1631,8 @@ async function syncPackDelta() {
     } catch (error) {
       if (await cache.match(abs)) ok += 1; else failed += 1;
     }
-    state.cacheProgress = t('cpUpdating', ok, toDownload.length, failed);
-    render();
+    state.offlineSync = { done: i + 1, total: toDownload.length, failed };
+    updateOfflineBar();
     await new Promise(resolve => setTimeout(resolve, 0));
   }
 
@@ -1610,6 +1646,7 @@ async function syncPackDelta() {
   }
 
   storeSyncedManifest(packId, manifest);
+  state.offlineSync = null;
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
   state.cacheProgress = t('cpUpdated', ok, evicted, failed);
   render();

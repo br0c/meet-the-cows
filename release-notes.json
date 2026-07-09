@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.6.1-beta",
+    "date": "2026-07-09",
+    "en": [
+      "Offline media download now runs in the background with a percentage progress bar — keep searching and browsing while it saves"
+    ],
+    "fr": [
+      "Le téléchargement des médias hors ligne s'exécute désormais en arrière-plan avec une barre de progression en pourcentage — continuez à rechercher et naviguer pendant l'enregistrement"
+    ],
+    "de": [
+      "Der Offline-Download der Medien läuft jetzt im Hintergrund mit einer Prozent-Fortschrittsanzeige — Suchen und Blättern bleiben möglich"
+    ]
+  },
+  {
     "version": "0.6.0-beta",
     "date": "2026-07-09",
     "en": [
