@@ -102,7 +102,8 @@ const STRINGS = {
     betaStatus: 'Beta — not for primary navigation',
     language: 'Language', langAuto: 'Automatic (device)',
     pack: 'Pack', selectedPack: 'Selected pack', name: 'Name', updated: 'Updated',
-    fieldsCount: 'Fields', offline: 'Offline', progress: 'Progress', noPackLoaded: 'No pack loaded',
+    fieldsCount: 'Fields', offline: 'Offline', noPackLoaded: 'No pack loaded',
+    noPackSelected: 'No pack selected', noPackSelectedHint: 'No pack selected — choose one in Settings (⚙).',
     downloadMedia: 'Download / verify media & docs', reloadPack: 'Reload pack',
     exportCup: n => `Export CUP for SeeYou (${n} fields)`,
     cupNote: 'Waypoint file for SeeYou Navigator and other nav apps. Brief a field here, then navigate to it in SeeYou.',
@@ -183,7 +184,8 @@ const STRINGS = {
     betaStatus: 'Bêta — pas pour la navigation principale',
     language: 'Langue', langAuto: 'Automatique (appareil)',
     pack: 'Pack', selectedPack: 'Pack sélectionné', name: 'Nom', updated: 'Mis à jour',
-    fieldsCount: 'Terrains', offline: 'Hors ligne', progress: 'Progression', noPackLoaded: 'Aucun pack chargé',
+    fieldsCount: 'Terrains', offline: 'Hors ligne', noPackLoaded: 'Aucun pack chargé',
+    noPackSelected: 'Aucun pack sélectionné', noPackSelectedHint: 'Aucun pack sélectionné — choisissez-en un dans les Réglages (⚙).',
     downloadMedia: 'Télécharger / vérifier médias & docs', reloadPack: 'Recharger le pack',
     exportCup: n => `Exporter CUP pour SeeYou (${n} terrains)`,
     cupNote: 'Fichier de points de virage pour SeeYou Navigator et autres apps de nav. Consultez un terrain ici, puis naviguez-y dans SeeYou.',
@@ -264,7 +266,8 @@ const STRINGS = {
     betaStatus: 'Beta — nicht zur primären Navigation',
     language: 'Sprache', langAuto: 'Automatisch (Gerät)',
     pack: 'Paket', selectedPack: 'Ausgewähltes Paket', name: 'Name', updated: 'Aktualisiert',
-    fieldsCount: 'Felder', offline: 'Offline', progress: 'Fortschritt', noPackLoaded: 'Kein Paket geladen',
+    fieldsCount: 'Felder', offline: 'Offline', noPackLoaded: 'Kein Paket geladen',
+    noPackSelected: 'Kein Paket ausgewählt', noPackSelectedHint: 'Kein Paket ausgewählt — wähle eines in den Einstellungen (⚙).',
     downloadMedia: 'Medien & Dokumente laden / prüfen', reloadPack: 'Paket neu laden',
     exportCup: n => `CUP für SeeYou exportieren (${n} Felder)`,
     cupNote: 'Wegpunktdatei für SeeYou Navigator und andere Navi-Apps. Feld hier briefen, dann in SeeYou anfliegen.',
@@ -498,7 +501,11 @@ async function loadPackIndex({ cacheMode = 'no-cache' } = {}) {
 }
 
 function activePackIds() {
-  const chosen = (state.settings.packIds || []).filter(id => state.packs.some(p => p.id === id));
+  const stored = state.settings.packIds;
+  // An explicitly empty selection is honoured (the app works GPS-only, no offline data). The
+  // first-pack fallback only kicks in when the stored ids no longer exist in packs.json.
+  if (Array.isArray(stored) && stored.length === 0) return [];
+  const chosen = (stored || []).filter(id => state.packs.some(p => p.id === id));
   return chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
 }
 
@@ -521,6 +528,19 @@ async function loadSelectedPacks({ cacheMode = 'no-cache' } = {}) {
   const ids = activePackIds();
   state.settings.packIds = ids;
   saveSettings();
+
+  if (!ids.length) {
+    state.activePacks = [];
+    state.fields = [];
+    state.packManifest = null;
+    state.currentManifestUrl = null;
+    state.selectedFieldId = null;
+    computeRows();
+    state.cacheStatus = 'unknown';
+    state.cacheProgress = t('noPackSelected');
+    state.dataUpdateAvailable = false;
+    return;
+  }
 
   const byId = new Map();
   const loaded = [];
@@ -909,8 +929,7 @@ function renderSettingsPage() {
           <div><dt>${t('downloadSize')}</dt><dd class="download-total">${escapeHtml(formatBytes(selectionDownloadBytes()))}</dd></div>
           <div><dt>${t('fieldsCount')}</dt><dd>${state.fields.length}</dd></div>
           <div><dt>${t('version')}</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
-          <div><dt>${t('offline')}</dt><dd>${escapeHtml(cacheStatusLabel(state.cacheStatus))}</dd></div>
-          <div><dt>${t('progress')}</dt><dd>${escapeHtml(state.cacheProgress || '—')}</dd></div>
+          <div><dt>${t('offline')}</dt><dd>${escapeHtml(cacheStatusLabel(state.cacheStatus))}${state.cacheProgress ? ` · ${escapeHtml(state.cacheProgress)}` : ''}</dd></div>
         </dl>
         <div class="button-row">
           <button class="primary" id="downloadPack">${t('downloadMedia')}</button>
@@ -1048,7 +1067,10 @@ function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
 }
 
 function renderFieldList() {
-  if (!state.fields.length) return `<div class="warning">${escapeHtml(t('noFields'))}</div>`;
+  if (!state.fields.length) {
+    const message = activePackIds().length ? t('noFields') : t('noPackSelectedHint');
+    return `<div class="warning">${escapeHtml(message)}</div>`;
+  }
   const query = state.searchQuery.trim();
   if (query) {
     const rows = searchMatches(query);
@@ -1484,8 +1506,7 @@ function attachEvents() {
   });
   document.querySelectorAll('.packCheck').forEach(cb => cb.addEventListener('change', async () => {
     const chosen = Array.from(document.querySelectorAll('.packCheck')).filter(c => c.checked).map(c => c.value);
-    if (!chosen.length) { render(); return; }  // keep at least one pack selected
-    state.settings.packIds = chosen;
+    state.settings.packIds = chosen;  // empty is allowed: the app then runs GPS-only
     saveSettings();
     state.cacheStatus = 'refreshing';
     state.cacheProgress = t('cpFetchPack');
