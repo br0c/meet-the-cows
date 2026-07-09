@@ -126,7 +126,7 @@ const STRINGS = {
     bugSubmit: 'Send report', bugSending: 'Sending…', bugThanks: 'Thank you!',
     bugThanksBody: n => `Your report was filed for review (#${n}).`,
     bugErr: 'Could not send the report', bugNeedDesc: 'Please describe the bug first.',
-    bugGithubAlt: 'Prefer GitHub? Open an issue there',
+    bugGithubAlt: 'Prefer GitHub? Open an issue there', bugViewIssue: 'View the report',
     shareCopied: 'Link copied to clipboard.', shareCopyPrompt: 'Copy this link:',
     selectedPacks: 'Selected packs', fieldsWord: 'fields', downloadSize: 'Download size',
     app: 'App', version: 'Version', status: 'Status',
@@ -216,7 +216,7 @@ const STRINGS = {
     bugSubmit: 'Envoyer le rapport', bugSending: 'Envoi…', bugThanks: 'Merci !',
     bugThanksBody: n => `Votre rapport a été déposé pour examen (n°${n}).`,
     bugErr: 'Impossible d’envoyer le rapport', bugNeedDesc: 'Décrivez d’abord le bug.',
-    bugGithubAlt: 'Vous préférez GitHub ? Ouvrez-y un ticket',
+    bugGithubAlt: 'Vous préférez GitHub ? Ouvrez-y un ticket', bugViewIssue: 'Voir le rapport',
     shareCopied: 'Lien copié dans le presse-papiers.', shareCopyPrompt: 'Copiez ce lien :',
     selectedPacks: 'Packs sélectionnés', fieldsWord: 'terrains', downloadSize: 'Taille du téléchargement',
     app: 'Application', version: 'Version', status: 'Statut',
@@ -306,7 +306,7 @@ const STRINGS = {
     bugSubmit: 'Bericht senden', bugSending: 'Wird gesendet…', bugThanks: 'Danke!',
     bugThanksBody: n => `Dein Bericht wurde zur Prüfung eingereicht (#${n}).`,
     bugErr: 'Bericht konnte nicht gesendet werden', bugNeedDesc: 'Bitte beschreibe zuerst den Fehler.',
-    bugGithubAlt: 'Lieber GitHub? Dort ein Issue öffnen',
+    bugGithubAlt: 'Lieber GitHub? Dort ein Issue öffnen', bugViewIssue: 'Bericht ansehen',
     shareCopied: 'Link in die Zwischenablage kopiert.', shareCopyPrompt: 'Diesen Link kopieren:',
     selectedPacks: 'Ausgewählte Pakete', fieldsWord: 'Felder', downloadSize: 'Downloadgröße',
     app: 'App', version: 'Version', status: 'Status',
@@ -1634,6 +1634,7 @@ function showBugSuccess(data) {
       <div class="contrib-tick">✓</div>
       <div class="contrib-done-title">${escapeHtml(t('bugThanks'))}</div>
       <div class="contrib-done-body">${escapeHtml(t('bugThanksBody', data.issueNumber))}</div>
+      ${data.issueUrl ? `<a href="${escapeHtml(data.issueUrl)}" target="_blank" rel="noopener" class="contrib-pr">${t('bugViewIssue')}</a>` : ''}
       <button id="bugDone" class="primary">${t('done')}</button>
     </div>
   `;
