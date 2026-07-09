@@ -16,8 +16,10 @@ export default {
   async fetch(request, env) {
     const origin = resolveOrigin(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors(origin) });
+    if (request.method === 'GET') return serveOriginal(request, env);
     if (request.method !== 'POST') return json(origin, 405, { error: 'Use POST.' });
     try {
+      if (new URL(request.url).pathname.endsWith('/bug')) return await handleBugReport(request, env, origin);
       return await handleSubmit(request, env, origin);
     } catch (err) {
       return json(origin, 500, { error: 'Submission failed.', detail: String(err && err.message || err) });
@@ -27,6 +29,36 @@ export default {
     ctx.waitUntil(backupRepo(env));
   },
 };
+
+// Anonymous in-app bug report -> GitHub issue. Turnstile-gated like contributions, so pilots
+// need no GitHub account; the token requires Issues: Read and write on the repo.
+async function handleBugReport(request, env, origin) {
+  const form = await request.formData();
+  const get = k => (form.get(k) ?? '').toString().trim();
+
+  const description = get('description').slice(0, 5000);
+  if (!description) return json(origin, 400, { error: 'Describe the bug.' });
+  const turnstileToken = get('turnstileToken');
+  if (env.TURNSTILE_SECRET && !turnstileToken) {
+    return json(origin, 403, { error: 'The anti-spam check did not load in the app. Allow challenges.cloudflare.com (disable content blockers for this site) and try again.' });
+  }
+  const ok = await verifyTurnstile(turnstileToken, env, request.headers.get('CF-Connecting-IP'));
+  if (!ok) return json(origin, 403, { error: 'Spam check failed. Please retry.' });
+
+  const contact = get('contact').slice(0, 200);
+  const diagnostics = get('diagnostics').slice(0, 2000);
+  const firstLine = description.replace(/\s+/g, ' ').trim();
+  const title = `Bug report: ${firstLine.slice(0, 72)}${firstLine.length > 72 ? '…' : ''}`;
+  const body = [
+    description,
+    contact ? `\n**Contact:** ${contact}` : '',
+    diagnostics ? `\n---\n\`\`\`\n${diagnostics}\n\`\`\`` : '',
+    '\n_Submitted anonymously via the in-app bug report._',
+  ].filter(Boolean).join('\n');
+
+  const issue = await gh(env, '/issues', 'POST', { title, body, labels: ['bug', 'from-app'] });
+  return json(origin, 200, { ok: true, issueUrl: issue.html_url, issueNumber: issue.number });
+}
 
 async function handleSubmit(request, env, origin) {
   const form = await request.formData();
@@ -89,15 +121,15 @@ async function handleSubmit(request, env, origin) {
   const base = `contributions/${sanitize(fieldId)}/${stamp}_${shortId}`;
 
   // The full-size (EXIF-stripped) original goes to R2, not into git — the repo stays lean and
-  // the pack build later downloads + resizes it like any other pack photo. Until the bucket's
-  // public URL is configured (R2_PUBLIC_BASE), fall back to the legacy release-asset path.
+  // the pack build later downloads + resizes it like any other pack photo. Without the bucket
+  // binding (e.g. local dev), fall back to the legacy release-asset path.
   let photoAsset = null;
   let photoUploadFailed = false;
   if (photoBytes) {
     const name = `${sanitize(fieldId)}_${stamp}_${shortId}.jpg`;
     try {
-      photoAsset = (env.ORIGINALS && env.R2_PUBLIC_BASE)
-        ? await uploadOriginal(env, name, photoBytes)
+      photoAsset = env.ORIGINALS
+        ? await uploadOriginal(env, new URL(request.url).origin, name, photoBytes)
         : await uploadReleaseAsset(env, name, photoBytes);
     } catch (error) {
       // Keep the note: a failed photo upload must not discard a valid submission (mirrors the
@@ -231,14 +263,34 @@ function stripLocationMetadata(b) {
 
 // ---------- R2: photo originals + nightly repo backups ----------
 
-// Store the full-size (location-stripped) original in R2 under originals/. The bucket's public
-// URL goes into the contribution JSON and the PR body, so reviewers and the pack build fetch it
-// like any plain https URL — no credentials, no build changes.
-async function uploadOriginal(env, name, bytes) {
+// Store the full-size (location-stripped) original in R2 under originals/. The URL written to
+// the contribution JSON and the PR body points back at THIS Worker (serveOriginal), so
+// reviewers and the pack build fetch it like any plain https URL — the bucket itself stays
+// private and no S3 credentials exist anywhere.
+async function uploadOriginal(env, selfOrigin, name, bytes) {
   const key = `originals/${name}`;
   await env.ORIGINALS.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } });
-  const base = String(env.R2_PUBLIC_BASE).replace(/\/+$/, '');
-  return { storage: 'r2', key, name, url: `${base}/${key}`, size: bytes.length };
+  return { storage: 'r2', key, name, url: `${selfOrigin}/${key}`, size: bytes.length };
+}
+
+// GET /originals/<key>: stream a photo original from the private bucket. Only the originals/
+// prefix is reachable — repo backups never leave the bucket. Keys carry a random id, and each
+// upload uses a fresh key, so responses can be cached as immutable.
+async function serveOriginal(request, env) {
+  const path = decodeURIComponent(new URL(request.url).pathname);
+  if (!env.ORIGINALS || !path.startsWith('/originals/') || path.includes('..')) {
+    return new Response('Not found', { status: 404 });
+  }
+  const object = await env.ORIGINALS.get(path.slice(1));
+  if (!object) return new Response('Not found', { status: 404 });
+  return new Response(object.body, {
+    headers: {
+      'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
+      'Content-Length': String(object.size),
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
 }
 
 const BACKUP_PREFIX = 'repo-backups/';
@@ -288,7 +340,7 @@ async function backupRepo(env) {
 }
 
 // Exported for tests only; Workers ignores extra named exports.
-export { uploadOriginal, backupRepo };
+export { uploadOriginal, serveOriginal, backupRepo, handleBugReport };
 
 // ---------- GitHub ----------
 

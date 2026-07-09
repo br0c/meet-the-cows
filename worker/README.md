@@ -42,15 +42,21 @@ Edit `wrangler.toml` vars if needed (`REPO`, `ALLOWED_ORIGIN`, `GEO_RADIUS_M`, p
 
 One-time setup in the Cloudflare dashboard:
 
-1. **R2 → Create bucket** named exactly `mtc-data` (or edit `bucket_name` in `wrangler.toml`).
-   The deploy fails if the bucket referenced by the binding does not exist.
-2. Bucket → **Settings → Public access → Allow** (r2.dev subdomain), copy the
-   `https://pub-<hash>.r2.dev` URL and put it in `R2_PUBLIC_BASE` in `wrangler.toml`.
-   Until that var is set, photo uploads fall back to the legacy release-asset path
-   (the nightly repo backup works regardless — it never needs the public URL).
+1. **R2 → Create bucket** named exactly `mtc-data` (Standard storage class; or edit
+   `bucket_name` in `wrangler.toml`). The deploy fails if the bucket referenced by the
+   binding does not exist. That's all — do **not** enable public access.
 
-Everything in the bucket is publicly readable via that URL; that matches the previous
-release-asset behaviour (photos are EXIF-stripped before storage, and the repo is public).
+The bucket stays **private**. Photo originals are served by this Worker's
+`GET /originals/<key>` route (that URL goes into the contribution JSON and PR body, so the
+pack build and reviewers fetch it like any https URL, credential-free). Repo backups under
+`repo-backups/` are not reachable from outside at all. No S3 API keys exist anywhere.
+
+### Bug reports (`POST /bug`)
+
+The app's Settings → "Report a bug" form posts here (Turnstile-gated like contributions);
+the Worker opens a GitHub **issue** labelled `bug` + `from-app`, so pilots need no GitHub
+account. This requires one extra permission on the `GITHUB_TOKEN` fine-grained PAT:
+**Issues: Read and write**.
 
 ### Secrets
 
@@ -63,6 +69,7 @@ npx wrangler secret put TURNSTILE_SECRET  # Cloudflare Turnstile secret (optiona
 scoped to **`br0c/meet-the-cows`** with repository permissions:
 - **Contents:** Read and write (create the branch + commit the files)
 - **Pull requests:** Read and write (open the PR, add labels)
+- **Issues:** Read and write (file in-app bug reports as issues)
 
 Nothing else. Keep it in the Worker secret store — never in `wrangler.toml` or the repo.
 

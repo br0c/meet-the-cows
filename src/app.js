@@ -73,25 +73,29 @@ async function shareApp() {
   }
 }
 
-// Open a GitHub issue pre-filled with a bug template plus the diagnostics a report needs
-// (app/pack versions, selection, language, offline state, device).
-function reportBug() {
+// Diagnostics attached to every bug report — and shown to the pilot before sending.
+function bugDiagnostics() {
   const packs = (state.activePacks || [])
     .map(({ pack, manifest }) => `${pack.id}@${manifest?.version || '?'}`)
     .join(', ') || 'none';
-  const diagnostics = [
+  return [
     `App: ${APP_VERSION}`,
     `Packs: ${packs}`,
     `Language: ${state.settings.language} (${resolveLang()})`,
     `Offline: ${state.cacheStatus}${state.cacheProgress ? ` — ${state.cacheProgress}` : ''}`,
     `Device: ${navigator.userAgent}`,
   ].join('\n');
-  const body = `**${t('bugWhat')}**\n\n\n\n**${t('bugSteps')}**\n1. \n\n---\n\`\`\`\n${diagnostics}\n\`\`\`\n`;
-  window.open(`${BUG_REPORT_URL}?labels=bug&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
+}
+
+// Fallback for pilots who do use GitHub: a pre-filled new-issue URL.
+function githubIssueUrl() {
+  const body = `**${t('bugWhat')}**\n\n\n\n**${t('bugSteps')}**\n1. \n\n---\n\`\`\`\n${bugDiagnostics()}\n\`\`\`\n`;
+  return `${BUG_REPORT_URL}?labels=bug&body=${encodeURIComponent(body)}`;
 }
 
 // Community contributions: the intake Worker + the Turnstile widget site key (public).
 const CONTRIB_ENDPOINT = 'https://mtc-contrib-intake.br0c.workers.dev';
+const BUG_ENDPOINT = `${CONTRIB_ENDPOINT}/bug`;
 const TURNSTILE_SITEKEY = '0x4AAAAAADyIBMLj-XXHBK-v';
 const CONTRIB_MAX_BYTES = 15 * 1024 * 1024;   // keep in step with the Worker's MAX_PHOTO_BYTES
 const CONTRIB_MIN_LONG_EDGE = 2560;           // keep in step with MIN_PHOTO_LONG_EDGE
@@ -100,6 +104,7 @@ const CONTRIB_GEO_RADIUS_M = 1000;            // keep in step with GEO_RADIUS_M
 // Transient state for the open contribution form (kept out of app state so typing in the form
 // never triggers a full re-render that would wipe the inputs).
 let contribForm = null;
+let bugForm = null;
 
 // Release notes: shipped with the app shell; shown from Settings and once as a banner after an
 // app update (last seen version remembered per device).
@@ -114,8 +119,14 @@ const STRINGS = {
   en: {
     settings: 'Settings', refreshPack: 'Refresh pack', done: 'Done',
     share: 'Share app', shareText: 'Meet the Cows — glider outlanding cockpit aid',
-    reportBug: 'Report a bug', bugNote: 'Opens a pre-filled GitHub issue (GitHub account required).',
+    reportBug: 'Report a bug', bugNote: 'Sent to the maintainer for review — no account needed.',
     bugWhat: 'What happened?', bugSteps: 'Steps to reproduce',
+    bugPlaceholder: 'Describe the bug: what you did, what you expected, what happened instead…',
+    bugContact: 'Contact for follow-up (optional)', bugIncluded: 'Sent along automatically:',
+    bugSubmit: 'Send report', bugSending: 'Sending…', bugThanks: 'Thank you!',
+    bugThanksBody: n => `Your report was filed for review (#${n}).`,
+    bugErr: 'Could not send the report', bugNeedDesc: 'Please describe the bug first.',
+    bugGithubAlt: 'Prefer GitHub? Open an issue there',
     shareCopied: 'Link copied to clipboard.', shareCopyPrompt: 'Copy this link:',
     selectedPacks: 'Selected packs', fieldsWord: 'fields', downloadSize: 'Download size',
     app: 'App', version: 'Version', status: 'Status',
@@ -198,8 +209,14 @@ const STRINGS = {
   fr: {
     settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
     share: 'Partager l’app', shareText: 'Meet the Cows — aide cockpit pour vaches (vols de campagne)',
-    reportBug: 'Signaler un bug', bugNote: 'Ouvre un ticket GitHub pré-rempli (compte GitHub requis).',
+    reportBug: 'Signaler un bug', bugNote: 'Transmis au mainteneur pour examen — aucun compte requis.',
     bugWhat: 'Que s’est-il passé ?', bugSteps: 'Étapes pour reproduire',
+    bugPlaceholder: 'Décrivez le bug : ce que vous avez fait, ce que vous attendiez, ce qui s’est passé…',
+    bugContact: 'Contact pour le suivi (facultatif)', bugIncluded: 'Envoyé automatiquement :',
+    bugSubmit: 'Envoyer le rapport', bugSending: 'Envoi…', bugThanks: 'Merci !',
+    bugThanksBody: n => `Votre rapport a été déposé pour examen (n°${n}).`,
+    bugErr: 'Impossible d’envoyer le rapport', bugNeedDesc: 'Décrivez d’abord le bug.',
+    bugGithubAlt: 'Vous préférez GitHub ? Ouvrez-y un ticket',
     shareCopied: 'Lien copié dans le presse-papiers.', shareCopyPrompt: 'Copiez ce lien :',
     selectedPacks: 'Packs sélectionnés', fieldsWord: 'terrains', downloadSize: 'Taille du téléchargement',
     app: 'Application', version: 'Version', status: 'Statut',
@@ -282,8 +299,14 @@ const STRINGS = {
   de: {
     settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
     share: 'App teilen', shareText: 'Meet the Cows — Cockpit-Hilfe für Außenlandungen',
-    reportBug: 'Fehler melden', bugNote: 'Öffnet ein vorausgefülltes GitHub-Issue (GitHub-Konto erforderlich).',
+    reportBug: 'Fehler melden', bugNote: 'Geht zur Prüfung an den Betreuer — kein Konto nötig.',
     bugWhat: 'Was ist passiert?', bugSteps: 'Schritte zum Reproduzieren',
+    bugPlaceholder: 'Beschreibe den Fehler: was du getan hast, was du erwartet hast, was stattdessen geschah…',
+    bugContact: 'Kontakt für Rückfragen (optional)', bugIncluded: 'Wird automatisch mitgeschickt:',
+    bugSubmit: 'Bericht senden', bugSending: 'Wird gesendet…', bugThanks: 'Danke!',
+    bugThanksBody: n => `Dein Bericht wurde zur Prüfung eingereicht (#${n}).`,
+    bugErr: 'Bericht konnte nicht gesendet werden', bugNeedDesc: 'Bitte beschreibe zuerst den Fehler.',
+    bugGithubAlt: 'Lieber GitHub? Dort ein Issue öffnen',
     shareCopied: 'Link in die Zwischenablage kopiert.', shareCopyPrompt: 'Diesen Link kopieren:',
     selectedPacks: 'Ausgewählte Pakete', fieldsWord: 'Felder', downloadSize: 'Downloadgröße',
     app: 'App', version: 'Version', status: 'Status',
@@ -435,6 +458,7 @@ let state = {
   gpsError: '',
   selectedFieldId: null,
   contribFor: null,
+  showBugReport: false,
   releaseNotes: [],
   showReleaseNotes: false,
   updateNoteAvailable: false,
@@ -815,12 +839,13 @@ function render() {
       ${selected ? renderDetail(selected) : ''}
       ${state.contribFor ? renderContribute(state.fields.find(f => f.id === state.contribFor)) : ''}
       ${state.showReleaseNotes ? renderReleaseNotes() : ''}
+      ${renderBugReport()}
       ${renderOfflineBar()}
     </div>
   `;
   // Lock background scroll while an overlay is open, so scrolling a short bottom-sheet doesn't
   // fall through to the list behind it.
-  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showReleaseNotes));
+  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showReleaseNotes || state.showBugReport));
   attachEvents();
   requestAnimationFrame(() => {
     const detail = document.querySelector('.detail');
@@ -1500,6 +1525,121 @@ function showContribSuccess(data) {
   document.querySelector('#cDone')?.addEventListener('click', closeContribute);
 }
 
+// --- In-app bug report: a short anonymous form; the Worker files the GitHub issue. ---
+
+function renderBugReport() {
+  if (!state.showBugReport) return '';
+  return `
+    <div class="detail-backdrop contrib-backdrop" id="bugBackdrop">
+      <article class="detail contrib" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('reportBug'))}">
+        <button id="closeBug">${t('close')}</button>
+        <div class="detail-title-row"><h2>🐞 ${t('reportBug')}</h2></div>
+        <div id="bugBody" class="contrib-form">
+          <label for="bugDesc">${t('bugWhat')}</label>
+          <textarea id="bugDesc" rows="5" placeholder="${escapeHtml(t('bugPlaceholder'))}"></textarea>
+          <input id="bugContact" type="text" autocomplete="off" placeholder="${escapeHtml(t('bugContact'))}" />
+          <p class="settings-note bug-diag">${escapeHtml(t('bugIncluded'))}<br>${escapeHtml(bugDiagnostics()).replace(/\n/g, '<br>')}</p>
+          <div id="bugTurnstile" class="contrib-turnstile"></div>
+          <div id="bugError" class="contrib-error" hidden></div>
+          <button id="bugSubmit" class="primary contrib-submit" disabled>${t('bugSubmit')}</button>
+          <a class="settings-note bug-github" href="${githubIssueUrl()}" target="_blank" rel="noopener">${escapeHtml(t('bugGithubAlt'))}</a>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+function openBugReport() {
+  bugForm = { busy: false, turnstileWidget: null };
+  state.showBugReport = true;
+  render();
+}
+
+function closeBugReport() {
+  bugForm = null;
+  state.showBugReport = false;
+  render();
+}
+
+function wireBugForm() {
+  document.querySelector('#closeBug')?.addEventListener('click', closeBugReport);
+  document.querySelector('#bugBackdrop')?.addEventListener('click', e => { if (e.target.id === 'bugBackdrop') closeBugReport(); });
+  document.querySelector('#bugDesc')?.addEventListener('input', updateBugValidity);
+  document.querySelector('#bugSubmit')?.addEventListener('click', submitBugReport);
+  if (bugForm && bugForm.turnstileWidget == null) {
+    ensureTurnstile(() => {
+      const holder = document.querySelector('#bugTurnstile');
+      if (holder && window.turnstile && bugForm && bugForm.turnstileWidget == null) {
+        try { bugForm.turnstileWidget = window.turnstile.render(holder, { sitekey: TURNSTILE_SITEKEY }); } catch { /* already rendered */ }
+      }
+    });
+  }
+  updateBugValidity();
+}
+
+function updateBugValidity() {
+  const submit = document.querySelector('#bugSubmit');
+  if (submit && bugForm && !bugForm.busy) submit.disabled = !(document.querySelector('#bugDesc')?.value || '').trim();
+}
+
+function bugShowError(message) {
+  const form = bugForm;
+  if (form) form.busy = false;
+  const el = document.querySelector('#bugError');
+  if (el) { el.hidden = false; el.textContent = message; }
+  const submit = document.querySelector('#bugSubmit');
+  if (submit) submit.textContent = t('bugSubmit');
+  updateBugValidity();
+  // Turnstile tokens are single-use: reset so a retry gets a fresh token.
+  try { if (window.turnstile && form && form.turnstileWidget != null) window.turnstile.reset(form.turnstileWidget); } catch { /* widget gone */ }
+}
+
+async function submitBugReport() {
+  const form = bugForm;
+  if (!form || form.busy) return;
+  const description = (document.querySelector('#bugDesc')?.value || '').trim();
+  if (!description) { bugShowError(t('bugNeedDesc')); return; }
+  let token = '';
+  if (window.turnstile && form.turnstileWidget != null) {
+    token = window.turnstile.getResponse(form.turnstileWidget) || '';
+    if (!token) { bugShowError(t('cNeedTurnstile')); return; }
+  }
+  const submit = document.querySelector('#bugSubmit');
+  form.busy = true;
+  if (submit) { submit.disabled = true; submit.textContent = t('bugSending'); }
+
+  const fd = new FormData();
+  fd.set('description', description);
+  fd.set('contact', (document.querySelector('#bugContact')?.value || '').trim());
+  fd.set('diagnostics', bugDiagnostics());
+  if (token) fd.set('turnstileToken', token);
+
+  try {
+    const res = await fetch(BUG_ENDPOINT, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (bugForm !== form) return; // form closed while the request was in flight
+    if (res.ok && data.ok) { showBugSuccess(data); return; }
+    bugShowError(`${t('bugErr')}: ${String(data.error || res.status)}`);
+  } catch (error) {
+    if (bugForm !== form) return;
+    bugShowError(`${t('bugErr')}: ${error.message || error}`);
+  }
+}
+
+function showBugSuccess(data) {
+  const body = document.querySelector('#bugBody');
+  if (!body) return;
+  body.innerHTML = `
+    <div class="contrib-done">
+      <div class="contrib-tick">✓</div>
+      <div class="contrib-done-title">${escapeHtml(t('bugThanks'))}</div>
+      <div class="contrib-done-body">${escapeHtml(t('bugThanksBody', data.issueNumber))}</div>
+      <button id="bugDone" class="primary">${t('done')}</button>
+    </div>
+  `;
+  document.querySelector('#bugDone')?.addEventListener('click', closeBugReport);
+}
+
 function wireContribForm(field) {
   document.querySelector('#closeContribute')?.addEventListener('click', closeContribute);
   document.querySelector('#contribBackdrop')?.addEventListener('click', e => { if (e.target.id === 'contribBackdrop') closeContribute(); });
@@ -1561,7 +1701,8 @@ function attachEvents() {
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#sharePack')?.addEventListener('click', shareApp);
-  document.querySelector('#reportBug')?.addEventListener('click', reportBug);
+  document.querySelector('#reportBug')?.addEventListener('click', openBugReport);
+  if (state.showBugReport) wireBugForm();
   document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
   document.querySelector('#languageSelect')?.addEventListener('change', e => {
     state.settings.language = e.target.value;
