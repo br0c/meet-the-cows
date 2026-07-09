@@ -336,6 +336,13 @@ const STRINGS = {
 };
 
 // Resolve the active UI language: an explicit setting wins, otherwise follow the device.
+// Pack display name in the pilot's language: pack.names is a {en,fr,de} map from the build;
+// fall back to the English default name, then the id, for any older/partial pack entry.
+function packName(pack) {
+  const lang = resolveLang();
+  return (pack.names && (pack.names[lang] || pack.names.en)) || pack.name || pack.id;
+}
+
 function resolveLang() {
   const setting = state.settings.language;
   if (SUPPORTED_LANGS.includes(setting)) return setting;
@@ -831,7 +838,7 @@ function renderSettingsPage() {
     const count = typeof p.fieldsCount === 'number' ? `${p.fieldsCount} ${t('fieldsWord')}` : '';
     return `<label class="pack-option">
         <input type="checkbox" class="packCheck" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
-        <span class="pack-name">${escapeHtml(p.name)}</span>
+        <span class="pack-name">${escapeHtml(packName(p))}</span>
         <span class="pack-meta">${escapeHtml(count)}</span>
       </label>`;
   }).join('');

@@ -783,9 +783,14 @@ def write_pack(
     else:
         media_files, media_bytes = copy_pack_media(pack_media_refs(subset), staging_dir, pack_dir)
 
+    # Localized display names travel with the pack so the app can show each in the pilot's
+    # language; `name` stays as an English default for any non-localizing consumer.
+    names = pack_def.get("names") or {"en": pack_def.get("name") or pack_def["id"]}
+    display_name = names.get("en") or next(iter(names.values()), pack_def["id"])
     manifest = {
         "id": pack_def["id"],
-        "name": pack_def["name"],
+        "name": display_name,
+        "names": names,
         "version": version,
         "generatedAt": generated_at,
         "isSample": False,
@@ -820,6 +825,7 @@ def write_packs_index(manifests: list[dict[str, Any]], out_root: Path) -> None:
             {
                 "id": m["id"],
                 "name": m["name"],
+                "names": m.get("names"),
                 "manifestUrl": f"packs/{m['id']}/manifest.json",
                 "sizeBytes": m["sizeBytes"],
                 "fieldsCount": m["fieldsCount"],

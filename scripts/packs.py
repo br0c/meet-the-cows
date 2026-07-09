@@ -87,12 +87,12 @@ def in_alps(field: dict[str, Any]) -> bool:
 # position. A pack uses exactly one selector. `name` is the display label shown in the app's
 # pack picker (kept multilingual inline until the app localizes pack names from the manifest).
 PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
-    {"id": "fr", "name": "France", "countries": ("FR",)},
-    {"id": "ch", "name": "Schweiz · Suisse · Svizzera", "countries": ("CH",)},
-    {"id": "de", "name": "Deutschland", "countries": ("DE",)},
-    {"id": "it", "name": "Italia", "countries": ("IT",)},
-    {"id": "at", "name": "Österreich", "countries": ("AT",)},
-    {"id": "alps", "name": "Alps · Alpes · Alpen", "geofence": "alps"},
+    {"id": "fr", "names": {"en": "France", "fr": "France", "de": "Frankreich"}, "countries": ("FR",)},
+    {"id": "ch", "names": {"en": "Switzerland", "fr": "Suisse", "de": "Schweiz"}, "countries": ("CH",)},
+    {"id": "de", "names": {"en": "Germany", "fr": "Allemagne", "de": "Deutschland"}, "countries": ("DE",)},
+    {"id": "it", "names": {"en": "Italy", "fr": "Italie", "de": "Italien"}, "countries": ("IT",)},
+    {"id": "at", "names": {"en": "Austria", "fr": "Autriche", "de": "Österreich"}, "countries": ("AT",)},
+    {"id": "alps", "names": {"en": "Alps", "fr": "Alpes", "de": "Alpen"}, "geofence": "alps"},
 )
 
 # Every country a build must pull so the packs above can be sliced from one merged field set.
