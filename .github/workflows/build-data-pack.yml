@@ -21,7 +21,7 @@ on:
     - cron: "17 3 * * *"
 
 permissions:
-  contents: read
+  contents: write  # push the updated translation cache back to main (see "Persist translation cache")
   pages: write
   id-token: write
   actions: write
@@ -87,9 +87,14 @@ jobs:
           echo "force_full=${FORCE}" >> "$GITHUB_OUTPUT"
           echo "Build mode: force_full=${FORCE} (event=${{ github.event_name }})"
 
-      # Persist German->English translations so each build only pays DeepL for new/changed
-      # text. Unique primary key => always saves the updated cache; restore-keys pulls the
-      # most recent one from a previous run.
+      # Persist translations so each build only pays DeepL for new/changed text. Three layers,
+      # freshest first — the DeepL key is a capped lifetime quota, so losing this cache burns
+      # quota that cannot be bought back:
+      #   1. Actions cache (below): fast path, but evictable (7-day idle / 10 GB repo cap, under
+      #      constant pressure from the multi-GB pages-pack-* entries saved each build).
+      #   2. data/translation-cache.json in git: durable + versioned; committed back after each
+      #      successful build ("Persist translation cache" step).
+      #   3. translation-cache.json published next to each pack (self-heal in build_pack.py).
       - name: Restore translation cache
         uses: actions/cache@v6
         with:
@@ -97,6 +102,14 @@ jobs:
           key: translation-cache-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             translation-cache-
+
+      - name: Seed translation cache from repo copy (if CI cache evicted)
+        run: |
+          if [ ! -f .cache/translation-cache.json ] && [ -f data/translation-cache.json ]; then
+            mkdir -p .cache
+            cp data/translation-cache.json .cache/translation-cache.json
+            echo "CI cache was evicted; seeded from data/translation-cache.json ($(wc -c < .cache/translation-cache.json) bytes)"
+          fi
 
       - name: Build data pack
         id: build
@@ -136,6 +149,29 @@ jobs:
       - name: Smoke test pack
         if: steps.build.outputs.changed != 'false'
         run: python scripts/smoke_test_pack.py data/packs/alps
+
+      # Durable layer 2: commit the updated cache to the repo. Only fires when the build added
+      # translations (git diff check), and the commit touches only data/translation-cache.json,
+      # which matches no workflow's path filter — so it can never retrigger a build.
+      - name: Persist translation cache to repo
+        if: steps.build.outputs.changed != 'false'
+        run: |
+          [ -f .cache/translation-cache.json ] || { echo "no cache file produced; skipping"; exit 0; }
+          cp .cache/translation-cache.json data/translation-cache.json
+          git add data/translation-cache.json
+          if git diff --cached --quiet; then
+            echo "translation cache unchanged; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Persist translation cache ($(python -c 'import json;print(len(json.load(open("data/translation-cache.json"))))') entries) [skip ci]"
+          # The build can run for an hour+; rebase over anything pushed to main meanwhile.
+          for i in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git pull --rebase origin main
+          done
+          git push origin HEAD:main
 
       - name: Cache generated data pack for app-only deploys
         if: steps.build.outputs.changed != 'false'
