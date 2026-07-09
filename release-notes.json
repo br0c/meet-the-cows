@@ -22,67 +22,67 @@
     "version": "0.6.2-beta",
     "date": "2026-07-09",
     "en": [
-      "Scrolling a short field card no longer scrolls the list behind it"
+      "Fix: Scrolling a short field card no longer scrolls the list behind it"
     ],
     "fr": [
-      "Faire défiler une fiche de terrain courte ne fait plus défiler la liste en arrière-plan"
+      "Correctif : Faire défiler une fiche de terrain courte ne fait plus défiler la liste en arrière-plan"
     ],
     "de": [
-      "Das Scrollen einer kurzen Feldkarte scrollt nicht mehr die dahinterliegende Liste"
+      "Fix: Das Scrollen einer kurzen Feldkarte scrollt nicht mehr die dahinterliegende Liste"
     ]
   },
   {
     "version": "0.6.1-beta",
     "date": "2026-07-09",
     "en": [
-      "Offline media download now runs in the background with a percentage progress bar — keep searching and browsing while it saves"
+      "Fix: Offline media download now runs in the background with a percentage progress bar — keep searching and browsing while it saves"
     ],
     "fr": [
-      "Le téléchargement des médias hors ligne s'exécute désormais en arrière-plan avec une barre de progression en pourcentage — continuez à rechercher et naviguer pendant l'enregistrement"
+      "Correctif : Le téléchargement des médias hors ligne s'exécute désormais en arrière-plan avec une barre de progression en pourcentage — continuez à rechercher et naviguer pendant l'enregistrement"
     ],
     "de": [
-      "Der Offline-Download der Medien läuft jetzt im Hintergrund mit einer Prozent-Fortschrittsanzeige — Suchen und Blättern bleiben möglich"
+      "Fix: Der Offline-Download der Medien läuft jetzt im Hintergrund mit einer Prozent-Fortschrittsanzeige — Suchen und Blättern bleiben möglich"
     ]
   },
   {
     "version": "0.6.0-beta",
     "date": "2026-07-09",
     "en": [
-      "Search any field by name or code",
-      "Contribute updates and photos from a field's page; every submission is reviewed before publication",
-      "Photos taken at the field are pre-verified from their location; far-away photos are flagged for manual review",
-      "Release notes (this screen) and licence links in Settings"
+      "New: Search any field by name or code",
+      "New: Contribute updates and photos from a field's page; every submission is reviewed before publication",
+      "New: Photos taken at the field are pre-verified from their location; far-away photos are flagged for manual review",
+      "New: Release notes (this screen) and licence links in Settings"
     ],
     "fr": [
-      "Recherche d'un terrain par nom ou code",
-      "Proposez mises à jour et photos depuis la fiche d'un terrain ; chaque contribution est relue avant publication",
-      "Les photos prises sur le terrain sont pré-vérifiées grâce à leur localisation ; les photos lointaines passent en relecture manuelle",
-      "Notes de version (cet écran) et liens de licence dans les Réglages"
+      "Nouveau : Recherche d'un terrain par nom ou code",
+      "Nouveau : Proposez mises à jour et photos depuis la fiche d'un terrain ; chaque contribution est relue avant publication",
+      "Nouveau : Les photos prises sur le terrain sont pré-vérifiées grâce à leur localisation ; les photos lointaines passent en relecture manuelle",
+      "Nouveau : Notes de version (cet écran) et liens de licence dans les Réglages"
     ],
     "de": [
-      "Feldsuche nach Name oder Code",
-      "Updates und Fotos direkt von der Feldseite beitragen; jeder Beitrag wird vor der Veröffentlichung geprüft",
-      "Am Feld aufgenommene Fotos werden über ihren Standort vorverifiziert; weit entfernte Fotos gehen in die manuelle Prüfung",
-      "Versionshinweise (dieser Bildschirm) und Lizenz-Links in den Einstellungen"
+      "Neu: Feldsuche nach Name oder Code",
+      "Neu: Updates und Fotos direkt von der Feldseite beitragen; jeder Beitrag wird vor der Veröffentlichung geprüft",
+      "Neu: Am Feld aufgenommene Fotos werden über ihren Standort vorverifiziert; weit entfernte Fotos gehen in die manuelle Prüfung",
+      "Neu: Versionshinweise (dieser Bildschirm) und Lizenz-Links in den Einstellungen"
     ]
   },
   {
     "version": "0.5.0-beta",
     "date": "2026-07-08",
     "en": [
-      "Full French / English / German localization — menus, field notes and the CUP export follow your language",
-      "Language switch in Settings (automatic from your device by default)",
-      "Major airports and military bases where a glider must not land no longer appear as landing options"
+      "New: Full French / English / German localization — menus, field notes and the CUP export follow your language",
+      "New: Language switch in Settings (automatic from your device by default)",
+      "Fix: Major airports and military bases where a glider must not land no longer appear as landing options"
     ],
     "fr": [
-      "Localisation complète français / anglais / allemand — menus, notes de terrain et export CUP suivent votre langue",
-      "Choix de la langue dans les Réglages (automatique selon l'appareil par défaut)",
-      "Les grands aéroports et bases militaires où un planeur ne doit pas se poser n'apparaissent plus comme options d'atterrissage"
+      "Nouveau : Localisation complète français / anglais / allemand — menus, notes de terrain et export CUP suivent votre langue",
+      "Nouveau : Choix de la langue dans les Réglages (automatique selon l'appareil par défaut)",
+      "Correctif : Les grands aéroports et bases militaires où un planeur ne doit pas se poser n'apparaissent plus comme options d'atterrissage"
     ],
     "de": [
-      "Vollständige Lokalisierung Französisch / Englisch / Deutsch — Menüs, Feldnotizen und CUP-Export folgen deiner Sprache",
-      "Sprachwahl in den Einstellungen (standardmäßig automatisch vom Gerät)",
-      "Große Flughäfen und Militärbasen, auf denen ein Segelflugzeug nicht landen darf, erscheinen nicht mehr als Landeoptionen"
+      "Neu: Vollständige Lokalisierung Französisch / Englisch / Deutsch — Menüs, Feldnotizen und CUP-Export folgen deiner Sprache",
+      "Neu: Sprachwahl in den Einstellungen (standardmäßig automatisch vom Gerät)",
+      "Fix: Große Flughäfen und Militärbasen, auf denen ein Segelflugzeug nicht landen darf, erscheinen nicht mehr als Landeoptionen"
     ]
   },
   {
