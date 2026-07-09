@@ -14,31 +14,43 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Sequence
 
-# Approximate outline of the Alpine arc as (lat, lon) vertices, traced clockwise from the
-# Maritime Alps. This is a generous working boundary, not the legal Alpine Convention
-# perimeter — it is meant to catch soaring terrain across FR/CH/IT/AT/DE (and the Slovenian
-# Julian Alps edge) while excluding the Paris basin, the Swiss Mittelland lakes, Munich, and
-# most of the Po plain. Tune the vertices rather than the algorithm when the edge is wrong.
+# Generous outline of the Alpine arc AND its peri-alpine foreland as (lat, lon) vertices,
+# traced clockwise from SW Provence. Deliberately not the legal Alpine Convention perimeter:
+# it includes the flatland next to the mountains that pilots use to access them — the
+# Drôme/Diois, the Grenoble/Chambéry/Annecy foreland, the Swiss Mittelland, the Bavarian
+# Alpenvorland (up to München), the Po/Piedmont-Lombardy fringe, and the Vienna basin — while
+# still excluding the Rhône valley floor (Lyon, Valence), the deep Po plain (Bologna), the
+# Venetian lagoon, and the northern lowlands (Nürnberg, Paris, Berlin). Tune the vertices
+# rather than the algorithm when an edge is wrong.
 ALPS_GEOFENCE: tuple[tuple[float, float], ...] = (
-    (43.60, 5.55),   # SW: lower Durance / Verdon (St-Auban, Vinon soaring sites)
-    (44.30, 5.50),   # Dévoluy / western Vercors
-    (45.10, 5.55),   # west of Grenoble
-    (45.90, 6.05),   # Chambéry / west of the Mont Blanc massif
-    (46.45, 6.05),   # south shore of Lake Geneva
-    (46.95, 7.05),   # Bernese Oberland, north edge
-    (47.30, 8.55),   # Glarus / south of Zürich
-    (47.60, 9.60),   # Bregenz / Lake Constance
-    (47.75, 11.00),  # Bavarian Alps (Garmisch), north edge
-    (47.80, 13.05),  # Salzburg
-    (47.90, 14.60),  # Ennstal, Austrian northern limestone Alps
-    (47.95, 16.05),  # Vienna Alps, eastern end
-    (46.85, 16.10),  # SE Austria / Slovenia border
-    (46.20, 13.55),  # Julian Alps
-    (46.00, 11.05),  # Trento / south Dolomites
-    (45.65, 9.55),   # Bergamo pre-Alps
-    (45.30, 7.35),   # south of the Aosta valley, north edge of the Po plain
-    (44.30, 7.05),   # Cuneo / eastern Maritime Alps
-    (43.85, 7.20),   # Ligurian Alps, above Monaco
+    (43.55, 5.50),   # SW Provence (St-Auban, Vinon)
+    (44.15, 5.15),   # Drôme provençale
+    (44.70, 5.00),   # Drôme / Diois (keeps Aubenasson in, Valence out)
+    (45.10, 5.15),   # western Vercors / Die
+    (45.40, 5.25),   # Grenoble foreland (St-Geoirs)
+    (45.75, 5.65),   # Chambéry / Aix-les-Bains
+    (46.10, 5.75),   # Annecy / Geneva approach
+    (46.55, 6.10),   # Lausanne / Lake Geneva
+    (47.10, 6.60),   # NW Swiss plateau
+    (47.50, 7.50),   # northern Swiss Mittelland
+    (47.55, 8.60),   # Zürich
+    (47.70, 9.60),   # Lake Constance
+    (48.10, 10.90),  # Bavarian Alpenvorland, west
+    (48.28, 11.65),  # München
+    (48.10, 12.80),  # SE Bavaria
+    (48.05, 13.50),  # Innviertel / north of Salzburg
+    (48.20, 14.40),  # Upper Austria foreland
+    (48.28, 15.60),  # Lower Austria (St. Pölten)
+    (48.20, 16.55),  # Vienna basin
+    (47.40, 16.62),  # Burgenland
+    (46.60, 16.20),  # SE Styria / Slovenia border
+    (46.00, 13.60),  # Julian Alps / Friuli
+    (45.55, 12.40),  # Venetian plain (Treviso foreland)
+    (45.35, 11.00),  # Verona / Vicenza foreland
+    (45.20, 9.40),   # Lombardy plain (keeps Milano in)
+    (45.05, 7.90),   # Piedmont (keeps Torino in)
+    (44.55, 7.10),   # Cuneo
+    (44.05, 7.30),   # Ligurian Alps, above Monaco
 )
 
 

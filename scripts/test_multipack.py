@@ -21,6 +21,7 @@ def field(country, lat, lon, name="x"):
 
 class GeofenceTests(unittest.TestCase):
     def test_points_inside_the_alps(self):
+        # Core massif plus the peri-alpine foreland pilots use to access the mountains.
         inside = {
             "Innsbruck (AT)": (47.26, 11.39),
             "Chamonix (FR)": (45.92, 6.87),
@@ -31,18 +32,35 @@ class GeofenceTests(unittest.TestCase):
             "St-Auban (FR)": (44.06, 5.99),
             "Vinon (FR)": (43.74, 5.78),
             "Gap (FR)": (44.56, 6.08),
+            "Chambéry-Aix (FR)": (45.64, 5.88),
+            "Aubenasson (FR)": (44.70, 5.15),
+            "Annecy (FR)": (45.93, 6.10),
+            "Grenoble St-Geoirs (FR)": (45.36, 5.33),
+            "Die (FR)": (44.77, 5.35),
+            "München (DE)": (48.14, 11.58),
+            "Zürich (CH)": (47.38, 8.54),
+            "Salzburg (AT)": (47.80, 13.04),
+            "Graz (AT)": (47.07, 15.44),
+            "Milano (IT)": (45.46, 9.19),
+            "Torino (IT)": (45.07, 7.69),
+            "Wien (AT)": (48.21, 16.37),
         }
         for label, (lat, lon) in inside.items():
             self.assertTrue(point_in_polygon(lat, lon, ALPS_GEOFENCE), f"{label} should be inside")
 
     def test_points_outside_the_alps(self):
+        # Beyond the foreland: valley floors and lowlands away from the mountains.
         outside = {
             "Paris": (48.85, 2.35),
             "Marseille": (43.30, 5.37),
-            "Munich": (48.14, 11.58),
             "Rome": (41.90, 12.50),
             "Berlin": (52.52, 13.40),
-            "Zürich city": (47.38, 8.54),
+            "Lyon": (45.76, 4.84),
+            "Valence-Chabeuil": (44.92, 4.97),
+            "Venezia": (45.44, 12.34),
+            "Genova": (44.41, 8.93),
+            "Nürnberg": (49.45, 11.08),
+            "Bologna": (44.49, 11.34),
         }
         for label, (lat, lon) in outside.items():
             self.assertFalse(point_in_polygon(lat, lon, ALPS_GEOFENCE), f"{label} should be outside")
