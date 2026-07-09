@@ -11,7 +11,7 @@ const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
 /** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
 
 const DEFAULT_SETTINGS = {
-  packId: 'fr-alps',
+  packIds: ['alps'],
   language: 'auto',
   safetyMarginM: 250,
   hideC: true,
@@ -23,6 +23,55 @@ const DEFAULT_SETTINGS = {
 
 // Languages the app UI and pack notes are translated into. 'auto' follows the device.
 const SUPPORTED_LANGS = ['en', 'fr', 'de'];
+
+// iOS-style share glyph (arrow rising out of a tray).
+const SHARE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// Actual combined download for the current selection: each pack's fields.json plus the media it
+// references, with shared media (referenced by several packs) counted once. Updates as packs are
+// toggled, so pilots see the real size rather than a sum that double-counts shared fields.
+function selectionDownloadBytes() {
+  let total = 0;
+  for (const p of state.activePacks || []) total += Number(p.manifest?.fieldsBytes) || 0;
+  const seen = new Set();
+  for (const field of state.fields) {
+    const base = field._base || state.currentManifestUrl || BASE_URL;
+    for (const item of field.media || []) {
+      if (!item?.url) continue;
+      const url = new URL(item.url, base).toString();
+      if (!seen.has(url)) { seen.add(url); total += Number(item.bytes) || 0; }
+    }
+  }
+  return total;
+}
+
+// Share the app itself: native share sheet on phones (the iOS icon the button mimics), else copy
+// the link to the clipboard, else a prompt with the URL to copy by hand.
+async function shareApp() {
+  const url = BASE_URL.href;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'Meet the Cows', text: t('shareText'), url });
+      return;
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    console.warn('Share failed, falling back to copy', error);
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    alert(t('shareCopied'));
+  } catch {
+    window.prompt(t('shareCopyPrompt'), url);
+  }
+}
 
 // Community contributions: the intake Worker + the Turnstile widget site key (public).
 const CONTRIB_ENDPOINT = 'https://mtc-contrib-intake.br0c.workers.dev';
@@ -46,6 +95,9 @@ const DATA_LICENCE_URL = 'https://github.com/br0c/meet-the-cows/blob/main/DATA-L
 const STRINGS = {
   en: {
     settings: 'Settings', refreshPack: 'Refresh pack', done: 'Done',
+    share: 'Share app', shareText: 'Meet the Cows — glider outlanding cockpit aid',
+    shareCopied: 'Link copied to clipboard.', shareCopyPrompt: 'Copy this link:',
+    selectedPacks: 'Selected packs', fieldsWord: 'fields', downloadSize: 'Download size',
     app: 'App', version: 'Version', status: 'Status',
     betaStatus: 'Beta — not for primary navigation',
     language: 'Language', langAuto: 'Automatic (device)',
@@ -124,6 +176,9 @@ const STRINGS = {
   },
   fr: {
     settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
+    share: 'Partager l’app', shareText: 'Meet the Cows — aide cockpit pour vaches (vols de campagne)',
+    shareCopied: 'Lien copié dans le presse-papiers.', shareCopyPrompt: 'Copiez ce lien :',
+    selectedPacks: 'Packs sélectionnés', fieldsWord: 'terrains', downloadSize: 'Taille du téléchargement',
     app: 'Application', version: 'Version', status: 'Statut',
     betaStatus: 'Bêta — pas pour la navigation principale',
     language: 'Langue', langAuto: 'Automatique (appareil)',
@@ -202,6 +257,9 @@ const STRINGS = {
   },
   de: {
     settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
+    share: 'App teilen', shareText: 'Meet the Cows — Cockpit-Hilfe für Außenlandungen',
+    shareCopied: 'Link in die Zwischenablage kopiert.', shareCopyPrompt: 'Diesen Link kopieren:',
+    selectedPacks: 'Ausgewählte Pakete', fieldsWord: 'Felder', downloadSize: 'Downloadgröße',
     app: 'App', version: 'Version', status: 'Status',
     betaStatus: 'Beta — nicht zur primären Navigation',
     language: 'Sprache', langAuto: 'Automatisch (Gerät)',
@@ -281,6 +339,13 @@ const STRINGS = {
 };
 
 // Resolve the active UI language: an explicit setting wins, otherwise follow the device.
+// Pack display name in the pilot's language: pack.names is a {en,fr,de} map from the build;
+// fall back to the English default name, then the id, for any older/partial pack entry.
+function packName(pack) {
+  const lang = resolveLang();
+  return (pack.names && (pack.names[lang] || pack.names.en)) || pack.name || pack.id;
+}
+
 function resolveLang() {
   const setting = state.settings.language;
   if (SUPPORTED_LANGS.includes(setting)) return setting;
@@ -356,6 +421,7 @@ let state = {
   offlineSync: null,
   detailScrollTop: 0,
   dataUpdateAvailable: false,
+  activePacks: [],
 };
 
 const app = document.querySelector('#app');
@@ -367,7 +433,7 @@ async function init() {
   registerServiceWorker();
   initReleaseNotes();
   await loadPackIndex();
-  await loadSelectedPack();
+  await loadSelectedPacks();
   startGps();
   render();
 }
@@ -402,8 +468,12 @@ function openReleaseNotes() {
 
 function loadSettings() {
   try {
-    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    const settings = { ...DEFAULT_SETTINGS, ...(stored && typeof stored === 'object' ? stored : {}) };
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') || {};
+    const settings = { ...DEFAULT_SETTINGS, ...(typeof stored === 'object' ? stored : {}) };
+    // Migrate the old single-pack setting (packId) to the multi-select list (packIds).
+    if (!Array.isArray(settings.packIds)) {
+      settings.packIds = stored.packId ? [stored.packId] : [...DEFAULT_SETTINGS.packIds];
+    }
     return Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map(key => [key, settings[key]]));
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -427,43 +497,79 @@ async function loadPackIndex({ cacheMode = 'no-cache' } = {}) {
   }
 }
 
-async function loadSelectedPack({ cacheMode = 'no-cache' } = {}) {
-  const pack = selectedPack();
-  if (!pack) return;
-  state.settings.packId = pack.id;
-  try {
-    const manifestUrl = manifestUrlForPack(pack);
-    const manifestRes = await fetch(manifestUrl, { cache: cacheMode });
-    if (!manifestRes.ok) throw new Error(`Manifest HTTP ${manifestRes.status}`);
-    state.packManifest = await manifestRes.json();
-    state.currentManifestUrl = manifestUrl;
-    const fieldsUrl = new URL(state.packManifest.fieldsUrl || 'fields.json', manifestUrl).toString();
-    const fieldsRes = await fetch(fieldsUrl, { cache: cacheMode });
-    if (!fieldsRes.ok) throw new Error(`Fields HTTP ${fieldsRes.status}`);
-    state.fields = await fieldsRes.json();
-    if (state.selectedFieldId && !state.fields.some(field => field.id === state.selectedFieldId)) {
-      state.selectedFieldId = null;
-    }
-    computeRows();
-    state.cacheProgress = '';
-    updateDataUpdateFlag(pack.id);
-    await checkCacheStatus();
-  } catch (error) {
-    console.error(error);
-    state.packManifest = null;
-    state.currentManifestUrl = null;
-    state.fields = [];
-    state.cacheStatus = 'error';
-    state.cacheProgress = error.message || String(error);
-  }
+function activePackIds() {
+  const chosen = (state.settings.packIds || []).filter(id => state.packs.some(p => p.id === id));
+  return chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
 }
 
-function selectedPack() {
-  return state.packs.find(p => p.id === state.settings.packId) || state.packs[0];
+function activePacks() {
+  return activePackIds().map(id => state.packs.find(p => p.id === id)).filter(Boolean);
+}
+
+function selectedPack() {  // legacy single-pack callers use the first active pack
+  return activePacks()[0] || state.packs[0];
 }
 
 function manifestUrlForPack(pack) {
   return new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, BASE_URL).toString();
+}
+
+// Load every selected pack, merge their fields and de-duplicate by id (a field shared by, e.g.,
+// the France and Alps packs appears once). Each field is stamped with the manifest URL of the
+// pack it came from so its media/docs resolve against the right pack directory.
+async function loadSelectedPacks({ cacheMode = 'no-cache' } = {}) {
+  const ids = activePackIds();
+  state.settings.packIds = ids;
+  saveSettings();
+
+  const byId = new Map();
+  const loaded = [];
+  let lastError = null;
+  for (const id of ids) {
+    const pack = state.packs.find(p => p.id === id);
+    if (!pack) continue;
+    try {
+      const manifestUrl = manifestUrlForPack(pack);
+      const manifestRes = await fetch(manifestUrl, { cache: cacheMode });
+      if (!manifestRes.ok) throw new Error(`Manifest HTTP ${manifestRes.status}`);
+      const manifest = await manifestRes.json();
+      const fieldsUrl = new URL(manifest.fieldsUrl || 'fields.json', manifestUrl).toString();
+      const fieldsRes = await fetch(fieldsUrl, { cache: cacheMode });
+      if (!fieldsRes.ok) throw new Error(`Fields HTTP ${fieldsRes.status}`);
+      const fields = await fieldsRes.json();
+      for (const field of fields) {
+        if (!byId.has(field.id)) {
+          field._base = manifestUrl;
+          field._packId = id;
+          byId.set(field.id, field);
+        }
+      }
+      loaded.push({ pack, manifest, manifestUrl });
+    } catch (error) {
+      console.error(error);
+      lastError = error;
+    }
+  }
+
+  state.activePacks = loaded;
+  state.fields = [...byId.values()];
+  state.packManifest = loaded[0]?.manifest || null;
+  state.currentManifestUrl = loaded[0]?.manifestUrl || null;
+  if (state.selectedFieldId && !state.fields.some(field => field.id === state.selectedFieldId)) {
+    state.selectedFieldId = null;
+  }
+  computeRows();
+  state.cacheProgress = '';
+  if (!loaded.length) {
+    state.packManifest = null;
+    state.currentManifestUrl = null;
+    state.fields = [];
+    state.cacheStatus = 'error';
+    state.cacheProgress = lastError?.message || 'No packs loaded';
+    return;
+  }
+  updateDataUpdateFlag();
+  await checkCacheStatus();
 }
 
 async function reloadSelectedPack() {
@@ -472,12 +578,12 @@ async function reloadSelectedPack() {
   render();
 
   try {
-    const pack = selectedPack();
-    if (pack) {
-      const deleted = await clearPackCache(pack.id);
-      state.cacheProgress = t('cpCleared', deleted);
-      render();
+    let deleted = 0;
+    for (const pack of activePacks()) {
+      deleted += await clearPackCache(pack.id);
     }
+    state.cacheProgress = t('cpCleared', deleted);
+    render();
 
     state.cacheProgress = t('cpFetchIndex');
     render();
@@ -485,7 +591,7 @@ async function reloadSelectedPack() {
 
     state.cacheProgress = t('cpFetchPack');
     render();
-    await loadSelectedPack({ cacheMode: 'reload' });
+    await loadSelectedPacks({ cacheMode: 'reload' });
 
     if (state.cacheStatus !== 'error') {
       state.cacheProgress = t('cpFresh', state.cacheProgress || t('cpNotChecked'));
@@ -641,7 +747,7 @@ function render() {
         <div class="title-row">
           <button id="settingsToggle" class="icon-button" title="${t('settings')}" aria-label="${t('settings')}">⚙</button>
           <h1>🐄 Meet the Cows</h1>
-          <button id="refreshPack" class="icon-button" title="${t('refreshPack')}" aria-label="${t('refreshPack')}">↻</button>
+          <button id="sharePack" class="icon-button" title="${t('share')}" aria-label="${t('share')}">${SHARE_ICON}</button>
         </div>
         ${renderStatus()}
       </header>
@@ -761,7 +867,15 @@ function renderUpdateBanner() {
 }
 
 function renderSettingsPage() {
-  const packs = state.packs.map(p => `<option value="${p.id}" ${p.id === state.settings.packId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+  const activeIds = new Set(activePackIds());
+  const packList = state.packs.map(p => {
+    const count = typeof p.fieldsCount === 'number' ? `${p.fieldsCount} ${t('fieldsWord')}` : '';
+    return `<label class="pack-option">
+        <input type="checkbox" class="packCheck" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
+        <span class="pack-name">${escapeHtml(packName(p))}</span>
+        <span class="pack-meta">${escapeHtml(count)}</span>
+      </label>`;
+  }).join('');
   const manifest = state.packManifest;
   const langOptions = [
     ['auto', t('langAuto')],
@@ -789,13 +903,12 @@ function renderSettingsPage() {
 
       <div class="settings-card">
         <h3>${t('pack')}</h3>
-        <label for="packSelect">${t('selectedPack')}</label>
-        <select id="packSelect">${packs}</select>
+        <label>${t('selectedPacks')}</label>
+        <div class="pack-list">${packList}</div>
         <dl class="meta-list">
-          <div><dt>${t('name')}</dt><dd>${escapeHtml(manifest?.name || t('noPackLoaded'))}</dd></div>
-          <div><dt>${t('version')}</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
-          <div><dt>${t('updated')}</dt><dd>${escapeHtml(manifest?.updatedAt || manifest?.generatedAt || manifest?.source?.updatedAt || '—')}</dd></div>
+          <div><dt>${t('downloadSize')}</dt><dd class="download-total">${escapeHtml(formatBytes(selectionDownloadBytes()))}</dd></div>
           <div><dt>${t('fieldsCount')}</dt><dd>${state.fields.length}</dd></div>
+          <div><dt>${t('version')}</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
           <div><dt>${t('offline')}</dt><dd>${escapeHtml(cacheStatusLabel(state.cacheStatus))}</dd></div>
           <div><dt>${t('progress')}</dt><dd>${escapeHtml(state.cacheProgress || '—')}</dd></div>
         </dl>
@@ -968,7 +1081,7 @@ function renderFieldList() {
 function renderDetail(field) {
   const row = state.computedRows.find(r => r.field.id === field.id);
   const glideNote = row?.glideReason ? `<p class="inline-note">${escapeHtml(t('glideNotShown', row.glideReason))}</p>` : '';
-  const media = (field.media || []).map(item => renderMediaItem(item)).join('') || `<p class="footer-note">${escapeHtml(t('noMedia'))}</p>`;
+  const media = (field.media || []).map(item => renderMediaItem(item, field._base)).join('') || `<p class="footer-note">${escapeHtml(t('noMedia'))}</p>`;
   const kindLabel = field.kind === 'airfield' ? t('airfield') : t('outlanding');
   return `
     <div class="detail-backdrop" id="detailBackdrop">
@@ -1023,9 +1136,9 @@ function formatFrequency(field) {
   return [mhz, first.type || first.description].filter(Boolean).join(' ') || '—';
 }
 
-function renderMediaItem(item) {
+function renderMediaItem(item, base) {
   const caption = item.caption || item.source || item.type;
-  const mediaUrl = new URL(item.url, state.currentManifestUrl || BASE_URL).toString();
+  const mediaUrl = new URL(item.url, base || state.currentManifestUrl || BASE_URL).toString();
   if (item.type === 'pdf') {
     return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">${t('openPdf')}</a> · ${escapeHtml(caption)}</div></div>`;
   }
@@ -1362,19 +1475,24 @@ function attachEvents() {
   });
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
-  document.querySelector('#refreshPack')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
+  document.querySelector('#sharePack')?.addEventListener('click', shareApp);
   document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
   document.querySelector('#languageSelect')?.addEventListener('change', e => {
     state.settings.language = e.target.value;
     saveSettings();
     render();
   });
-  document.querySelector('#packSelect')?.addEventListener('change', async e => {
-    state.settings.packId = e.target.value;
+  document.querySelectorAll('.packCheck').forEach(cb => cb.addEventListener('change', async () => {
+    const chosen = Array.from(document.querySelectorAll('.packCheck')).filter(c => c.checked).map(c => c.value);
+    if (!chosen.length) { render(); return; }  // keep at least one pack selected
+    state.settings.packIds = chosen;
     saveSettings();
-    await loadSelectedPack();
+    state.cacheStatus = 'refreshing';
+    state.cacheProgress = t('cpFetchPack');
     render();
-  });
+    await loadSelectedPacks();
+    render();
+  }));
   document.querySelector('#sortMode')?.addEventListener('change', e => {
     state.settings.sortMode = e.target.value;
     saveSettings();
@@ -1449,11 +1567,11 @@ async function clearPackCache(packId) {
 
 function buildOfflineMediaUrls() {
   const urls = new Set();
-  if (state.packManifest && state.currentManifestUrl) {
-    for (const field of state.fields) {
-      for (const media of field.media || []) {
-        if (media?.url) urls.add(new URL(media.url, state.currentManifestUrl).toString());
-      }
+  for (const field of state.fields) {
+    const base = field._base || state.currentManifestUrl;
+    if (!base) continue;
+    for (const media of field.media || []) {
+      if (media?.url) urls.add(new URL(media.url, base).toString());
     }
   }
   return Array.from(urls);
@@ -1502,11 +1620,14 @@ async function downloadOfflinePack() {
     await new Promise(resolve => setTimeout(resolve, 0));
   }
 
-  // Record the synced baseline so future data updates only fetch the delta.
-  try {
-    storeSyncedManifest(selectedPack()?.id, await fetchMediaManifest());
-  } catch (error) {
-    console.warn('Could not record synced media manifest', error);
+  // Record the synced baseline for every active pack so the data-update flag is accurate.
+  for (const { pack, manifestUrl } of state.activePacks || []) {
+    try {
+      const res = await fetch(new URL('media-manifest.json', manifestUrl).toString(), { cache: 'reload' });
+      if (res.ok) storeSyncedManifest(pack.id, await res.json());
+    } catch (error) {
+      console.warn('Could not record synced media manifest for', pack.id, error);
+    }
   }
 
   state.offlineSync = null;
@@ -1538,22 +1659,14 @@ async function checkCacheStatus() {
   state.cacheProgress = t('cpCached', cached, urls.length);
 }
 
-function updateDataUpdateFlag(packId) {
+function updateDataUpdateFlag() {
   // Only prompt pilots who already downloaded a pack: a newer published version than the one
-  // they last synced means their offline media/docs are stale.
-  const synced = localStorage.getItem(syncedVersionKey(packId)) || '';
-  const live = state.packManifest?.version || '';
-  state.dataUpdateAvailable = Boolean(synced && live && synced !== live);
-}
-
-function mediaManifestUrl() {
-  return new URL('media-manifest.json', state.currentManifestUrl || BASE_URL).toString();
-}
-
-async function fetchMediaManifest() {
-  const res = await fetch(mediaManifestUrl(), { cache: 'reload' });
-  if (!res.ok) throw new Error(`media-manifest HTTP ${res.status}`);
-  return res.json();
+  // they last synced means their offline media/docs are stale. True if ANY active pack drifted.
+  state.dataUpdateAvailable = (state.activePacks || []).some(({ pack, manifest }) => {
+    const synced = localStorage.getItem(syncedVersionKey(pack.id)) || '';
+    const live = manifest?.version || '';
+    return Boolean(synced && live && synced !== live);
+  });
 }
 
 function storeSyncedManifest(packId, manifest) {
@@ -1571,88 +1684,33 @@ function isPackMediaOrDocUrl(url) {
   return url.includes('/packs/') && (url.includes('/media/') || url.includes('/docs/'));
 }
 
-// Incremental data update: refresh field text, then download only the media/docs whose
-// content hash changed (per media-manifest.json), and evict files no longer referenced.
+// Data update across the selected packs: reload each pack's data, re-verify/download its media,
+// then evict cached media/docs the current selection no longer references. (The old per-file
+// hash delta was single-pack only — relative media paths collide across packs — so multi-select
+// does a straightforward full refresh: correctness over saving a few downloads.)
 async function syncPackDelta() {
   if (!('caches' in window)) {
     alert(t('noCacheApi'));
     return;
   }
-  const packId = selectedPack()?.id;
   state.cacheStatus = 'downloading';
   state.cacheProgress = t('cpRefreshing');
   render();
 
-  await loadSelectedPack({ cacheMode: 'reload' });
+  await loadSelectedPacks({ cacheMode: 'reload' });
+  await downloadOfflinePack();
 
-  let manifest;
   try {
-    manifest = await fetchMediaManifest();
+    const cache = await caches.open(DATA_CACHE);
+    const referenced = new Set(buildOfflineMediaUrls());
+    for (const request of await cache.keys()) {
+      if (isPackMediaOrDocUrl(request.url) && !referenced.has(request.url)) {
+        await cache.delete(request);
+      }
+    }
   } catch (error) {
-    // Older pack without a hash manifest: fall back to a full verify/download.
-    console.warn('No media manifest; full download fallback', error);
-    await downloadOfflinePack();
-    return;
+    console.warn('Stale-media eviction skipped', error);
   }
-
-  const files = manifest.files || {};
-  const stored = (() => { try { return JSON.parse(localStorage.getItem(syncedManifestKey(packId)) || '{}'); } catch { return {}; } })();
-  const storedFiles = stored.files || {};
-  const cache = await caches.open(DATA_CACHE);
-
-  const referenced = new Set();
-  for (const field of state.fields) {
-    for (const media of field.media || []) {
-      if (media?.url) referenced.add(media.url);
-    }
-  }
-
-  // New/changed referenced files, plus any referenced file missing from the cache.
-  const cachedUrls = new Set((await cache.keys()).map(request => request.url));
-  const toDownload = [];
-  for (const key of referenced) {
-    const entry = files[key];
-    if (!entry) continue;
-    const abs = new URL(key, state.currentManifestUrl).toString();
-    const changed = !storedFiles[key] || storedFiles[key].h !== entry.h;
-    if (changed || !cachedUrls.has(abs)) toDownload.push(abs);
-  }
-
-  if (toDownload.length) {
-    state.offlineSync = { done: 0, total: toDownload.length, failed: 0 };
-    render();  // once: show the floating bar; updates below are in place
-  }
-  let ok = 0;
-  let failed = 0;
-  for (let i = 0; i < toDownload.length; i += 1) {
-    const abs = toDownload[i];
-    try {
-      const res = await fetch(abs, { cache: 'reload' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await cache.put(abs, res.clone());
-      ok += 1;
-    } catch (error) {
-      if (await cache.match(abs)) ok += 1; else failed += 1;
-    }
-    state.offlineSync = { done: i + 1, total: toDownload.length, failed };
-    updateOfflineBar();
-    await new Promise(resolve => setTimeout(resolve, 0));
-  }
-
-  // Evict cached media/docs that the new pack no longer references.
-  const referencedAbs = new Set([...referenced].map(key => new URL(key, state.currentManifestUrl).toString()));
-  let evicted = 0;
-  for (const request of await cache.keys()) {
-    if (isPackMediaOrDocUrl(request.url) && !referencedAbs.has(request.url)) {
-      if (await cache.delete(request)) evicted += 1;
-    }
-  }
-
-  storeSyncedManifest(packId, manifest);
-  state.offlineSync = null;
-  state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
-  state.cacheProgress = t('cpUpdated', ok, evicted, failed);
-  render();
 }
 
 // --- SeeYou CUP export, generated in-app from the loaded fields (offline, always in sync) ---
@@ -1777,7 +1835,9 @@ function generateCupText() {
 
 async function exportCup() {
   if (!state.fields.length) { alert(t('noPackYet')); return; }
-  const filename = `meet-the-cows-${selectedPack()?.id || 'pack'}-${resolveLang()}.cup`;
+  const ids = activePackIds();
+  const packLabel = ids.length === 1 ? ids[0] : 'selection';
+  const filename = `meet-the-cows-${packLabel}-${resolveLang()}.cup`;
   const text = generateCupText();
   // Prefer the share sheet on phones (Save to Files, or open straight into SeeYou).
   try {

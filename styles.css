@@ -37,9 +37,19 @@ a { color: var(--accent); }
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(10px);
 }
-.title-row { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 6px; }
-.title-row h1 { margin: 0; font-size: 17px; letter-spacing: .2px; text-align: center; }
+.title-row { display: flex; align-items: center; gap: 6px; }
+.title-row h1 { flex: 1; margin: 0; font-size: 17px; letter-spacing: .2px; text-align: center; }
 .icon-button { padding: 7px 8px; min-width: 36px; border-radius: 10px; }
+.icon-button svg { display: block; margin: 0 auto; }
+
+/* Multi-select pack picker */
+.pack-list { display: grid; gap: 8px; margin: 4px 0 12px; }
+.pack-option { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; min-height: 42px; }
+.pack-option input { width: auto; transform: scale(1.2); }
+.pack-name { font-size: 15px; color: var(--text); }
+.pack-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.meta-list dd.download-total { font-weight: 650; font-variant-numeric: tabular-nums; }
 .gps-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

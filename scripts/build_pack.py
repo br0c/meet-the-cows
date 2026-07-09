@@ -47,6 +47,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+# Pack registry + geofence (scripts/packs.py). Ensure this file's directory is importable
+# whether build_pack is run as a script or loaded by path in tests.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import packs  # noqa: E402
+
 DEFAULT_CUPX_URL = "https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx"
 OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 OURAIRPORTS_RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv"
@@ -140,7 +145,7 @@ _DEEPL_LOCK = threading.Lock()
 # v9: major commercial/controlled airports and military bases are excluded from the pack.
 # v10: translation cache is published with the pack (self-heal for the evictable CI cache).
 # v11: merged community contributions (contributions/) are folded into notes and media.
-PACK_SCHEMA_VERSION = 11
+PACK_SCHEMA_VERSION = 12
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -221,7 +226,8 @@ def main() -> None:
     parser.add_argument("--streckenflug-workers", type=int, default=int(os.environ.get("STRECKENFLUG_WORKERS", "1")), help="Number of concurrent streckenflug detail/image workers. Default 1; use 4-8 for full builds.")
     parser.add_argument("--no-streckenflug-images", action="store_true", help="Import streckenflug.at fields but skip downloading their public full-resolution images")
     parser.add_argument("--vac-candidate-mode", choices=["glider", "pack", "all"], default="glider", help="Which official VAC candidates to try: glider OpenAIP/pack airfields, existing pack only, or every airport from the coordinate source")
-    parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory")
+    parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory (single-pack), or the packs root directory when --multi-pack is set")
+    parser.add_argument("--multi-pack", action="store_true", help="Build every pack in scripts/packs.py (FR/CH/DE/IT/AT country packs + Alps) from one merged, translated field set. --out is treated as the packs root; --countries/--streckenflug-countries are forced to all build countries.")
     parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
     parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
@@ -258,8 +264,20 @@ def main() -> None:
             print(f"DeepL usage endpoint unavailable; per-build cap = {_DEEPL_BUDGET_CHARS}", file=sys.stderr)
 
     root = Path.cwd()
-    out_dir = root / args.out
-    cache_dir = root / ".cache" / args.pack_id
+    if args.multi_pack:
+        # One merged build feeds every pack, so pull every build country and stage the media in
+        # a shared tree that each pack later copies just the files it references from.
+        args.countries = list(packs.BUILD_COUNTRIES)
+        args.streckenflug_countries = list(packs.BUILD_COUNTRIES)
+        out_root = root / args.out
+        # Media is written once into a shared tree that every pack references (so a field shared
+        # by, e.g., France and Alps is downloaded once), not copied per pack. This tree deploys.
+        out_dir = out_root / "_shared"
+        cache_dir = root / ".cache" / "_multi"
+    else:
+        out_root = None
+        out_dir = root / args.out
+        cache_dir = root / ".cache" / args.pack_id
     raw_dir = cache_dir / "raw"
     media_dir = out_dir / "media"
     docs_dir = out_dir / "docs" / "vac"
@@ -270,8 +288,11 @@ def main() -> None:
     load_translation_cache(root / ".cache" / "translation-cache.json")
     seed_translation_cache_from_url(args.state_url)
 
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
+    # Wipe the whole packs root in multi-pack mode (drops stale packs + old staging); otherwise
+    # just the single pack directory.
+    wipe_target = out_root if args.multi_pack else out_dir
+    if wipe_target.exists():
+        shutil.rmtree(wipe_target)
     media_dir.mkdir(parents=True, exist_ok=True)
     docs_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -412,78 +433,53 @@ def main() -> None:
     # field ids line up with the published pack.
     contrib_notes, contrib_photos = merge_contributions(fields, root / "contributions", media_dir)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
-    fields_path = out_dir / "fields.json"
-    fields_path.write_text(json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    manifest = {
-        "id": args.pack_id,
-        "name": args.pack_name,
-        "version": source_state_version(source_state),
-        "generatedAt": dt.datetime.now(dt.UTC).isoformat(),
-        "isSample": False,
-        "fieldsUrl": "fields.json",
-        "fieldsCount": len(fields),
-        "mediaCount": count_media_items(fields),
-        "vacCount": vac_count,
-        "vacOnlyAirfieldsCreated": vac_created_airfields,
-        "streckenflugCount": streckenflug_count,
-        "contributionNotes": contrib_notes,
-        "contributionPhotos": contrib_photos,
-        "sources": [
-            {
-                "name": "planeur-net / Guide des Aires de Sécurité",
-                "url": str(args.cupx),
-                "note": "Outlanding data and photos; verify upstream permission/licence before rehosting publicly.",
-            },
-            {
-                "name": "Service de l’Information Aéronautique (SIA) VAC",
-                "url": resolved_vac_root or "not imported",
-                "updatedAt": resolved_vac_date or None,
-                "licence": "Licence Ouverte for SIA public digital products, subject to attribution and no misrepresentation.",
-            },
-            {
-                "name": "OpenAIP glider airfields" if args.airfield_source == "openaip" else "OurAirports airport/runway coordinates",
-                "url": args.openaip_base_url if args.airfield_source == "openaip" else (args.airports_csv if args.include_vac_airfields else "not used"),
-                "countries": [str(c).upper() for c in args.countries],
-                "note": "Used to discover glider-relevant official airfields and coordinates; verify official country AIP/VAC documents.",
-            },
-            {
-                "name": "streckenflug.at Landout Database",
-                "url": args.streckenflug_url if args.include_streckenflug else "not used",
-                "countries": [str(c).upper() for c in args.streckenflug_countries] if args.include_streckenflug else [],
-                "note": "Public list/detail pages scraped when enabled. Additional landout source; verify against current local knowledge before flight.",
-            },
-            {
-                "name": "Radio frequency sources",
-                "url": "SIA VAC text/OpenAIP/CUP notes" if frequency_index else "not used",
-                "note": "Frequencies are helper data only; verify current official VAC/AIP publications before use.",
-            },
-        ],
-        "notices": [
-            "Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.",
-            "Check official/current SIA documents before flight. VAC PDFs are cycle-specific.",
-            "VAC-only airfield coordinates may come from a non-authoritative open dataset; the attached SIA VAC is the official source.",
-        ],
-    }
-    (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    generated_at = dt.datetime.now(dt.UTC).isoformat()
+    version = source_state_version(source_state)
+    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index)
 
-    # Per-file hash+size manifest so the app can download only changed media/docs.
-    media_manifest_count = write_media_manifest(out_dir, manifest["version"])
+    if args.multi_pack:
+        # Slice the one merged, translated field set into every pack (media staged in out_dir).
+        write_multi_packs(
+            fields, packs.PACK_DEFINITIONS, out_dir, out_root,
+            version=version, generated_at=generated_at, source_state=source_state,
+            sources=sources, notices=PACK_NOTICES,
+        )
+    else:
+        (out_dir / "fields.json").write_text(json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest = {
+            "id": args.pack_id,
+            "name": args.pack_name,
+            "version": version,
+            "generatedAt": generated_at,
+            "isSample": False,
+            "fieldsUrl": "fields.json",
+            "fieldsCount": len(fields),
+            "mediaCount": count_media_items(fields),
+            "vacCount": vac_count,
+            "vacOnlyAirfieldsCreated": vac_created_airfields,
+            "streckenflugCount": streckenflug_count,
+            "contributionNotes": contrib_notes,
+            "contributionPhotos": contrib_photos,
+            "sources": sources,
+            "notices": PACK_NOTICES,
+        }
+        (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Per-file hash+size manifest so the app can download only changed media/docs.
+        write_media_manifest(out_dir, version)
+        # Publish the source fingerprint so the next build can detect "nothing changed".
+        state_out = dict(source_state)
+        state_out["builtAt"] = generated_at
+        (out_dir / "state.json").write_text(json.dumps(state_out, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Publish the cache with the pack (next to state.json) so an evicted CI cache can be
+        # re-seeded on the next build — see seed_translation_cache_from_url.
+        (out_dir / "translation-cache.json").write_text(
+            json.dumps(_TRANSLATION_CACHE, ensure_ascii=False, sort_keys=True, indent=0),
+            encoding="utf-8",
+        )
 
-    # Publish the source fingerprint so the next build can detect "nothing changed".
-    state_out = dict(source_state)
-    state_out["builtAt"] = dt.datetime.now(dt.UTC).isoformat()
-    (out_dir / "state.json").write_text(json.dumps(state_out, ensure_ascii=False, indent=2), encoding="utf-8")
     write_build_status(root, changed=True)
-
     save_translation_cache()
-
-    # Publish the cache with the pack (next to state.json) so an evicted CI cache can be
-    # re-seeded on the next build — see seed_translation_cache_from_url.
-    (out_dir / "translation-cache.json").write_text(
-        json.dumps(_TRANSLATION_CACHE, ensure_ascii=False, sort_keys=True, indent=0),
-        encoding="utf-8",
-    )
 
     if not args.keep_raw:
         shutil.rmtree(cache_dir, ignore_errors=True)
@@ -502,8 +498,9 @@ def main() -> None:
             used, limit = usage
             pct = (used / limit * 100) if limit else 0
             print(f"DeepL usage after build: {used:,}/{limit:,} ({pct:.1f}% of lifetime used)", file=sys.stderr)
+    label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
-        f"Built {args.pack_name}: {len(fields)} entries, {copied_media} CUP photos, "
+        f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
         f"{vac_count} VAC PDFs, {vac_created_airfields} VAC-only airfields, "
         f"{streckenflug_count} streckenflug fields, {streckenflug_media_count} streckenflug images"
     )
@@ -688,6 +685,257 @@ def write_media_manifest(out_dir: Path, version: str) -> int:
     payload = {"version": version, "count": len(files), "files": files}
     (out_dir / "media-manifest.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return len(files)
+
+
+# ---------------------------------------------------------------------------
+# Multi-pack output: one merged, translated field set is sliced into several
+# packs (country packs + the Alps geofence pack). Each pack is self-contained —
+# it carries copies of just the media/docs its own fields reference — so it can
+# be downloaded on its own. Field ids are pack-independent (stable_id has no
+# pack component), so a field shared by, say, the France and Alps packs keeps
+# the same id and the app dedupes it when both packs are loaded.
+# ---------------------------------------------------------------------------
+
+def pack_media_refs(fields: Iterable[dict[str, Any]]) -> set[str]:
+    """Pack-relative media/doc paths (media[].url, thumbnailUrl, docs.vac) referenced by
+    `fields`. Absolute URLs are skipped — only local files get copied into a pack."""
+    refs: set[str] = set()
+    for field in fields:
+        for item in field.get("media") or []:
+            for key in ("url", "thumbnailUrl"):
+                url = clean(item.get(key))
+                if url and "://" not in url:
+                    refs.add(url)
+        vac = clean((field.get("docs") or {}).get("vac"))
+        if vac and "://" not in vac:
+            refs.add(vac)
+    return refs
+
+
+def copy_pack_media(refs: set[str], staging_dir: Path, pack_dir: Path) -> tuple[int, int]:
+    """Copy each referenced file from the shared staging tree into the pack, preserving its
+    relative path so the stored media URLs still resolve. Returns (files copied, total bytes)."""
+    copied = 0
+    total = 0
+    for rel in sorted(refs):
+        src = staging_dir / rel
+        if not src.is_file():
+            print(f"  media ref missing in staging: {rel}", file=sys.stderr)
+            continue
+        dst = pack_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        copied += 1
+        total += src.stat().st_size
+    return copied, total
+
+
+def pack_selector_label(pack_def: dict[str, Any]) -> str:
+    if pack_def.get("geofence"):
+        return f"geofence:{pack_def['geofence']}"
+    return "countries:" + ",".join(pack_def.get("countries", ()))
+
+
+def shared_media_bytes(subset: list[dict[str, Any]]) -> tuple[int, int]:
+    """(unique media file count, total bytes) a pack references from the shared tree, deduped by
+    URL — media items carry a `bytes` size stamped by finalize_shared_media()."""
+    seen: set[str] = set()
+    total = 0
+    for field in subset:
+        for item in field.get("media") or []:
+            url = clean(item.get("url"))
+            if url and url not in seen:
+                seen.add(url)
+                total += int(item.get("bytes") or 0)
+    return len(seen), total
+
+
+def write_pack(
+    pack_def: dict[str, Any],
+    subset: list[dict[str, Any]],
+    staging_dir: Path,
+    out_root: Path,
+    *,
+    version: str,
+    generated_at: str,
+    source_state: dict[str, Any],
+    sources: list[dict[str, Any]],
+    notices: list[str],
+    shared_media: bool = False,
+) -> dict[str, Any]:
+    """Write one pack directory (fields.json, manifest.json, state.json — plus media/docs copies
+    and a media-manifest in self-contained mode) and return its manifest with sizes.
+
+    In shared_media mode the media lives once in the packs' _shared tree and each field already
+    references it (via finalize_shared_media), so nothing is copied and sizeBytes is the pack's
+    footprint of that shared tree (fields.json + the unique files it references)."""
+    pack_dir = out_root / pack_def["id"]
+    if pack_dir.exists():
+        shutil.rmtree(pack_dir)
+    pack_dir.mkdir(parents=True)
+
+    subset = sorted(subset, key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
+    fields_bytes = json.dumps(subset, ensure_ascii=False, indent=2).encode("utf-8")
+    (pack_dir / "fields.json").write_bytes(fields_bytes)
+
+    if shared_media:
+        media_files, media_bytes = shared_media_bytes(subset)
+    else:
+        media_files, media_bytes = copy_pack_media(pack_media_refs(subset), staging_dir, pack_dir)
+
+    # Localized display names travel with the pack so the app can show each in the pilot's
+    # language; `name` stays as an English default for any non-localizing consumer.
+    names = pack_def.get("names") or {"en": pack_def.get("name") or pack_def["id"]}
+    display_name = names.get("en") or next(iter(names.values()), pack_def["id"])
+    manifest = {
+        "id": pack_def["id"],
+        "name": display_name,
+        "names": names,
+        "version": version,
+        "generatedAt": generated_at,
+        "isSample": False,
+        "fieldsUrl": "fields.json",
+        "fieldsCount": len(subset),
+        "mediaCount": count_media_items(subset),
+        "mediaFiles": media_files,
+        "fieldsBytes": len(fields_bytes),
+        # This pack's own footprint (fields.json + the media it references). The app sums fieldsBytes
+        # across the selection and unions media by URL for the true combined download size.
+        "sizeBytes": len(fields_bytes) + media_bytes,
+        "selector": pack_selector_label(pack_def),
+        "sources": sources,
+        "notices": notices,
+    }
+    (pack_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not shared_media:
+        write_media_manifest(pack_dir, version)
+
+    state_out = dict(source_state)
+    state_out["builtAt"] = generated_at
+    (pack_dir / "state.json").write_text(json.dumps(state_out, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+def write_packs_index(manifests: list[dict[str, Any]], out_root: Path) -> None:
+    """Write packs.json listing every built pack with its size, for the app's pack picker."""
+    index = {
+        "schemaVersion": 2,
+        "updatedAt": dt.datetime.now(dt.UTC).isoformat(),
+        "packs": [
+            {
+                "id": m["id"],
+                "name": m["name"],
+                "names": m.get("names"),
+                "manifestUrl": f"packs/{m['id']}/manifest.json",
+                "sizeBytes": m["sizeBytes"],
+                "fieldsCount": m["fieldsCount"],
+            }
+            for m in manifests
+        ],
+    }
+    (out_root / "packs.json").write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# Shared across every pack in a build (the sources differ only by the args, the notices are fixed).
+PACK_NOTICES = [
+    "Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.",
+    "Check official/current SIA documents before flight. VAC PDFs are cycle-specific.",
+    "VAC-only airfield coordinates may come from a non-authoritative open dataset; the attached SIA VAC is the official source.",
+]
+
+
+def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
+                       frequency_index: dict[str, Any]) -> list[dict[str, Any]]:
+    """The attribution/sources block shared by every pack's manifest."""
+    return [
+        {
+            "name": "planeur-net / Guide des Aires de Sécurité",
+            "url": str(args.cupx),
+            "note": "Outlanding data and photos; verify upstream permission/licence before rehosting publicly.",
+        },
+        {
+            "name": "Service de l’Information Aéronautique (SIA) VAC",
+            "url": resolved_vac_root or "not imported",
+            "updatedAt": resolved_vac_date or None,
+            "licence": "Licence Ouverte for SIA public digital products, subject to attribution and no misrepresentation.",
+        },
+        {
+            "name": "OpenAIP glider airfields" if args.airfield_source == "openaip" else "OurAirports airport/runway coordinates",
+            "url": args.openaip_base_url if args.airfield_source == "openaip" else (args.airports_csv if args.include_vac_airfields else "not used"),
+            "countries": [str(c).upper() for c in args.countries],
+            "note": "Used to discover glider-relevant official airfields and coordinates; verify official country AIP/VAC documents.",
+        },
+        {
+            "name": "streckenflug.at Landout Database",
+            "url": args.streckenflug_url if args.include_streckenflug else "not used",
+            "countries": [str(c).upper() for c in args.streckenflug_countries] if args.include_streckenflug else [],
+            "note": "Public list/detail pages scraped when enabled. Additional landout source; verify against current local knowledge before flight.",
+        },
+        {
+            "name": "Radio frequency sources",
+            "url": "SIA VAC text/OpenAIP/CUP notes" if frequency_index else "not used",
+            "note": "Frequencies are helper data only; verify current official VAC/AIP publications before use.",
+        },
+    ]
+
+
+def finalize_shared_media(fields: list[dict[str, Any]], shared_dir: Path) -> None:
+    """Stamp each media item with its file size (`bytes`) and rewrite its URL to point at the
+    shared _shared tree, so every pack references one copy. Idempotent (skips already-rewritten
+    URLs and absolute URLs). Applied to the merged fields once, before slicing into packs."""
+    for field in fields:
+        for item in field.get("media") or []:
+            for key in ("url", "thumbnailUrl"):
+                rel = clean(item.get(key))
+                if not rel or "://" in rel or rel.startswith("../_shared/"):
+                    continue
+                if key == "url":
+                    path = shared_dir / rel
+                    if path.is_file():
+                        item["bytes"] = path.stat().st_size
+                item[key] = f"../_shared/{rel}"
+        docs = field.get("docs")
+        if isinstance(docs, dict):
+            vac = clean(docs.get("vac"))
+            if vac and "://" not in vac and not vac.startswith("../_shared/"):
+                docs["vac"] = f"../_shared/{vac}"
+
+
+def write_multi_packs(
+    fields: list[dict[str, Any]],
+    pack_defs: Sequence[dict[str, Any]],
+    staging_dir: Path,
+    out_root: Path,
+    *,
+    version: str,
+    generated_at: str,
+    source_state: dict[str, Any],
+    sources: list[dict[str, Any]],
+    notices: list[str],
+) -> list[dict[str, Any]]:
+    """Slice the merged field set into every pack, then write packs.json. Media is shared: it lives
+    once in staging_dir (the deployed _shared tree) and every field references it. The translation
+    cache is published next to each pack's state.json so an evicted CI cache can self-heal."""
+    finalize_shared_media(fields, staging_dir)
+    cache_blob = json.dumps(_TRANSLATION_CACHE, ensure_ascii=False, sort_keys=True, indent=0)
+    manifests: list[dict[str, Any]] = []
+    for pack_def in pack_defs:
+        subset = packs.select_pack_fields(fields, pack_def)
+        manifest = write_pack(
+            pack_def, subset, staging_dir, out_root,
+            version=version, generated_at=generated_at, source_state=source_state,
+            sources=sources, notices=notices, shared_media=True,
+        )
+        (out_root / pack_def["id"] / "translation-cache.json").write_text(cache_blob, encoding="utf-8")
+        manifests.append(manifest)
+        print(
+            f"  pack {pack_def['id']:5} : {manifest['fieldsCount']:4d} fields, "
+            f"{manifest['mediaFiles']:4d} media files, {manifest['sizeBytes'] / 1e6:6.1f} MB",
+            file=sys.stderr,
+        )
+    write_packs_index(manifests, out_root)
+    print(f"Wrote {len(manifests)} packs + packs.json to {out_root}", file=sys.stderr)
+    return manifests
 
 
 def extract_cup_and_pictures(blob: bytes) -> tuple[str, dict[str, bytes]]:
@@ -2552,6 +2800,62 @@ def localize_note_cached(text: str, lang: str) -> tuple[str, str]:
     return text, ""
 
 
+# A "Label: value" line: a short label (no colon in it) followed by a non-empty value.
+_LABEL_LINE_RE = re.compile(r"^([^:]{1,24}):\s+(\S.*)$", re.S)
+# A "- feedback" bullet: leading marker kept, body translated.
+_BULLET_RE = re.compile(r"^(\s*-\s+)(.*)$", re.S)
+
+
+def _translate_line(line: str, lang: str) -> str:
+    """Translate one note line into `lang`, reusing sub-segments.
+
+    A "Label: value" line translates the label and the value separately, so the (highly
+    repetitive) German labels — "Oberfläche:", "Richtung:", "Besichtigung:" … — are cached
+    once across every field instead of once per distinct value. A "- feedback" bullet keeps its
+    marker and translates only the body. Blank lines pass through untouched.
+    """
+    if not line.strip():
+        return line
+    prefix = ""
+    content = line
+    bullet = _BULLET_RE.match(content)
+    if bullet:
+        prefix, content = bullet.group(1), bullet.group(2)
+    labelled = _LABEL_LINE_RE.match(content)
+    if labelled:
+        label, value = labelled.group(1), labelled.group(2)
+        t_label, _ = localize_note_cached(f"{label}:", lang)
+        t_value, _ = localize_note_cached(value, lang)
+        return f"{prefix}{t_label} {t_value}"
+    translated, _ = localize_note_cached(content, lang)
+    return f"{prefix}{translated}"
+
+
+def localize_note_reusing_segments(text: str, lang: str) -> str:
+    """Translate `text` into `lang`, reusing already-translated lines/labels (a lightweight
+    translation memory).
+
+    Whole-note exact matches short-circuit first: a note we already paid to translate — or any
+    identical repeat — is free, so this never re-spends on the FR/CH/IT notes already cached and
+    only sends genuinely new lines to DeepL. Multi-line notes are translated line by line and
+    reassembled in order; a single-line note falls straight through to the line translator.
+    """
+    whole_key = f"{lang}\x1f{normalize_space(text)}"
+    with _DEEPL_LOCK:
+        hit = _TRANSLATION_CACHE.get(whole_key)
+    if hit is not None:
+        _TRANSLATION_STATS["cache"] += 1
+        return hit
+    lines = text.split("\n")
+    if len(lines) <= 1:
+        return _translate_line(text, lang)
+    assembled = "\n".join(_translate_line(line, lang) for line in lines)
+    # Remember the assembled note so an identical multi-line note is O(1) next build.
+    with _DEEPL_LOCK:
+        _TRANSLATION_CACHE.setdefault(whole_key, assembled)
+    return assembled
+
+
 def localize_note(text: str, source_lang: str | None = None) -> dict[str, str]:
     """Turn a native note string into {"en","fr","de"}.
 
@@ -2569,7 +2873,7 @@ def localize_note(text: str, source_lang: str | None = None) -> dict[str, str]:
         out: dict[str, str] = {source_lang: text}
         for lang in APP_LANGUAGES:
             if lang != source_lang:
-                out[lang], _ = localize_note_cached(text, lang)
+                out[lang] = localize_note_reusing_segments(text, lang)
         return {lang: out.get(lang, "") for lang in APP_LANGUAGES}
     english, detected = localize_note_cached(text, "en")
     out = {"en": text if detected == "en" else english}

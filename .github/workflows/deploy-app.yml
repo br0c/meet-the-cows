@@ -90,22 +90,22 @@ jobs:
         if: steps.data_changes.outputs.data_changed != 'true'
         uses: actions/cache/restore@v6
         with:
-          path: data/packs/${{ env.PACK_ID }}
+          path: data/packs
           key: pages-pack-${{ github.run_id }}
           restore-keys: |
             pages-pack-
 
-      - name: Restore pack from current Pages deployment when cache is unavailable
+      - name: Restore packs from current Pages deployment when cache is unavailable
         if: steps.data_changes.outputs.data_changed != 'true'
         run: |
-          if [ -f "data/packs/${PACK_ID}/manifest.json" ]; then
-            echo "Using cached data pack."
+          if [ -f "data/packs/packs.json" ]; then
+            echo "Using cached data packs."
             exit 0
           fi
 
+          # Fetches every pack listed in packs.json plus the shared media tree.
           python3 scripts/fetch_pages_pack.py \
             --base-url "${PAGES_BASE_URL}" \
-            --pack-id "${PACK_ID}" \
             --output data/packs
 
       - name: Assemble Pages site
@@ -118,15 +118,11 @@ jobs:
           mkdir -p dist/site/src
           cp src/app.js dist/site/src/app.js
 
-          cp -R "data/packs/${PACK_ID}" "dist/site/packs/${PACK_ID}"
-
-          python scripts/make_pages_pack_index.py \
-            --pack-id "${PACK_ID}" \
-            --pack-name "${PACK_NAME}" \
-            --output dist/site/packs/packs.json
+          # All pack dirs + shared media (_shared) + packs.json.
+          cp -R data/packs/. dist/site/packs/
 
           find dist/site -maxdepth 3 -type f | sort | head -80
-          du -sh dist/site dist/site/packs dist/site/packs/${PACK_ID}
+          du -sh dist/site dist/site/packs
 
       - name: Setup Pages
         if: steps.data_changes.outputs.data_changed != 'true'
