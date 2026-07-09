@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.6.2-beta",
+    "date": "2026-07-09",
+    "en": [
+      "Scrolling a short field card no longer scrolls the list behind it"
+    ],
+    "fr": [
+      "Faire défiler une fiche de terrain courte ne fait plus défiler la liste en arrière-plan"
+    ],
+    "de": [
+      "Das Scrollen einer kurzen Feldkarte scrollt nicht mehr die dahinterliegende Liste"
+    ]
+  },
+  {
     "version": "0.6.1-beta",
     "date": "2026-07-09",
     "en": [

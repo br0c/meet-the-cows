@@ -197,7 +197,10 @@ a { color: var(--accent); }
 .meta-list dt { color: var(--muted); font-size: 12px; }
 .meta-list dd { margin: 0; overflow: hidden; text-overflow: ellipsis; }
 
-.detail-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 10; display: flex; align-items: flex-end; }
+/* Lock the page while an overlay is open so scrolling a short bottom-sheet doesn't scroll the
+   list behind it. */
+body.modal-open { overflow: hidden; }
+.detail-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 10; display: flex; align-items: flex-end; overscroll-behavior: contain; }
 .detail { width: 100%; max-height: 94vh; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; background: var(--bg); border-top: 1px solid var(--line); border-radius: 20px 20px 0 0; padding: 14px; }
 .detail-title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; margin: 8px 0 4px; }
 .detail h2 { margin: 0; min-width: 0; }

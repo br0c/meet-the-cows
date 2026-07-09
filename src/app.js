@@ -1,4 +1,4 @@
-const APP_VERSION = '0.6.1-beta';
+const APP_VERSION = '0.6.2-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -654,6 +654,9 @@ function render() {
       ${renderOfflineBar()}
     </div>
   `;
+  // Lock background scroll while an overlay is open, so scrolling a short bottom-sheet doesn't
+  // fall through to the list behind it.
+  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showReleaseNotes));
   attachEvents();
   requestAnimationFrame(() => {
     const detail = document.querySelector('.detail');
