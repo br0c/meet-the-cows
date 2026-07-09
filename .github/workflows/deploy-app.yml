@@ -60,34 +60,13 @@ jobs:
             || { echo "ERROR: release-notes.json has no entry for ${version} — write the release note before deploying"; exit 1; }
           echo "release note present for ${version}"
 
-      - name: Detect data-pack changes
-        id: data_changes
-        run: |
-          if [ "${{ github.event_name }}" != "push" ]; then
-            echo "data_changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          before="${{ github.event.before }}"
-          if [ -z "${before}" ] || [ "${before}" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
-            before="$(git rev-list --max-parents=0 HEAD)"
-          fi
-
-          git diff --name-only "${before}" "${{ github.sha }}" > changed-files.txt
-          cat changed-files.txt
-
-          if grep -Eq '^(scripts/build_pack\.py|scripts/smoke_test_pack\.py|requirements\.txt|\.github/workflows/build-data-pack\.yml)$' changed-files.txt; then
-            echo "data_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "data_changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Skip app deploy when data workflow is responsible
-        if: steps.data_changes.outputs.data_changed == 'true'
-        run: echo "Data-pack files changed; build-data-pack.yml will rebuild and deploy the complete site."
-
+      # This workflow ALWAYS deploys — it must not defer to build-data-pack.yml. An earlier
+      # version skipped itself when data-pack files changed in the same push, assuming the data
+      # workflow would deploy the complete site; but that workflow short-circuits when the pack
+      # sources are unchanged, and the app shell never shipped (0.7.1-beta went out this way).
+      # The shared pages-deploy concurrency group serializes the two workflows, so the rare
+      # double deploy on a mixed push is harmless — the later run ships the same packs again.
       - name: Restore latest generated data pack cache
-        if: steps.data_changes.outputs.data_changed != 'true'
         uses: actions/cache/restore@v6
         with:
           path: data/packs
@@ -96,7 +75,6 @@ jobs:
             pages-pack-
 
       - name: Restore packs from current Pages deployment when cache is unavailable
-        if: steps.data_changes.outputs.data_changed != 'true'
         run: |
           if [ -f "data/packs/packs.json" ]; then
             echo "Using cached data packs."
@@ -109,7 +87,6 @@ jobs:
             --output data/packs
 
       - name: Assemble Pages site
-        if: steps.data_changes.outputs.data_changed != 'true'
         run: |
           mkdir -p dist/site/packs
 
@@ -125,23 +102,19 @@ jobs:
           du -sh dist/site dist/site/packs
 
       - name: Setup Pages
-        if: steps.data_changes.outputs.data_changed != 'true'
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
-        if: steps.data_changes.outputs.data_changed != 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages-${{ github.run_attempt }}
           path: dist/site
 
       - name: Deploy to GitHub Pages
-        if: steps.data_changes.outputs.data_changed != 'true'
         id: deployment
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 
       - name: Show URL
-        if: steps.data_changes.outputs.data_changed != 'true'
         run: echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
