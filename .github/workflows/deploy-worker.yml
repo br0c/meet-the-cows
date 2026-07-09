@@ -3,9 +3,8 @@ name: Deploy contribution Worker
 # Deploys the Cloudflare Worker in worker/ (the contribution intake endpoint) so
 # the live Worker stays in sync with the repo instead of a manual `wrangler deploy`.
 #
-# Manual for now: run it from the Actions tab ("Run workflow") once the
-# contribution flow is validated end-to-end. To auto-deploy on merges that touch
-# the Worker, uncomment the push trigger below.
+# Auto-deploys on pushes to main that touch the Worker, and can also be run
+# on demand from the Actions tab ("Run workflow").
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN   - token with Account -> Workers Scripts -> Edit, scoped to your account
@@ -15,11 +14,11 @@ name: Deploy contribution Worker
 # needed here.
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  #   paths:
-  #     - "worker/**"
-  #     - ".github/workflows/deploy-worker.yml"
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - ".github/workflows/deploy-worker.yml"
 
 permissions:
   contents: read
