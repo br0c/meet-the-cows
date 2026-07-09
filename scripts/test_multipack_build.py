@@ -95,6 +95,26 @@ class MultiPackWriteTests(unittest.TestCase):
         # Chamonix is in both packs under the exact same id -> app can dedupe it.
         self.assertIn("fr-cham", fr_ids & alps_ids)
 
+    def test_shared_media_mode_copies_nothing_and_dedupes_size(self):
+        # finalize stamps byte sizes and rewrites URLs to the shared tree; write_pack(shared) then
+        # sizes from those bytes (unique per URL) and copies no media into the pack.
+        bp.finalize_shared_media(self.fields, self.staging)
+        cham = next(f for f in self.fields if f["name"] == "Chamonix")
+        self.assertTrue(cham["media"][0]["url"].startswith("../_shared/media/"))
+        self.assertEqual(cham["media"][0]["bytes"], 1000)
+
+        subset = packs.select_pack_fields(self.fields, {"id": "alps", "geofence": "alps"})
+        m = bp.write_pack({"id": "alps", "name": "Alps", "geofence": "alps"}, subset,
+                          self.staging, self.out, shared_media=True, **self.common)
+        pack = self.out / "alps"
+        self.assertFalse((pack / "media").exists())          # nothing copied
+        self.assertFalse((pack / "media-manifest.json").exists())
+        fb = len((pack / "fields.json").read_bytes())
+        self.assertEqual(m["fieldsBytes"], fb)
+        # Chamonix(1000) + Innsbruck jpg(700) + shared VAC pdf(2000)
+        self.assertEqual(m["sizeBytes"], fb + 1000 + 700 + 2000)
+        self.assertEqual(m["mediaFiles"], 3)
+
     def test_packs_index_lists_all_with_sizes(self):
         manifests = []
         for pd in ({"id": "fr", "name": "France", "countries": ("FR",)},

@@ -109,19 +109,21 @@ jobs:
           # is still bounded by the remaining lifetime quota, and translations are cached, so
           # this is a one-time cost; routine incremental rebuilds spend almost nothing.
           DEEPL_MAX_CHARS: "0"
-          PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/${{ env.PACK_ID }}/state.json
+          # Incremental check + translation-cache self-heal read one pack's state; the fingerprint
+          # is identical across packs, so any pack works. Use the Alps pack as the canonical one.
+          PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/alps/state.json
           FORCE_FULL: ${{ steps.mode.outputs.force_full }}
         run: |
-          rm -rf "data/packs/${PACK_ID}" ".cache/${PACK_ID}" "dist/site"
+          rm -rf data/packs .cache/_multi dist/site
 
+          # Multi-pack: one merged, translated build sliced into FR/CH/DE/IT/AT + Alps. Country
+          # lists are forced to all build countries by --multi-pack, so they are not passed here.
           python scripts/build_pack.py \
+            --multi-pack \
+            --out data/packs \
             --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
-            --pack-id "${PACK_ID}" \
-            --pack-name "${PACK_NAME}" \
-            --countries FR CH IT \
             --airfield-source openaip \
             --include-streckenflug \
-            --streckenflug-countries FR CH IT \
             --streckenflug-workers 8 \
             --vac-root auto \
             --vac-date auto \
@@ -133,13 +135,13 @@ jobs:
 
       - name: Smoke test pack
         if: steps.build.outputs.changed != 'false'
-        run: python scripts/smoke_test_pack.py
+        run: python scripts/smoke_test_pack.py data/packs/alps
 
       - name: Cache generated data pack for app-only deploys
         if: steps.build.outputs.changed != 'false'
         uses: actions/cache/save@v6
         with:
-          path: data/packs/${{ env.PACK_ID }}
+          path: data/packs
           key: pages-pack-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Assemble Pages site
@@ -152,15 +154,11 @@ jobs:
           mkdir -p dist/site/src
           cp src/app.js dist/site/src/app.js
 
-          cp -R "data/packs/${PACK_ID}" "dist/site/packs/${PACK_ID}"
-
-          python scripts/make_pages_pack_index.py \
-            --pack-id "${PACK_ID}" \
-            --pack-name "${PACK_NAME}" \
-            --output dist/site/packs/packs.json
+          # Every pack dir + the shared media tree (_shared) + packs.json (written by the build).
+          cp -R data/packs/. dist/site/packs/
 
           find dist/site -maxdepth 3 -type f | sort | head -80
-          du -sh dist/site dist/site/packs dist/site/packs/${PACK_ID}
+          du -sh dist/site dist/site/packs
 
       - name: Setup Pages
         if: steps.build.outputs.changed != 'false'

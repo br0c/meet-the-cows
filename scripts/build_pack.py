@@ -270,7 +270,9 @@ def main() -> None:
         args.countries = list(packs.BUILD_COUNTRIES)
         args.streckenflug_countries = list(packs.BUILD_COUNTRIES)
         out_root = root / args.out
-        out_dir = out_root / "_staging"
+        # Media is written once into a shared tree that every pack references (so a field shared
+        # by, e.g., France and Alps is downloaded once), not copied per pack. This tree deploys.
+        out_dir = out_root / "_shared"
         cache_dir = root / ".cache" / "_multi"
     else:
         out_root = None
@@ -479,9 +481,6 @@ def main() -> None:
     write_build_status(root, changed=True)
     save_translation_cache()
 
-    # The staging tree only feeds the per-pack media copies; drop it so it never deploys.
-    if args.multi_pack and not args.keep_raw:
-        shutil.rmtree(out_dir, ignore_errors=True)
     if not args.keep_raw:
         shutil.rmtree(cache_dir, ignore_errors=True)
 
@@ -737,6 +736,20 @@ def pack_selector_label(pack_def: dict[str, Any]) -> str:
     return "countries:" + ",".join(pack_def.get("countries", ()))
 
 
+def shared_media_bytes(subset: list[dict[str, Any]]) -> tuple[int, int]:
+    """(unique media file count, total bytes) a pack references from the shared tree, deduped by
+    URL — media items carry a `bytes` size stamped by finalize_shared_media()."""
+    seen: set[str] = set()
+    total = 0
+    for field in subset:
+        for item in field.get("media") or []:
+            url = clean(item.get("url"))
+            if url and url not in seen:
+                seen.add(url)
+                total += int(item.get("bytes") or 0)
+    return len(seen), total
+
+
 def write_pack(
     pack_def: dict[str, Any],
     subset: list[dict[str, Any]],
@@ -748,9 +761,14 @@ def write_pack(
     source_state: dict[str, Any],
     sources: list[dict[str, Any]],
     notices: list[str],
+    shared_media: bool = False,
 ) -> dict[str, Any]:
-    """Write one pack directory (fields.json, manifest.json, media/docs copies, media-manifest,
-    state.json) and return its manifest, including the total download size in bytes."""
+    """Write one pack directory (fields.json, manifest.json, state.json — plus media/docs copies
+    and a media-manifest in self-contained mode) and return its manifest with sizes.
+
+    In shared_media mode the media lives once in the packs' _shared tree and each field already
+    references it (via finalize_shared_media), so nothing is copied and sizeBytes is the pack's
+    footprint of that shared tree (fields.json + the unique files it references)."""
     pack_dir = out_root / pack_def["id"]
     if pack_dir.exists():
         shutil.rmtree(pack_dir)
@@ -760,7 +778,10 @@ def write_pack(
     fields_bytes = json.dumps(subset, ensure_ascii=False, indent=2).encode("utf-8")
     (pack_dir / "fields.json").write_bytes(fields_bytes)
 
-    media_files, media_bytes = copy_pack_media(pack_media_refs(subset), staging_dir, pack_dir)
+    if shared_media:
+        media_files, media_bytes = shared_media_bytes(subset)
+    else:
+        media_files, media_bytes = copy_pack_media(pack_media_refs(subset), staging_dir, pack_dir)
 
     manifest = {
         "id": pack_def["id"],
@@ -772,15 +793,17 @@ def write_pack(
         "fieldsCount": len(subset),
         "mediaCount": count_media_items(subset),
         "mediaFiles": media_files,
-        # Total bytes a pilot downloads for this pack on its own (fields.json + its media/docs).
-        # Shown in the picker so the download size is known before selecting.
+        "fieldsBytes": len(fields_bytes),
+        # This pack's own footprint (fields.json + the media it references). The app sums fieldsBytes
+        # across the selection and unions media by URL for the true combined download size.
         "sizeBytes": len(fields_bytes) + media_bytes,
         "selector": pack_selector_label(pack_def),
         "sources": sources,
         "notices": notices,
     }
     (pack_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    write_media_manifest(pack_dir, version)
+    if not shared_media:
+        write_media_manifest(pack_dir, version)
 
     state_out = dict(source_state)
     state_out["builtAt"] = generated_at
@@ -850,6 +873,28 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
     ]
 
 
+def finalize_shared_media(fields: list[dict[str, Any]], shared_dir: Path) -> None:
+    """Stamp each media item with its file size (`bytes`) and rewrite its URL to point at the
+    shared _shared tree, so every pack references one copy. Idempotent (skips already-rewritten
+    URLs and absolute URLs). Applied to the merged fields once, before slicing into packs."""
+    for field in fields:
+        for item in field.get("media") or []:
+            for key in ("url", "thumbnailUrl"):
+                rel = clean(item.get(key))
+                if not rel or "://" in rel or rel.startswith("../_shared/"):
+                    continue
+                if key == "url":
+                    path = shared_dir / rel
+                    if path.is_file():
+                        item["bytes"] = path.stat().st_size
+                item[key] = f"../_shared/{rel}"
+        docs = field.get("docs")
+        if isinstance(docs, dict):
+            vac = clean(docs.get("vac"))
+            if vac and "://" not in vac and not vac.startswith("../_shared/"):
+                docs["vac"] = f"../_shared/{vac}"
+
+
 def write_multi_packs(
     fields: list[dict[str, Any]],
     pack_defs: Sequence[dict[str, Any]],
@@ -862,8 +907,10 @@ def write_multi_packs(
     sources: list[dict[str, Any]],
     notices: list[str],
 ) -> list[dict[str, Any]]:
-    """Slice the merged field set into every pack, then write packs.json. The translation cache
-    is published next to each pack's state.json so an evicted CI cache can self-heal from any pack."""
+    """Slice the merged field set into every pack, then write packs.json. Media is shared: it lives
+    once in staging_dir (the deployed _shared tree) and every field references it. The translation
+    cache is published next to each pack's state.json so an evicted CI cache can self-heal."""
+    finalize_shared_media(fields, staging_dir)
     cache_blob = json.dumps(_TRANSLATION_CACHE, ensure_ascii=False, sort_keys=True, indent=0)
     manifests: list[dict[str, Any]] = []
     for pack_def in pack_defs:
@@ -871,7 +918,7 @@ def write_multi_packs(
         manifest = write_pack(
             pack_def, subset, staging_dir, out_root,
             version=version, generated_at=generated_at, source_state=source_state,
-            sources=sources, notices=notices,
+            sources=sources, notices=notices, shared_media=True,
         )
         (out_root / pack_def["id"] / "translation-cache.json").write_text(cache_blob, encoding="utf-8")
         manifests.append(manifest)

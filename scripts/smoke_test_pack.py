@@ -143,10 +143,13 @@ def main() -> int:
                 image_count += 1
 
             media_path = (pack_dir / url).resolve()
+            # Media may live in the pack dir (self-contained) or in the shared _shared tree next to
+            # it (multi-pack), so allow anything under the packs root, but nothing outside it.
+            allowed_root = pack_dir.parent.resolve()
             try:
-                media_path.relative_to(pack_dir.resolve())
+                media_path.relative_to(allowed_root)
             except ValueError:
-                errors.append(f"field {field_id or i} media escapes pack dir: {url}")
+                errors.append(f"field {field_id or i} media escapes packs dir: {url}")
                 continue
 
             if not media_path.exists():
@@ -157,12 +160,12 @@ def main() -> int:
     if not fields:
         errors.append("fields.json contains no fields")
 
-    # The in-app update mechanism depends on these two files: media-manifest.json drives the
-    # incremental media sync, state.json drives the build short-circuit. A pack missing either
-    # silently degrades (full re-downloads / rebuilds every run), so fail the deploy instead.
+    # state.json drives the build short-circuit; a pack missing it rebuilds every run. The optional
+    # media-manifest.json (self-contained packs only) drove the old per-file delta; multi-pack packs
+    # share media and don't ship one, so its absence is only a warning.
     media_manifest_path = pack_dir / "media-manifest.json"
     if not media_manifest_path.exists():
-        errors.append(f"missing media-manifest.json: {media_manifest_path}")
+        warnings.append("no media-manifest.json (expected for shared-media/multi-pack builds)")
     else:
         media_manifest = load_json(media_manifest_path)
         if not isinstance(media_manifest, dict) or not isinstance(media_manifest.get("files"), dict):
@@ -172,8 +175,6 @@ def main() -> int:
                 f"media-manifest version ({media_manifest.get('version')}) differs from "
                 f"manifest version ({manifest.get('version')})"
             )
-        elif media_count and not media_manifest["files"]:
-            errors.append("media-manifest.json lists no files although fields reference media")
     if not (pack_dir / "state.json").exists():
         errors.append(f"missing state.json: {pack_dir / 'state.json'}")
 
