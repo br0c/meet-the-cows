@@ -140,6 +140,7 @@ jobs:
             --streckenflug-workers 8 \
             --vac-root auto \
             --vac-date auto \
+            --at-vac-root auto \
             --include-vac-airfields
 
       - name: No source changes (skipped rebuild)

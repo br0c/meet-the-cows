@@ -74,6 +74,8 @@ DIFFICULTY_MAP = {
 MEDIA_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
 ICAO_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{2}$")
 ICAO_FR_RE = re.compile(r"^LF[A-Z0-9]{2}$")
+ICAO_AT_RE = re.compile(r"^LO[A-Z]{2}$")
+AT_EAIP_ROOT = "https://eaip.austrocontrol.at/"
 COUNTRY_ICAO_PREFIXES = {"FR": ("LF",), "CH": ("LS",), "IT": ("LI",)}
 OPENAIP_AIRPORT_TYPES = {
     0: "Airport (civil/military)",
@@ -145,7 +147,8 @@ _DEEPL_LOCK = threading.Lock()
 # v9: major commercial/controlled airports and military bases are excluded from the pack.
 # v10: translation cache is published with the pack (self-heal for the evictable CI cache).
 # v11: merged community contributions (contributions/) are folded into notes and media.
-PACK_SCHEMA_VERSION = 12
+# v13: Austrian AD 2 chart PDFs (Austro Control eAIP) attached to AT airfields.
+PACK_SCHEMA_VERSION = 13
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -230,6 +233,7 @@ def main() -> None:
     parser.add_argument("--multi-pack", action="store_true", help="Build every pack in scripts/packs.py (FR/CH/DE/IT/AT country packs + Alps) from one merged, translated field set. --out is treated as the packs root; --countries/--streckenflug-countries are forced to all build countries.")
     parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
     parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
+    parser.add_argument("--at-vac-root", default=os.environ.get("AT_VAC_ROOT", "auto"), help="Austro Control eAIP cycle base URL (…/lo/<YYMMDD>/), auto to detect the effective cycle, or none to disable Austrian charts")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
     parser.add_argument("--include-vac-airfields", action="store_true", help="Create VAC-only airfield entries when an LFxx VAC exists but the airfield is absent from the CUP")
     parser.add_argument("--airports-csv", default=os.environ.get("AIRPORTS_CSV", OURAIRPORTS_AIRPORTS_URL), help="Airport CSV URL/path with at least ident,name,latitude_deg,longitude_deg,elevation_ft; defaults to OurAirports")
@@ -305,9 +309,11 @@ def main() -> None:
         resolved_vac_root, inferred_vac_date = resolve_vac_root(args.vac_root, raw_dir)
         if resolved_vac_date.lower() == "auto":
             resolved_vac_date = inferred_vac_date or ""
+    at_vac_base, at_vac_date, at_vac_index = resolve_at_vac_root(args.at_vac_root)
     source_state = build_source_state(
         cupx=source_version_tag(args.cupx),
         vac=resolved_vac_date or resolved_vac_root,
+        vac_at=at_vac_date or at_vac_base,
         streckenflug=(
             streckenflug_list_fingerprint(args.streckenflug_url, args.streckenflug_countries, raw_dir)
             if args.include_streckenflug else ""
@@ -373,11 +379,23 @@ def main() -> None:
     streckenflug_media_count = 0
     streckenflug_fields: list[dict[str, Any]] = []
 
-    # VAC import and streckenflug import are independent network-heavy tasks after
+    at_vac_count = 0
+
+    # VAC imports (FR + AT) and streckenflug are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
-    # remote source while the other could already be downloading.
+    # remote source while the others could already be downloading. The importers mutate
+    # disjoint fields (LF vs LO codes), so concurrent attachment is safe.
     futures: dict[Any, str] = {}
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        if at_vac_index:
+            futures[executor.submit(
+                import_at_vac_pdfs,
+                fields=fields,
+                ad2_index=at_vac_index,
+                docs_dir=docs_dir,
+                at_vac_date=at_vac_date,
+                max_vac=args.max_vac,
+            )] = "at_vac"
         if resolved_vac_root:
             futures[executor.submit(
                 import_vac_pdfs,
@@ -411,6 +429,8 @@ def main() -> None:
                 vac_result = future.result()
                 vac_count = vac_result["downloaded"]
                 vac_created_airfields = vac_result["createdAirfields"]
+            elif task == "at_vac":
+                at_vac_count = future.result()
             elif task == "streckenflug":
                 streckenflug_fields = future.result()
                 streckenflug_count = len(streckenflug_fields)
@@ -436,7 +456,7 @@ def main() -> None:
 
     generated_at = dt.datetime.now(dt.UTC).isoformat()
     version = source_state_version(source_state)
-    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index)
+    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_vac_base, at_vac_date)
 
     if args.multi_pack:
         # Slice the one merged, translated field set into every pack (media staged in out_dir).
@@ -457,6 +477,7 @@ def main() -> None:
             "fieldsCount": len(fields),
             "mediaCount": count_media_items(fields),
             "vacCount": vac_count,
+            "atVacCount": at_vac_count,
             "vacOnlyAirfieldsCreated": vac_created_airfields,
             "streckenflugCount": streckenflug_count,
             "contributionNotes": contrib_notes,
@@ -501,7 +522,7 @@ def main() -> None:
     label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
         f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
-        f"{vac_count} VAC PDFs, {vac_created_airfields} VAC-only airfields, "
+        f"{vac_count} FR + {at_vac_count} AT VAC PDFs, {vac_created_airfields} VAC-only airfields, "
         f"{streckenflug_count} streckenflug fields, {streckenflug_media_count} streckenflug images"
     )
 
@@ -592,11 +613,12 @@ def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_d
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
 
 
-def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "") -> dict[str, Any]:
+def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "") -> dict[str, Any]:
     return {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "cupx": cupx,
         "vac": vac,
+        "vacAt": vac_at,
         "streckenflug": streckenflug,
         "contributions": contributions,
     }
@@ -622,7 +644,7 @@ def contributions_fingerprint(contrib_dir: Path) -> str:
 def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
     if not previous:
         return False
-    keys = ("schemaVersion", "cupx", "vac", "streckenflug", "contributions")
+    keys = ("schemaVersion", "cupx", "vac", "vacAt", "streckenflug", "contributions")
     return all(str(previous.get(k) or "") == str(current.get(k) or "") for k in keys)
 
 
@@ -839,13 +861,14 @@ def write_packs_index(manifests: list[dict[str, Any]], out_root: Path) -> None:
 # Shared across every pack in a build (the sources differ only by the args, the notices are fixed).
 PACK_NOTICES = [
     "Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.",
-    "Check official/current SIA documents before flight. VAC PDFs are cycle-specific.",
+    "Check official/current SIA (FR) and Austro Control (AT) documents before flight. VAC/AD chart PDFs are cycle-specific.",
     "VAC-only airfield coordinates may come from a non-authoritative open dataset; the attached SIA VAC is the official source.",
 ]
 
 
 def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
-                       frequency_index: dict[str, Any]) -> list[dict[str, Any]]:
+                       frequency_index: dict[str, Any],
+                       at_vac_base: str = "", at_vac_date: str = "") -> list[dict[str, Any]]:
     """The attribution/sources block shared by every pack's manifest."""
     return [
         {
@@ -858,6 +881,12 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "url": resolved_vac_root or "not imported",
             "updatedAt": resolved_vac_date or None,
             "licence": "Licence Ouverte for SIA public digital products, subject to attribution and no misrepresentation.",
+        },
+        {
+            "name": "Austro Control eAIP (AIP Austria) AD 2 charts",
+            "url": at_vac_base or "not imported",
+            "updatedAt": at_vac_date or None,
+            "note": "Official Austrian aerodrome charts; non-commercial use — commercial reproduction requires Austro Control's written consent.",
         },
         {
             "name": "OpenAIP glider airfields" if args.airfield_source == "openaip" else "OurAirports airport/runway coordinates",
@@ -1910,6 +1939,121 @@ def make_open_airfield_entry(
         "source": {"name": "OpenAIP", "importedAt": dt.date.today().isoformat(), "packId": pack_id},
         "media": [],
     }
+
+# --- Austria: Austro Control eAIP AD 2 charts -------------------------------------------------
+# The Austrian eAIP publishes one English PDF per aerodrome at a stable, anonymous URL:
+#   {cycle_base}PART_3/AD_2/{PRI|SRY|MIL}/AD_2_<ICAO>/LO_AD_2_<ICAO>_{en|de}.pdf
+# The eAIP root lists every published cycle as ./lo/<YYMMDD>/index.htm; the effective one is
+# the latest whose date is not in the future. Attach-only: AT airfields come from OpenAIP.
+
+def _fetch_at_vac(url: str) -> bytes:
+    """Separate function so tests can stub network access."""
+    request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.7"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read()
+
+
+def at_cycle_date(cycle: str) -> str:
+    """'260709' -> '2026-07-09' (eAIP cycle directories are YYMMDD)."""
+    return f"20{cycle[0:2]}-{cycle[2:4]}-{cycle[4:6]}"
+
+
+def pick_at_cycle(cycles: list[str], today: dt.date | None = None) -> str:
+    """The effective cycle: latest not in the future (upcoming AIRAC cycles are pre-published)."""
+    today = today or dt.date.today()
+    effective = [c for c in sorted(set(cycles)) if dt.date.fromisoformat(at_cycle_date(c)) <= today]
+    if effective:
+        return effective[-1]
+    return sorted(set(cycles))[0] if cycles else ""
+
+
+def parse_at_ad2_index(html: str, base_url: str) -> dict[str, str]:
+    """ICAO -> absolute chart-PDF URL from the eAIP AD 2 index page.
+
+    Prefers the English edition; falls back to German for the few aerodromes (military LOX*)
+    that publish German-only."""
+    english: dict[str, str] = {}
+    german: dict[str, str] = {}
+    for path, code, lang in re.findall(
+            r'href="(PART_3/AD_2/(?:PRI|SRY|MIL)/AD_2_(LO[A-Z]{2})/LO_AD_2_\2_(en|de)\.pdf)"', html):
+        (english if lang == "en" else german)[code] = urllib.parse.urljoin(base_url, path)
+    return {**german, **english}
+
+
+def resolve_at_vac_root(spec: str) -> tuple[str, str, dict[str, str]]:
+    """Resolve (cycle_base_url, cycle_date, {icao: pdf_url}); ('', '', {}) when disabled/failed.
+
+    Best-effort like the SIA resolver: a broken eAIP must not fail the whole build — the
+    fingerprint key just stays empty and charts are attached again on the next healthy run.
+    """
+    if not spec or spec.lower() in {"none", "off"}:
+        return "", "", {}
+    try:
+        if spec.lower() == "auto":
+            root_html = _fetch_at_vac(AT_EAIP_ROOT).decode("latin-1", "replace")
+            cycles = re.findall(r'href="\./lo/(\d{6})/index\.htm"', root_html)
+            cycle = pick_at_cycle(cycles)
+            if not cycle:
+                print("AT VAC: no cycles found on the eAIP root; skipping", file=sys.stderr)
+                return "", "", {}
+            base = f"{AT_EAIP_ROOT}lo/{cycle}/"
+            date = at_cycle_date(cycle)
+        else:
+            base = spec if spec.endswith("/") else spec + "/"
+            match = re.search(r"/lo/(\d{6})/", base)
+            date = at_cycle_date(match.group(1)) if match else ""
+        ad2_html = _fetch_at_vac(urllib.parse.urljoin(base, "ad_2.htm")).decode("latin-1", "replace")
+        index = parse_at_ad2_index(ad2_html, base)
+        if not index:
+            print(f"AT VAC: AD 2 index at {base} lists no aerodrome PDFs; skipping", file=sys.stderr)
+            return "", "", {}
+        return base, date, index
+    except Exception as error:  # noqa: BLE001 - source outage must not fail the build
+        print(f"AT VAC: resolve failed ({error}); skipping Austrian charts", file=sys.stderr)
+        return "", "", {}
+
+
+def import_at_vac_pdfs(
+    *,
+    fields: list[dict[str, Any]],
+    ad2_index: dict[str, str],
+    docs_dir: Path,
+    at_vac_date: str,
+    max_vac: int,
+) -> int:
+    """Attach Austro Control AD 2 PDFs to existing AT airfields. Returns the download count."""
+    by_code = index_fields_by_code(fields)
+    candidates = sorted(code for code in by_code if ICAO_AT_RE.match(code) and code in ad2_index)
+    progress = Progress(len(candidates), "AT VAC PDFs")
+    downloaded = 0
+    errors = 0
+    for index, code in enumerate(candidates, start=1):
+        if max_vac and downloaded >= max_vac:
+            progress.update(index - 1, extra=f"downloaded {downloaded}, skipped limit", force=True)
+            break
+        try:
+            data = _fetch_at_vac(ad2_index[code])
+        except Exception as error:  # noqa: BLE001 - one missing chart must not fail the build
+            errors += 1
+            progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
+            continue
+        (docs_dir / f"{code}.pdf").write_bytes(data)
+        media = {
+            "type": "pdf",
+            "url": f"docs/vac/{code}.pdf",
+            "caption": f"VAC {code}",
+            "source": "Austro Control (AIP Austria)",
+        }
+        if at_vac_date:
+            media["updatedAt"] = at_vac_date
+        for field in by_code[code]:
+            field["media"].append(dict(media))
+            field.setdefault("docs", {})["vac"] = media["url"]
+        downloaded += 1
+        progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
+    progress.done(f"downloaded {downloaded}, err {errors}")
+    return downloaded
+
 
 def import_vac_pdfs(
     *,
