@@ -1014,7 +1014,7 @@ function renderContribute(field) {
           <input id="cDate" type="date" value="${today}" />
           <label for="cDesc">${t('cDesc')}</label>
           <textarea id="cDesc" rows="4" placeholder="${escapeHtml(t('cDescPlaceholder'))}"></textarea>
-          <input id="cPhoto" type="file" accept="image/*" capture="environment" hidden />
+          <input id="cPhoto" type="file" accept="image/jpeg" hidden />
           <button type="button" id="cPhotoBtn" class="contrib-photo-btn">🖼️ ${t('cAddPhoto')}</button>
           <div id="cPhotoInfo" class="contrib-photo-info" hidden></div>
           <div id="cGeo" class="contrib-geo" hidden></div>
@@ -1081,9 +1081,9 @@ function contribGeoHint(field, exifGps) {
 }
 
 async function onContribFile(field, file) {
+  const form = contribForm;
+  if (!form || !file) return;
   contribShowError('');
-  if (!file) return;
-  const maxLong = CONTRIB_MIN_LONG_EDGE;
   let blob = file;
   let name = file.name || 'photo.jpg';
   let exifGps = null;
@@ -1092,28 +1092,51 @@ async function onContribFile(field, file) {
       const buf = await file.arrayBuffer();
       exifGps = readJpegGps(buf);
     } else {
-      // Convert HEIC/PNG/etc to JPEG so the Worker (JPEG-only) accepts it. EXIF is lost, so the
-      // geo hint falls back to device GPS.
+      // Convert PNG/HEIC-that-slipped-through to JPEG so the Worker (JPEG-only) accepts it.
+      // Conversion loses EXIF, so the geo hint falls back to device GPS. (The picker asks for
+      // image/jpeg, so iPhones transcode HEIC at pick time and keep the EXIF GPS.)
       blob = await imageToJpeg(file);
       name = name.replace(/\.[^.]+$/, '') + '.jpg';
     }
   } catch (err) {
-    contribShowError(t('cJpegOnly'));
+    if (contribForm === form) clearContribPhoto(t('cJpegOnly'));
     return;
   }
-  if (blob.size > CONTRIB_MAX_BYTES) { contribShowError(t('cTooLarge')); return; }
+  if (contribForm !== form) return; // form closed/reopened during the decode
+  if (blob.size > CONTRIB_MAX_BYTES) { clearContribPhoto(t('cTooLarge')); return; }
   const longEdge = await imageLongEdge(blob);
-  if (longEdge != null && longEdge < maxLong) { contribShowError(t('cTooSmall', maxLong)); return; }
+  if (contribForm !== form) return;
+  if (longEdge != null && longEdge < CONTRIB_MIN_LONG_EDGE) { clearContribPhoto(t('cTooSmall', CONTRIB_MIN_LONG_EDGE)); return; }
 
-  contribForm.photoBlob = blob;
-  contribForm.photoName = name;
-  contribForm.geo = contribGeoHint(field, exifGps);
+  form.photoBlob = blob;
+  form.photoName = name;
+  form.geo = contribGeoHint(field, exifGps);
 
   const info = document.querySelector('#cPhotoInfo');
   if (info) { info.hidden = false; info.textContent = `${name} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`; }
   const btn = document.querySelector('#cPhotoBtn');
   if (btn) btn.textContent = `🖼️ ${t('cChangePhoto')}`;
-  showContribGeo(contribForm.geo);
+  showContribGeo(form.geo);
+  updateContribValidity();
+}
+
+// A rejected replacement photo must not leave the previous one silently staged: clear the
+// staged blob and its UI whenever a new pick fails validation, so Submit can never send a
+// photo the pilot believes was replaced.
+function clearContribPhoto(errorMessage) {
+  contribShowError(errorMessage || '');
+  if (!contribForm) return;
+  contribForm.photoBlob = null;
+  contribForm.photoName = null;
+  contribForm.geo = null;
+  const input = document.querySelector('#cPhoto');
+  if (input) input.value = '';
+  const info = document.querySelector('#cPhotoInfo');
+  if (info) { info.hidden = true; info.textContent = ''; }
+  const geoEl = document.querySelector('#cGeo');
+  if (geoEl) geoEl.hidden = true;
+  const btn = document.querySelector('#cPhotoBtn');
+  if (btn) btn.textContent = `🖼️ ${t('cAddPhoto')}`;
   updateContribValidity();
 }
 
@@ -1204,17 +1227,18 @@ function ensureTurnstile(callback) {
 }
 
 async function submitContribution(field) {
-  if (!contribForm || contribForm.busy) return;
+  const form = contribForm;
+  if (!form || form.busy) return;
   contribShowError('');
   let token = '';
-  if (window.turnstile && contribForm.turnstileWidget != null) {
-    token = window.turnstile.getResponse(contribForm.turnstileWidget) || '';
+  if (window.turnstile && form.turnstileWidget != null) {
+    token = window.turnstile.getResponse(form.turnstileWidget) || '';
     if (!token) { contribShowError(t('cNeedTurnstile')); return; }
   }
   const description = (document.querySelector('#cDesc')?.value || '').trim();
   const submit = document.querySelector('#cSubmit');
 
-  contribForm.busy = true;
+  form.busy = true;
   if (submit) { submit.disabled = true; submit.textContent = t('cSubmitting'); }
 
   const fd = new FormData();
@@ -1228,17 +1252,22 @@ async function submitContribution(field) {
   fd.set('submitter', (document.querySelector('#cSubmitter')?.value || '').trim());
   if (state.position) { fd.set('deviceLat', String(state.position.latitude)); fd.set('deviceLon', String(state.position.longitude)); }
   if (token) fd.set('turnstileToken', token);
-  if (contribForm.photoBlob) fd.set('photo', contribForm.photoBlob, contribForm.photoName || 'photo.jpg');
+  if (form.photoBlob) fd.set('photo', form.photoBlob, form.photoName || 'photo.jpg');
 
   try {
     const res = await fetch(CONTRIB_ENDPOINT, { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
+    if (contribForm !== form) return; // form closed while the request was in flight
     if (res.ok && data.ok) { showContribSuccess(data); return; }
-    contribShowError(`${t('cErr')}: ${escapeHtml(String(data.error || res.status))}`);
+    contribShowError(`${t('cErr')}: ${String(data.error || res.status)}`);
   } catch (err) {
-    contribShowError(`${t('cErr')}: ${escapeHtml(String(err && err.message || err))}`);
+    if (contribForm !== form) return;
+    contribShowError(`${t('cErr')}: ${String(err && err.message || err)}`);
   }
-  contribForm.busy = false;
+  // Turnstile tokens are single-use: without a reset every retry re-sends the token the
+  // Worker already redeemed and the spam check fails forever.
+  try { if (window.turnstile && form.turnstileWidget != null) window.turnstile.reset(form.turnstileWidget); } catch { /* widget gone */ }
+  form.busy = false;
   if (submit) { submit.textContent = t('cSubmit'); }
   updateContribValidity();
 }

@@ -58,6 +58,18 @@ jobs:
       - name: Unit tests (name/translation/incremental logic)
         run: python scripts/test_build_pack_fixes.py
 
+      # Same gate as deploy-app.yml: this workflow also ships the app shell, so it must not
+      # deploy a version whose APP_VERSIONs drifted or whose release note is missing.
+      - name: Check APP_VERSION consistency and release note
+        run: |
+          app=$(grep -o "APP_VERSION = '[^']*'" src/app.js | head -1)
+          sw=$(grep -o "APP_VERSION = '[^']*'" service-worker.js | head -1)
+          [ -n "${app}" ] && [ "${app}" = "${sw}" ] || { echo "ERROR: APP_VERSION mismatch"; exit 1; }
+          version=$(echo "${app}" | sed "s/.*'\(.*\)'/\1/")
+          jq -e --arg v "${version}" '.[] | select(.version == $v)' release-notes.json > /dev/null \
+            || { echo "ERROR: release-notes.json has no entry for ${version} — write the release note first"; exit 1; }
+          echo "release note present for ${version}"
+
       # Incremental by default: the build short-circuits when the source fingerprint AND
       # PACK_SCHEMA_VERSION match the published state.json, so pushes/crons that change nothing
       # in the pack skip the rebuild+deploy. Full rebuild only on the Sunday weekly refresh

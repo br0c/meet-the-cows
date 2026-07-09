@@ -27,10 +27,12 @@ async function handleSubmit(request, env, origin) {
   const form = await request.formData();
   const get = k => (form.get(k) ?? '').toString().trim();
 
+  // Blank -> NaN (Number('') is 0, which would silently pass the finite check as 0,0).
+  const num = key => { const v = get(key); return v === '' ? NaN : Number(v); };
   const fieldId = get('fieldId');
   const fieldCode = get('fieldCode');
-  const fieldLat = Number(get('fieldLat'));
-  const fieldLon = Number(get('fieldLon'));
+  const fieldLat = num('fieldLat');
+  const fieldLon = num('fieldLon');
   const fieldName = get('fieldName');
   const date = get('date');
   const description = get('description');
@@ -46,7 +48,11 @@ async function handleSubmit(request, env, origin) {
   if (!description && !(photo && photo.size)) {
     return json(origin, 400, { error: 'Add a note, a photo, or both.' });
   }
-  const ok = await verifyTurnstile(get('turnstileToken'), env, request.headers.get('CF-Connecting-IP'));
+  const turnstileToken = get('turnstileToken');
+  if (env.TURNSTILE_SECRET && !turnstileToken) {
+    return json(origin, 403, { error: 'The anti-spam check did not load in the app. Allow challenges.cloudflare.com (disable content blockers for this site) and try again.' });
+  }
+  const ok = await verifyTurnstile(turnstileToken, env, request.headers.get('CF-Connecting-IP'));
   if (!ok) return json(origin, 403, { error: 'Spam check failed. Please retry.' });
 
   let photoBytes = null;
@@ -64,10 +70,11 @@ async function handleSubmit(request, env, origin) {
       return json(origin, 422, { error: `Photo resolution too low (min ${minEdge}px on the long edge).` });
     }
 
-    // Read GPS BEFORE stripping EXIF; then store an EXIF-free copy so no location lands in git.
+    // Read GPS BEFORE stripping metadata; then store a location-free copy.
     const gps = await readGps(raw);
     geo = geoVerdict(gps, deviceLat, deviceLon, fieldLat, fieldLon, Number(env.GEO_RADIUS_M || 1000));
-    photoBytes = stripExif(raw);
+    photoBytes = stripLocationMetadata(raw);
+    if (!photoBytes) return json(origin, 415, { error: 'This photo file looks corrupt — please try another JPEG.' });
   } else {
     geo = geoVerdict(null, deviceLat, deviceLon, fieldLat, fieldLon, Number(env.GEO_RADIUS_M || 1000));
   }
@@ -79,8 +86,19 @@ async function handleSubmit(request, env, origin) {
   // The full-size (EXIF-stripped) original goes to a release asset, not into git — the repo
   // stays lean and the pack build later downloads + resizes it like any other pack photo.
   let photoAsset = null;
+  let photoUploadFailed = false;
   if (photoBytes) {
-    photoAsset = await uploadReleaseAsset(env, `${sanitize(fieldId)}_${stamp}_${shortId}.jpg`, photoBytes);
+    try {
+      photoAsset = await uploadReleaseAsset(env, `${sanitize(fieldId)}_${stamp}_${shortId}.jpg`, photoBytes);
+    } catch (error) {
+      // Keep the note: a failed photo upload must not discard a valid submission (mirrors the
+      // pack build, which keeps the note when the photo download fails).
+      photoUploadFailed = true;
+      console.warn('asset upload failed', error);
+    }
+  }
+  if (photoUploadFailed && !description) {
+    return json(origin, 502, { error: 'Photo upload failed — please try again.' });
   }
 
   const meta = {
@@ -95,7 +113,13 @@ async function handleSubmit(request, env, origin) {
 
   const files = [{ path: `${base}.json`, content: b64(new TextEncoder().encode(JSON.stringify(meta, null, 2))) }];
 
-  const pr = await openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset });
+  let pr;
+  try {
+    pr = await openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset, photoUploadFailed });
+  } catch (error) {
+    if (photoAsset) { try { await gh(env, `/releases/assets/${photoAsset.id}`, 'DELETE'); } catch { /* best effort */ } }
+    throw error;
+  }
   return json(origin, 200, { ok: true, prUrl: pr.html_url, prNumber: pr.number, geo });
 }
 
@@ -135,39 +159,55 @@ async function readGps(bytes) {
 
 // ---------- JPEG helpers (prototype — validate against real photos) ----------
 
-// Largest of width/height from the JPEG SOF marker, or null if not found.
+// Largest of width/height from the JPEG SOF marker; null when absent or the file is
+// malformed/truncated (every read is bounds-checked so crafted input cannot throw).
 function jpegLongEdge(b) {
-  if (b[0] !== 0xff || b[1] !== 0xd8) return null;
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   let i = 2;
-  while (i < b.length - 8) {
-    if (b[i] !== 0xff) { i++; continue; }
+  while (i + 4 <= b.length) {
+    if (b[i] !== 0xff) return null;                      // desynced: give up cleanly
+    while (i + 2 < b.length && b[i + 1] === 0xff) i++;   // 0xFF fill bytes before a marker
     const m = b[i + 1];
-    if (m === 0xda || m === 0xd9) break;                 // SOS / EOI
+    if (m === 0xda || m === 0xd9) return null;           // SOS / EOI: no SOF found
     const len = dv.getUint16(i + 2);
+    if (len < 2 || i + 2 + len > b.length) return null;  // segment overruns the buffer
     const isSof = (m >= 0xc0 && m <= 0xcf) && m !== 0xc4 && m !== 0xc8 && m !== 0xcc;
-    if (isSof) { const h = dv.getUint16(i + 5), w = dv.getUint16(i + 7); return Math.max(w, h); }
+    if (isSof) {
+      if (i + 9 > b.length) return null;
+      return Math.max(dv.getUint16(i + 5), dv.getUint16(i + 7));
+    }
     i += 2 + len;
   }
   return null;
 }
 
-// Return a JPEG with all APP1/Exif segments removed (drops embedded GPS from the stored file).
-function stripExif(b) {
-  if (b[0] !== 0xff || b[1] !== 0xd8) return b;
+// Return a JPEG with every metadata segment that can carry a location removed: ALL APP1
+// segments (Exif AND XMP — Android/edited photos duplicate GPS in XMP) plus APP13 (IPTC).
+// APP0/APP2(ICC)/APP14 stay — needed for correct rendering, never carry GPS. Returns null
+// for malformed/truncated input so the caller rejects it instead of storing a corrupt file
+// (or silently keeping location data). Returns the original buffer when nothing was dropped.
+function stripLocationMetadata(b) {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   const out = [b.subarray(0, 2)]; // SOI
+  let dropped = false;
   let i = 2;
   while (i < b.length) {
-    if (b[i] !== 0xff) { out.push(b.subarray(i)); break; }
+    if (b[i] !== 0xff) return null;                      // desynced: reject rather than corrupt
+    while (i + 2 < b.length && b[i + 1] === 0xff) i++;   // 0xFF fill bytes before a marker
+    if (i + 2 > b.length) break;
     const m = b[i + 1];
-    if (m === 0xda) { out.push(b.subarray(i)); break; }  // SOS + entropy data: copy the rest
+    if (m === 0xda || m === 0xd9) { out.push(b.subarray(i)); break; } // SOS/EOI: copy the rest
+    if (i + 4 > b.length) return null;                   // truncated segment header
     const len = dv.getUint16(i + 2);
-    const seg = b.subarray(i, i + 2 + len);
-    const isExif = m === 0xe1 && b[i + 4] === 0x45 && b[i + 5] === 0x78 && b[i + 6] === 0x69 && b[i + 7] === 0x66; // "Exif"
-    if (!isExif) out.push(seg);
+    if (len < 2 || i + 2 + len > b.length) return null;  // segment overruns the buffer
+    const isLocationCapable = m === 0xe1 || m === 0xed;  // APP1 (Exif/XMP) or APP13 (IPTC)
+    if (isLocationCapable) dropped = true;
+    else out.push(b.subarray(i, i + 2 + len));
     i += 2 + len;
   }
+  if (!dropped) return b;                                // nothing removed: skip the copy
   let total = 0; for (const c of out) total += c.length;
   const result = new Uint8Array(total);
   let o = 0; for (const c of out) { result.set(c, o); o += c.length; }
@@ -185,53 +225,68 @@ function geoSummary(geo) {
   return '⚠️ no location data — needs review';
 }
 
-async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset }) {
+async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset, photoUploadFailed }) {
   const baseBranch = env.BASE_BRANCH || 'main';
-  const branch = `contrib/${sanitize(fieldId)}-${Date.now().toString(36)}`;
+  // Random suffix: Date.now() alone collides when two pilots submit for the same field in the
+  // same millisecond (the JSON/asset names already carry a random id; the branch must too).
+  const branch = `contrib/${sanitize(fieldId)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
   const baseRef = await gh(env, `/git/ref/heads/${baseBranch}`);
   await gh(env, '/git/refs', 'POST', { ref: `refs/heads/${branch}`, sha: baseRef.object.sha });
 
-  for (const f of files) {
-    await gh(env, `/contents/${f.path}`, 'PUT', {
-      message: `Contribution: ${fieldName || fieldCode || fieldId}`,
-      content: f.content, branch,
+  try {
+    for (const f of files) {
+      await gh(env, `/contents/${f.path}`, 'PUT', {
+        message: `Contribution: ${fieldName || fieldCode || fieldId}`,
+        content: f.content, branch,
+      });
+    }
+
+    const label = geo.verified ? 'geo-verified' : 'needs-location-review';
+    const body = [
+      `**Field:** ${fieldName || '—'} (${fieldCode || fieldId})`,
+      description ? `\n**Update:**\n${description}` : '',
+      `\n**Geo-check:** ${geoSummary(geo)}`,
+      photoAsset ? `\n**Photo** (full-size original, location metadata stripped):\n\n![contribution photo](${photoAsset.url})` : '',
+      photoUploadFailed ? '\n**Photo:** upload failed — this is a note-only submission.' : '',
+      `\n_Submitted via the in-app contribution form. A maintainer must review and merge before this goes live._`,
+    ].join('\n');
+
+    const pr = await gh(env, '/pulls', 'POST', {
+      title: `Contribution: ${fieldName || fieldCode || fieldId}`,
+      head: branch, base: baseBranch, body, maintainer_can_modify: true,
     });
+
+    try { await gh(env, `/issues/${pr.number}/labels`, 'POST', { labels: ['contribution', label] }); } catch { /* labels are cosmetic */ }
+    return pr;
+  } catch (error) {
+    // Don't leave a dangling contrib/* branch when the commit or PR step fails.
+    try { await gh(env, `/git/refs/heads/${branch}`, 'DELETE'); } catch { /* best effort */ }
+    throw error;
   }
-
-  const label = geo.verified ? 'geo-verified' : 'needs-location-review';
-  const body = [
-    `**Field:** ${fieldName || '—'} (${fieldCode || fieldId})`,
-    description ? `\n**Update:**\n${description}` : '',
-    `\n**Geo-check:** ${geoSummary(geo)}`,
-    photoAsset ? `\n**Photo** (full-size original, EXIF-stripped):\n\n![contribution photo](${photoAsset.url})` : '',
-    `\n_Submitted via the in-app contribution form. A maintainer must review and merge before this goes live._`,
-  ].join('\n');
-
-  const pr = await gh(env, '/pulls', 'POST', {
-    title: `Contribution: ${fieldName || fieldCode || fieldId}`,
-    head: branch, base: baseBranch, body, maintainer_can_modify: true,
-  });
-
-  try { await gh(env, `/issues/${pr.number}/labels`, 'POST', { labels: ['contribution', label] }); } catch { /* labels are cosmetic */ }
-  return pr;
 }
 
 // Rolling release that stores full-size contribution photos as assets (git stays lean).
-// Created on first use; the tag lands on the base branch head.
+// Created on first use; memoized per isolate so routine submissions skip the lookup. Only a
+// 404 means "create it" — auth/rate-limit/5xx errors surface as themselves instead of being
+// masked by a doomed create attempt (422 already_exists).
+let cachedRelease = null;
 async function ensureRelease(env) {
+  if (cachedRelease) return cachedRelease;
   const tag = env.RELEASE_TAG || 'contrib-originals';
   try {
-    return await gh(env, `/releases/tags/${tag}`);
-  } catch {
-    return gh(env, '/releases', 'POST', {
+    cachedRelease = await gh(env, `/releases/tags/${tag}`);
+  } catch (error) {
+    if (!String(error && error.message || '').includes('→ 404')) throw error;
+    cachedRelease = await gh(env, '/releases', 'POST', {
       tag_name: tag,
       name: 'Contribution photo originals',
-      body: 'Full-size (EXIF-stripped) originals of community-contributed field photos. The pack build resizes these for the app.',
+      body: 'Full-size (location-stripped) originals of community-contributed field photos. The pack build resizes these for the app.',
       draft: false,
       prerelease: false,
     });
   }
+  return cachedRelease;
 }
 
 async function uploadReleaseAsset(env, name, bytes) {
@@ -267,6 +322,7 @@ async function gh(env, path, method = 'GET', body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`GitHub ${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (res.status === 204) return null; // e.g. DELETE ref/asset: success with no body
   return res.json();
 }
 
