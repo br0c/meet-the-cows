@@ -3,10 +3,22 @@
     "version": "0.6.0-beta",
     "date": "2026-07-09",
     "en": [
-      "Search any field by name or code — accents don't matter",
+      "Search any field by name or code",
       "Contribute updates and photos from a field's page; every submission is reviewed before publication",
       "Photos taken at the field are pre-verified from their location; far-away photos are flagged for manual review",
       "Release notes (this screen) and licence links in Settings"
+    ],
+    "fr": [
+      "Recherche d'un terrain par nom ou code",
+      "Proposez mises à jour et photos depuis la fiche d'un terrain ; chaque contribution est relue avant publication",
+      "Les photos prises sur le terrain sont pré-vérifiées grâce à leur localisation ; les photos lointaines passent en relecture manuelle",
+      "Notes de version (cet écran) et liens de licence dans les Réglages"
+    ],
+    "de": [
+      "Feldsuche nach Name oder Code",
+      "Updates und Fotos direkt von der Feldseite beitragen; jeder Beitrag wird vor der Veröffentlichung geprüft",
+      "Am Feld aufgenommene Fotos werden über ihren Standort vorverifiziert; weit entfernte Fotos gehen in die manuelle Prüfung",
+      "Versionshinweise (dieser Bildschirm) und Lizenz-Links in den Einstellungen"
     ]
   },
   {
@@ -16,6 +28,16 @@
       "Full French / English / German localization — menus, field notes and the CUP export follow your language",
       "Language switch in Settings (automatic from your device by default)",
       "Major airports and military bases where a glider must not land no longer appear as landing options"
+    ],
+    "fr": [
+      "Localisation complète français / anglais / allemand — menus, notes de terrain et export CUP suivent votre langue",
+      "Choix de la langue dans les Réglages (automatique selon l'appareil par défaut)",
+      "Les grands aéroports et bases militaires où un planeur ne doit pas se poser n'apparaissent plus comme options d'atterrissage"
+    ],
+    "de": [
+      "Vollständige Lokalisierung Französisch / Englisch / Deutsch — Menüs, Feldnotizen und CUP-Export folgen deiner Sprache",
+      "Sprachwahl in den Einstellungen (standardmäßig automatisch vom Gerät)",
+      "Große Flughäfen und Militärbasen, auf denen ein Segelflugzeug nicht landen darf, erscheinen nicht mehr als Landeoptionen"
     ]
   },
   {
@@ -23,6 +45,12 @@
     "date": "2026-06-28",
     "en": [
       "Earlier releases: nearest-field list with required glide, offline data packs with photos and VAC documents, incremental pack updates, CUP export for SeeYou"
+    ],
+    "fr": [
+      "Versions précédentes : liste des terrains les plus proches avec finesse requise, packs de données hors ligne avec photos et documents VAC, mises à jour incrémentales, export CUP pour SeeYou"
+    ],
+    "de": [
+      "Frühere Versionen: Liste der nächstgelegenen Felder mit erforderlicher Gleitzahl, Offline-Datenpakete mit Fotos und VAC-Dokumenten, inkrementelle Updates, CUP-Export für SeeYou"
     ]
   }
 ]
