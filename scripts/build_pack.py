@@ -234,6 +234,7 @@ def main() -> None:
     parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
     parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
     parser.add_argument("--at-vac-root", default=os.environ.get("AT_VAC_ROOT", "auto"), help="Austro Control eAIP cycle base URL (…/lo/<YYMMDD>/), auto to detect the effective cycle, or none to disable Austrian charts")
+    parser.add_argument("--de-vac-root", default=os.environ.get("DE_VAC_ROOT", "auto"), help="DFS BasicVFR root chapter URL, auto to follow the portal redirect to the current cycle, or none to disable German charts")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
     parser.add_argument("--include-vac-airfields", action="store_true", help="Create VAC-only airfield entries when an LFxx VAC exists but the airfield is absent from the CUP")
     parser.add_argument("--airports-csv", default=os.environ.get("AIRPORTS_CSV", OURAIRPORTS_AIRPORTS_URL), help="Airport CSV URL/path with at least ident,name,latitude_deg,longitude_deg,elevation_ft; defaults to OurAirports")
@@ -310,10 +311,12 @@ def main() -> None:
         if resolved_vac_date.lower() == "auto":
             resolved_vac_date = inferred_vac_date or ""
     at_vac_base, at_vac_date, at_vac_index = resolve_at_vac_root(args.at_vac_root)
+    de_vac_root, de_vac_date = resolve_de_vac_root(args.de_vac_root)
     source_state = build_source_state(
         cupx=source_version_tag(args.cupx),
         vac=resolved_vac_date or resolved_vac_root,
         vac_at=at_vac_date or at_vac_base,
+        vac_de=de_vac_date or de_vac_root,
         streckenflug=(
             streckenflug_list_fingerprint(args.streckenflug_url, args.streckenflug_countries, raw_dir)
             if args.include_streckenflug else ""
@@ -380,13 +383,23 @@ def main() -> None:
     streckenflug_fields: list[dict[str, Any]] = []
 
     at_vac_count = 0
+    de_vac_count = 0
 
     # VAC imports (FR + AT) and streckenflug are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
     # remote source while the others could already be downloading. The importers mutate
     # disjoint fields (LF vs LO codes), so concurrent attachment is safe.
     futures: dict[Any, str] = {}
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        if de_vac_root:
+            futures[executor.submit(
+                import_de_vac_pdfs,
+                fields=fields,
+                root_chapter_url=de_vac_root,
+                docs_dir=docs_dir,
+                de_vac_date=de_vac_date,
+                max_vac=args.max_vac,
+            )] = "de_vac"
         if at_vac_index:
             futures[executor.submit(
                 import_at_vac_pdfs,
@@ -431,6 +444,8 @@ def main() -> None:
                 vac_created_airfields = vac_result["createdAirfields"]
             elif task == "at_vac":
                 at_vac_count = future.result()
+            elif task == "de_vac":
+                de_vac_count = future.result()
             elif task == "streckenflug":
                 streckenflug_fields = future.result()
                 streckenflug_count = len(streckenflug_fields)
@@ -456,7 +471,7 @@ def main() -> None:
 
     generated_at = dt.datetime.now(dt.UTC).isoformat()
     version = source_state_version(source_state)
-    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_vac_base, at_vac_date)
+    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_vac_base, at_vac_date, de_vac_root, de_vac_date)
 
     if args.multi_pack:
         # Slice the one merged, translated field set into every pack (media staged in out_dir).
@@ -478,6 +493,7 @@ def main() -> None:
             "mediaCount": count_media_items(fields),
             "vacCount": vac_count,
             "atVacCount": at_vac_count,
+            "deVacCount": de_vac_count,
             "vacOnlyAirfieldsCreated": vac_created_airfields,
             "streckenflugCount": streckenflug_count,
             "contributionNotes": contrib_notes,
@@ -522,7 +538,7 @@ def main() -> None:
     label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
         f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
-        f"{vac_count} FR + {at_vac_count} AT VAC PDFs, {vac_created_airfields} VAC-only airfields, "
+        f"{vac_count} FR + {at_vac_count} AT + {de_vac_count} DE VAC PDFs, {vac_created_airfields} VAC-only airfields, "
         f"{streckenflug_count} streckenflug fields, {streckenflug_media_count} streckenflug images"
     )
 
@@ -613,12 +629,13 @@ def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_d
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
 
 
-def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "") -> dict[str, Any]:
+def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "", vac_de: str = "") -> dict[str, Any]:
     return {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "cupx": cupx,
         "vac": vac,
         "vacAt": vac_at,
+        "vacDe": vac_de,
         "streckenflug": streckenflug,
         "contributions": contributions,
     }
@@ -644,7 +661,7 @@ def contributions_fingerprint(contrib_dir: Path) -> str:
 def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
     if not previous:
         return False
-    keys = ("schemaVersion", "cupx", "vac", "vacAt", "streckenflug", "contributions")
+    keys = ("schemaVersion", "cupx", "vac", "vacAt", "vacDe", "streckenflug", "contributions")
     return all(str(previous.get(k) or "") == str(current.get(k) or "") for k in keys)
 
 
@@ -861,14 +878,15 @@ def write_packs_index(manifests: list[dict[str, Any]], out_root: Path) -> None:
 # Shared across every pack in a build (the sources differ only by the args, the notices are fixed).
 PACK_NOTICES = [
     "Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.",
-    "Check official/current SIA (FR) and Austro Control (AT) documents before flight. VAC/AD chart PDFs are cycle-specific.",
+    "Check official/current SIA (FR), Austro Control (AT) and DFS (DE) documents before flight. VAC/AD chart PDFs are cycle-specific.",
     "VAC-only airfield coordinates may come from a non-authoritative open dataset; the attached SIA VAC is the official source.",
 ]
 
 
 def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
                        frequency_index: dict[str, Any],
-                       at_vac_base: str = "", at_vac_date: str = "") -> list[dict[str, Any]]:
+                       at_vac_base: str = "", at_vac_date: str = "",
+                       de_vac_root: str = "", de_vac_date: str = "") -> list[dict[str, Any]]:
     """The attribution/sources block shared by every pack's manifest."""
     return [
         {
@@ -887,6 +905,12 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "url": at_vac_base or "not imported",
             "updatedAt": at_vac_date or None,
             "note": "Official Austrian aerodrome charts; non-commercial use — commercial reproduction requires Austro Control's written consent.",
+        },
+        {
+            "name": "DFS BasicVFR (AIP VFR Germany) aerodrome charts",
+            "url": de_vac_root or "not imported",
+            "updatedAt": de_vac_date or None,
+            "note": "Free-of-charge official German AIP VFR; © DFS Deutsche Flugsicherung GmbH.",
         },
         {
             "name": "OpenAIP glider airfields" if args.airfield_source == "openaip" else "OurAirports airport/runway coordinates",
@@ -2046,6 +2070,165 @@ def import_at_vac_pdfs(
         }
         if at_vac_date:
             media["updatedAt"] = at_vac_date
+        for field in by_code[code]:
+            field["media"].append(dict(media))
+            field.setdefault("docs", {})["vac"] = media["url"]
+        downloaded += 1
+        progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
+    progress.done(f"downloaded {downloaded}, err {errors}")
+    return downloaded
+
+
+# --- Germany: DFS BasicVFR (free AIP VFR) aerodrome charts -------------------------------------
+# The free AIP VFR is a static site of chapter/page HTML files; each aerodrome has 1-3 chart
+# sheets embedded as base64 PNGs (875x1240). The crawl walks AD -> letter folders -> aerodrome
+# folders, keeps pages titled "<ICAO> <name> <n>", and assembles the PNGs into one PDF per
+# aerodrome so the app renders them exactly like the FR/AT charts. The portal rejects
+# non-browser user agents, hence the browser-like UA.
+
+DE_AIP_ENTRY = "https://aip.dfs.de/basicVFR"
+DE_VAC_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) MeetTheCows/0.7"
+ICAO_DE_RE = re.compile(r"^E[DT][A-Z]{2}$")
+DE_MONTHS = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+             "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+
+
+def _fetch_de_vac(url: str) -> tuple[bytes, str]:
+    """(body, final_url) with a browser UA; separate function so tests can stub it."""
+    request = urllib.request.Request(url, headers={"User-Agent": DE_VAC_UA})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read(), response.geturl()
+
+
+def de_cycle_date(base_url: str) -> str:
+    """'https://aip.dfs.de/BasicVFR/2026JUN25/chapter/x.html' -> '2026-06-25'."""
+    match = re.search(r"/(\d{4})([A-Z]{3})(\d{2})/", base_url)
+    if not match or match.group(2) not in DE_MONTHS:
+        return ""
+    return f"{match.group(1)}-{DE_MONTHS[match.group(2)]:02d}-{match.group(3)}"
+
+
+def parse_de_links(html: str) -> list[tuple[str, str]]:
+    """(href, cleaned link text) pairs for chapter navigation pages."""
+    out = []
+    for href, text in re.findall(r'href="([^"]+\.html)"[^>]*>(.*?)</a>', html, re.S):
+        out.append((href, " ".join(re.sub(r"<[^>]+>", " ", text).split())))
+    return out
+
+
+def resolve_de_vac_root(spec: str) -> tuple[str, str]:
+    """Resolve ('…/chapter/<root>.html', cycle_date); ('', '') when disabled or unreachable."""
+    if not spec or spec.lower() in {"none", "off"}:
+        return "", ""
+    try:
+        entry = DE_AIP_ENTRY if spec.lower() == "auto" else spec
+        _, final_url = _fetch_de_vac(entry)
+        date = de_cycle_date(final_url)
+        if not date:
+            print(f"DE VAC: could not read a cycle date from {final_url}; skipping", file=sys.stderr)
+            return "", ""
+        return final_url, date
+    except Exception as error:  # noqa: BLE001 - source outage must not fail the build
+        print(f"DE VAC: resolve failed ({error}); skipping German charts", file=sys.stderr)
+        return "", ""
+
+
+def crawl_de_chart_pages(root_chapter_url: str, wanted: set[str]) -> dict[str, list[str]]:
+    """ICAO -> ordered chart-page URLs for the wanted aerodromes (AD -> letters -> aerodromes)."""
+    root_html, _ = _fetch_de_vac(root_chapter_url)
+    links = parse_de_links(root_html.decode("utf-8", "replace"))
+    ad_href = next((h for h, t in links if "AD Flugplätze" in t or ("AD" in t.split() and "Aerodromes" in t)), None)
+    if not ad_href:
+        print("DE VAC: AD chapter not found on the root page", file=sys.stderr)
+        return {}
+    ad_url = urllib.parse.urljoin(root_chapter_url, ad_href)
+    ad_html, _ = _fetch_de_vac(ad_url)
+
+    pages: dict[str, list[str]] = {}
+    letter_links = [(h, t) for h, t in parse_de_links(ad_html.decode("utf-8", "replace"))
+                    if re.match(r"^([A-Z](?:-[A-Z])?) \1(?: |$)", t)]
+    for letter_href, _letter in letter_links:
+        letter_url = urllib.parse.urljoin(ad_url, letter_href)
+        try:
+            letter_html, _ = _fetch_de_vac(letter_url)
+        except Exception as error:  # noqa: BLE001
+            print(f"DE VAC: letter page failed ({error}); continuing", file=sys.stderr)
+            continue
+        for airfield_href, text in parse_de_links(letter_html.decode("utf-8", "replace")):
+            code_match = re.search(r"\b(E[DT][A-Z]{2})\b", text)
+            if not code_match or code_match.group(1) not in wanted or code_match.group(1) in pages:
+                continue
+            code = code_match.group(1)
+            try:
+                airfield_html, _ = _fetch_de_vac(urllib.parse.urljoin(letter_url, airfield_href))
+            except Exception as error:  # noqa: BLE001
+                print(f"DE VAC: {code} folder failed ({error}); continuing", file=sys.stderr)
+                continue
+            chart_pages = [urllib.parse.urljoin(letter_url, href)
+                           for href, page_text in parse_de_links(airfield_html.decode("utf-8", "replace"))
+                           if "/pages/" in href and page_text.startswith(f"{code} ")]
+            if chart_pages:
+                pages[code] = chart_pages
+    return pages
+
+
+def de_pages_to_pdf(page_htmls: list[bytes], target: Path) -> bool:
+    """Assemble the base64 PNGs embedded in BasicVFR pages into one PDF. False when none found."""
+    from PIL import Image  # local import, matching the image-optimization code path
+    import base64
+    import io
+    images = []
+    for html in page_htmls:
+        match = re.search(rb'src="data:image/png;base64,([^"]+)"', html)
+        if not match:
+            continue
+        image = Image.open(io.BytesIO(base64.b64decode(match.group(1))))
+        images.append(image.convert("RGB"))
+    if not images:
+        return False
+    images[0].save(target, "PDF", save_all=True, append_images=images[1:], quality=85, resolution=110.0)
+    return True
+
+
+def import_de_vac_pdfs(
+    *,
+    fields: list[dict[str, Any]],
+    root_chapter_url: str,
+    docs_dir: Path,
+    de_vac_date: str,
+    max_vac: int,
+) -> int:
+    """Crawl BasicVFR and attach one assembled chart PDF per existing DE airfield."""
+    by_code = index_fields_by_code(fields)
+    wanted = {code for code in by_code if ICAO_DE_RE.match(code)
+              and not any(is_major_airport(f) for f in by_code[code])}
+    chart_pages = crawl_de_chart_pages(root_chapter_url, wanted)
+    candidates = sorted(chart_pages)
+    progress = Progress(len(candidates), "DE VAC PDFs")
+    downloaded = 0
+    errors = 0
+    for index, code in enumerate(candidates, start=1):
+        if max_vac and downloaded >= max_vac:
+            progress.update(index - 1, extra=f"downloaded {downloaded}, skipped limit", force=True)
+            break
+        try:
+            page_htmls = [_fetch_de_vac(url)[0] for url in chart_pages[code]]
+            if not de_pages_to_pdf(page_htmls, docs_dir / f"{code}.pdf"):
+                errors += 1
+                progress.update(index, extra=f"{code}: no chart images | ok {downloaded}, err {errors}", force=True)
+                continue
+        except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
+            errors += 1
+            progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
+            continue
+        media = {
+            "type": "pdf",
+            "url": f"docs/vac/{code}.pdf",
+            "caption": f"VAC {code}",
+            "source": "DFS Deutsche Flugsicherung (AIP VFR, BasicVFR)",
+        }
+        if de_vac_date:
+            media["updatedAt"] = de_vac_date
         for field in by_code[code]:
             field["media"].append(dict(media))
             field.setdefault("docs", {})["vac"] = media["url"]

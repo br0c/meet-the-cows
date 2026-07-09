@@ -141,6 +141,7 @@ jobs:
             --vac-root auto \
             --vac-date auto \
             --at-vac-root auto \
+            --de-vac-root auto \
             --include-vac-airfields
 
       - name: No source changes (skipped rebuild)
