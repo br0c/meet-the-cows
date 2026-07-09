@@ -14,14 +14,12 @@ const APP_SHELL = [
   u('release-notes.json'),
   u('icons/icon.svg'),
 ];
+// Just the pack index is precached; each selected pack's core JSON is cached network-first on
+// first fetch (see isPackCoreJson), so any combination of packs works offline without hardcoding.
 const PACK_CORE = [
   u('packs/packs.json'),
-  u('packs/fr-alps/manifest.json'),
-  u('packs/fr-alps/fields.json'),
-  u('packs/fr-alps/media-manifest.json'),
 ];
 const APP_SHELL_SET = new Set(APP_SHELL);
-const PACK_CORE_SET = new Set(PACK_CORE);
 const SCOPE_URL = new URL(SCOPE);
 
 self.addEventListener('install', event => {
@@ -59,7 +57,7 @@ self.addEventListener('fetch', event => {
     event.respondWith(networkFirst(SHELL_CACHE, event.request));
     return;
   }
-  if (PACK_CORE_SET.has(key)) {
+  if (isPackCoreJson(requestUrl)) {
     event.respondWith(networkFirst(DATA_CACHE, event.request));
     return;
   }
@@ -105,6 +103,14 @@ async function cacheOnlyFirst(cacheName, request) {
 
 function isSameScope(url) {
   return url.origin === SCOPE_URL.origin && url.pathname.startsWith(SCOPE_URL.pathname);
+}
+
+// Any pack JSON (packs.json, or a pack's manifest/fields/media-manifest/state/translation-cache):
+// cached network-first so the selected packs' data is available offline, whichever they are.
+function isPackCoreJson(url) {
+  const relativePath = url.pathname.slice(SCOPE_URL.pathname.length);
+  return relativePath.startsWith('packs/') && relativePath.endsWith('.json')
+    && !relativePath.includes('/media/') && !relativePath.includes('/docs/');
 }
 
 function isPackMediaOrDoc(url) {
