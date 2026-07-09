@@ -722,8 +722,22 @@ function scheduleRender() {
   if (renderTimer !== null) return;
   renderTimer = window.setTimeout(() => {
     renderTimer = null;
+    // A GPS tick must not rebuild the search input mid-typing — replacing the focused input
+    // makes the phone keyboard flicker. Refresh the status strip and result list in place
+    // instead (same pattern as the download bar); everything else waits for the next render.
+    const search = document.querySelector('#fieldSearch');
+    if (search && document.activeElement === search) {
+      updateStatusStrip();
+      updateSearchResults();
+      return;
+    }
     render();
   }, 1000);
+}
+
+function updateStatusStrip() {
+  const el = document.querySelector('#statusArea');
+  if (el) el.innerHTML = renderStatus();
 }
 
 function renderOfflineBar() {
@@ -769,7 +783,7 @@ function render() {
           <h1>🐄 Meet the Cows</h1>
           <button id="sharePack" class="icon-button" title="${t('share')}" aria-label="${t('share')}">${SHARE_ICON}</button>
         </div>
-        ${renderStatus()}
+        <div id="statusArea">${renderStatus()}</div>
       </header>
       <main class="main">
         ${state.view === 'settings' ? renderSettingsPage() : renderMainPage()}
@@ -838,7 +852,7 @@ function renderMainPage() {
     ${renderReleaseBanner()}
     ${renderUpdateBanner()}
     ${renderWarnings()}
-    ${renderFieldList()}
+    <div id="fieldListArea">${renderFieldList()}</div>
     <p class="footer-note">${escapeHtml(t('footerNote'))}</p>
   `;
 }
@@ -1047,7 +1061,7 @@ function renderSearchBox() {
       <input id="fieldSearch" type="text" inputmode="search" enterkeyhint="search" autocomplete="off"
         placeholder="${escapeHtml(t('searchPlaceholder'))}" aria-label="${escapeHtml(t('searchPlaceholder'))}"
         value="${escapeHtml(q)}" />
-      ${q ? `<button id="clearSearch" class="search-clear" title="${escapeHtml(t('clearSearch'))}" aria-label="${escapeHtml(t('clearSearch'))}">✕</button>` : ''}
+      <button id="clearSearch" class="search-clear" ${q ? '' : 'hidden'} title="${escapeHtml(t('clearSearch'))}" aria-label="${escapeHtml(t('clearSearch'))}">✕</button>
     </div>
   `;
 }
@@ -1477,12 +1491,33 @@ function wireContribForm(field) {
   updateContribValidity();
 }
 
+// Update only the results list while typing — a full render() would rebuild the focused
+// search input and make the phone keyboard flicker (same in-place pattern as the download bar).
+function updateSearchResults() {
+  const area = document.querySelector('#fieldListArea');
+  if (!area) { render(); return; }
+  area.innerHTML = renderFieldList();
+  attachFieldRowEvents(area);
+  const clear = document.querySelector('#clearSearch');
+  if (clear) clear.hidden = !state.searchQuery;
+}
+
+function attachFieldRowEvents(root) {
+  root.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
+    state.selectedFieldId = row.getAttribute('data-field-id');
+    state.detailScrollTop = 0;
+    render();
+  }));
+}
+
 function attachEvents() {
-  document.querySelector('#fieldSearch')?.addEventListener('input', e => { state.searchQuery = e.target.value; render(); });
+  document.querySelector('#fieldSearch')?.addEventListener('input', e => { state.searchQuery = e.target.value; updateSearchResults(); });
   document.querySelector('#clearSearch')?.addEventListener('click', () => {
     state.searchQuery = '';
-    render();
-    document.querySelector('#fieldSearch')?.focus();
+    const search = document.querySelector('#fieldSearch');
+    if (search) search.value = '';
+    updateSearchResults();
+    search?.focus();
   });
   document.querySelector('#openContribute')?.addEventListener('click', () => openContribute(state.selectedFieldId));
   if (state.contribFor) {
@@ -1555,11 +1590,7 @@ function attachEvents() {
     state.view = 'settings';
     syncPackDelta();
   });
-  document.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
-    state.selectedFieldId = row.getAttribute('data-field-id');
-    state.detailScrollTop = 0;
-    render();
-  }));
+  attachFieldRowEvents(document);
   document.querySelector('.detail')?.addEventListener('scroll', e => { state.detailScrollTop = e.currentTarget.scrollTop; }, { passive: true });
   document.querySelector('#closeDetail')?.addEventListener('click', () => { state.selectedFieldId = null; state.detailScrollTop = 0; render(); });
   document.querySelector('#detailBackdrop')?.addEventListener('click', e => {
@@ -1586,16 +1617,24 @@ async function clearPackCache(packId) {
   return deleted;
 }
 
-function buildOfflineMediaUrls() {
-  const urls = new Set();
+// Every media/doc URL the current selection references, mapped to the file size the build
+// stamped on it (0 when a pack predates the bytes stamp — those are only presence-checked).
+function buildOfflineMediaTargets() {
+  const targets = new Map();
   for (const field of state.fields) {
     const base = field._base || state.currentManifestUrl;
     if (!base) continue;
     for (const media of field.media || []) {
-      if (media?.url) urls.add(new URL(media.url, base).toString());
+      if (!media?.url) continue;
+      const url = new URL(media.url, base).toString();
+      if (!targets.has(url)) targets.set(url, Number(media.bytes) || 0);
     }
   }
-  return Array.from(urls);
+  return targets;
+}
+
+function buildOfflineMediaUrls() {
+  return Array.from(buildOfflineMediaTargets().keys());
 }
 
 async function downloadOfflinePack() {
@@ -1604,8 +1643,8 @@ async function downloadOfflinePack() {
     return;
   }
 
-  const urls = buildOfflineMediaUrls();
-  if (!urls.length) {
+  const targets = buildOfflineMediaTargets();
+  if (!targets.size) {
     state.cacheStatus = state.packManifest ? 'ready' : 'unknown';
     state.cacheProgress = state.packManifest ? t('cpNoMedia') : t('cpNoPack');
     render();
@@ -1614,46 +1653,69 @@ async function downloadOfflinePack() {
 
   const cache = await caches.open(DATA_CACHE);
   state.cacheStatus = 'downloading';
-  state.offlineSync = { done: 0, total: urls.length, failed: 0 };
-  render();  // once: shows the floating bar; per-file updates below are in place (no re-render)
 
-  let ok = 0;
-  let failed = 0;
-  for (let i = 0; i < urls.length; i += 1) {
-    const url = urls[i];
-    try {
-      const response = await fetch(url, { cache: 'reload' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await cache.put(url, response.clone());
-      ok += 1;
-    } catch (error) {
-      if (await cache.match(url)) {
-        ok += 1;
-        console.warn('Offline cache kept existing entry', url, error);
-      } else {
-        console.warn('Offline cache failed', url, error);
-        failed += 1;
-      }
+  // Delta sync: always fetch files missing from the cache; additionally, when any selected
+  // pack's version drifted since the last recorded sync (or none was recorded), re-fetch files
+  // whose cached size no longer matches the size the build stamped in fields.json. One updated
+  // photo costs one download, not the whole pack.
+  const anyDrift = (state.activePacks || []).some(({ pack, manifest }) => {
+    const synced = localStorage.getItem(syncedVersionKey(pack.id)) || '';
+    return !synced || synced !== (manifest?.version || '');
+  });
+  const cachedUrls = new Set((await cache.keys()).map(request => request.url));
+  const toFetch = [];
+  let kept = 0;
+  for (const [url, expectedBytes] of targets) {
+    if (!cachedUrls.has(url)) { toFetch.push(url); continue; }
+    if (anyDrift && expectedBytes) {
+      const cached = await cache.match(url);
+      const cachedBytes = Number(cached?.headers?.get('content-length') || 0);
+      if (cachedBytes && cachedBytes !== expectedBytes) { toFetch.push(url); continue; }
     }
-
-    state.offlineSync = { done: i + 1, total: urls.length, failed };
-    updateOfflineBar();
-    await new Promise(resolve => setTimeout(resolve, 0));
+    kept += 1;
   }
 
-  // Record the synced baseline for every active pack so the data-update flag is accurate.
-  for (const { pack, manifestUrl } of state.activePacks || []) {
-    try {
-      const res = await fetch(new URL('media-manifest.json', manifestUrl).toString(), { cache: 'reload' });
-      if (res.ok) storeSyncedManifest(pack.id, await res.json());
-    } catch (error) {
-      console.warn('Could not record synced media manifest for', pack.id, error);
+  let ok = kept;
+  let failed = 0;
+  if (toFetch.length) {
+    state.offlineSync = { done: 0, total: toFetch.length, failed: 0 };
+    render();  // once: shows the floating bar; per-file updates below are in place (no re-render)
+    for (let i = 0; i < toFetch.length; i += 1) {
+      const url = toFetch[i];
+      try {
+        const response = await fetch(url, { cache: 'reload' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        await cache.put(url, response.clone());
+        ok += 1;
+      } catch (error) {
+        if (await cache.match(url)) {
+          ok += 1;
+          console.warn('Offline cache kept existing entry', url, error);
+        } else {
+          console.warn('Offline cache failed', url, error);
+          failed += 1;
+        }
+      }
+
+      state.offlineSync = { done: i + 1, total: toFetch.length, failed };
+      updateOfflineBar();
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
+  }
+
+  // Record each pack's synced version so the data-update banner can compare it against the
+  // published one. Only after a clean sync: on failures the old baseline stays, keeping the
+  // update prompt alive for a retry.
+  if (failed === 0) {
+    for (const { pack, manifest } of state.activePacks || []) {
+      storeSyncedVersion(pack.id, manifest?.version);
+    }
+    updateDataUpdateFlag();
   }
 
   state.offlineSync = null;
   state.cacheStatus = failed === 0 ? 'ready' : 'incomplete';
-  state.cacheProgress = t('cpCachedFailed', ok, urls.length, failed);
+  state.cacheProgress = t('cpCachedFailed', ok, targets.size, failed);
   render();  // once at the end: hides the bar, refreshes the offline status line
 }
 
@@ -1690,25 +1752,23 @@ function updateDataUpdateFlag() {
   });
 }
 
-function storeSyncedManifest(packId, manifest) {
-  if (!packId || !manifest) return;
+function storeSyncedVersion(packId, version) {
+  if (!packId || !version) return;
   try {
-    localStorage.setItem(syncedManifestKey(packId), JSON.stringify(manifest));
-    localStorage.setItem(syncedVersionKey(packId), manifest.version || '');
+    localStorage.setItem(syncedVersionKey(packId), version);
+    localStorage.removeItem(syncedManifestKey(packId)); // legacy blob from the old hash delta
   } catch (error) {
-    console.warn('Could not persist synced manifest', error);
+    console.warn('Could not persist synced pack version', error);
   }
-  state.dataUpdateAvailable = false;
 }
 
 function isPackMediaOrDocUrl(url) {
   return url.includes('/packs/') && (url.includes('/media/') || url.includes('/docs/'));
 }
 
-// Data update across the selected packs: reload each pack's data, re-verify/download its media,
-// then evict cached media/docs the current selection no longer references. (The old per-file
-// hash delta was single-pack only — relative media paths collide across packs — so multi-select
-// does a straightforward full refresh: correctness over saving a few downloads.)
+// Data update across the selected packs: reload each pack's data, delta-sync its media (see
+// downloadOfflinePack — missing files always, size-drifted files when a pack version changed),
+// then evict cached media/docs the current selection no longer references.
 async function syncPackDelta() {
   if (!('caches' in window)) {
     alert(t('noCacheApi'));
