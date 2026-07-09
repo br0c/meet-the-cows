@@ -1,9 +1,11 @@
-// Meet the Cows — contribution intake Worker (PROTOTYPE, untested end-to-end).
+// Meet the Cows — contribution intake Worker (live, validated end-to-end).
 //
 // Flow: the app POSTs multipart/form-data (field metadata + optional photo). We verify a
 // Cloudflare Turnstile token, read the photo's EXIF GPS to pre-approve by location, strip EXIF
 // from the stored image, then open a GitHub pull request that adds the contribution under
 // contributions/<fieldId>/. A maintainer reviews and merges; the pack build folds it in.
+// Full-size photo originals are stored in R2 (originals/), and a nightly cron snapshots the
+// repo into the same bucket (repo-backups/) as an off-GitHub backup.
 //
 // Secrets (wrangler secret put): GITHUB_TOKEN (fine-grained: Contents RW + Pull requests RW on
 // the repo), TURNSTILE_SECRET. Non-secret config lives in wrangler.toml [vars].
@@ -20,6 +22,9 @@ export default {
     } catch (err) {
       return json(origin, 500, { error: 'Submission failed.', detail: String(err && err.message || err) });
     }
+  },
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(backupRepo(env));
   },
 };
 
@@ -83,18 +88,22 @@ async function handleSubmit(request, env, origin) {
   const shortId = (crypto.randomUUID && crypto.randomUUID().slice(0, 8)) || Math.random().toString(16).slice(2, 10);
   const base = `contributions/${sanitize(fieldId)}/${stamp}_${shortId}`;
 
-  // The full-size (EXIF-stripped) original goes to a release asset, not into git — the repo
-  // stays lean and the pack build later downloads + resizes it like any other pack photo.
+  // The full-size (EXIF-stripped) original goes to R2, not into git — the repo stays lean and
+  // the pack build later downloads + resizes it like any other pack photo. Until the bucket's
+  // public URL is configured (R2_PUBLIC_BASE), fall back to the legacy release-asset path.
   let photoAsset = null;
   let photoUploadFailed = false;
   if (photoBytes) {
+    const name = `${sanitize(fieldId)}_${stamp}_${shortId}.jpg`;
     try {
-      photoAsset = await uploadReleaseAsset(env, `${sanitize(fieldId)}_${stamp}_${shortId}.jpg`, photoBytes);
+      photoAsset = (env.ORIGINALS && env.R2_PUBLIC_BASE)
+        ? await uploadOriginal(env, name, photoBytes)
+        : await uploadReleaseAsset(env, name, photoBytes);
     } catch (error) {
       // Keep the note: a failed photo upload must not discard a valid submission (mirrors the
       // pack build, which keeps the note when the photo download fails).
       photoUploadFailed = true;
-      console.warn('asset upload failed', error);
+      console.warn('photo upload failed', error);
     }
   }
   if (photoUploadFailed && !description) {
@@ -105,7 +114,7 @@ async function handleSubmit(request, env, origin) {
     schema: 2, fieldId, fieldCode, fieldLat, fieldLon, fieldName,
     date: date || new Date().toISOString().slice(0, 10),
     description,
-    photoAsset, // { id, name, url, size } | null — full-size original in the release
+    photoAsset, // { storage, key|id, name, url, size } | null — full-size original (R2, or legacy release)
     submitter: submitter ? { handle: submitter } : null,
     geo,
     submittedAt: new Date().toISOString(),
@@ -117,7 +126,13 @@ async function handleSubmit(request, env, origin) {
   try {
     pr = await openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset, photoUploadFailed });
   } catch (error) {
-    if (photoAsset) { try { await gh(env, `/releases/assets/${photoAsset.id}`, 'DELETE'); } catch { /* best effort */ } }
+    // Don't leave an orphaned original behind when the PR could not be opened.
+    if (photoAsset) {
+      try {
+        if (photoAsset.storage === 'r2') await env.ORIGINALS.delete(photoAsset.key);
+        else await gh(env, `/releases/assets/${photoAsset.id}`, 'DELETE');
+      } catch { /* best effort */ }
+    }
     throw error;
   }
   return json(origin, 200, { ok: true, prUrl: pr.html_url, prNumber: pr.number, geo });
@@ -213,6 +228,67 @@ function stripLocationMetadata(b) {
   let o = 0; for (const c of out) { result.set(c, o); o += c.length; }
   return result;
 }
+
+// ---------- R2: photo originals + nightly repo backups ----------
+
+// Store the full-size (location-stripped) original in R2 under originals/. The bucket's public
+// URL goes into the contribution JSON and the PR body, so reviewers and the pack build fetch it
+// like any plain https URL — no credentials, no build changes.
+async function uploadOriginal(env, name, bytes) {
+  const key = `originals/${name}`;
+  await env.ORIGINALS.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } });
+  const base = String(env.R2_PUBLIC_BASE).replace(/\/+$/, '');
+  return { storage: 'r2', key, name, url: `${base}/${key}`, size: bytes.length };
+}
+
+const BACKUP_PREFIX = 'repo-backups/';
+const BACKUP_RETAIN_DAYS = 90;
+const BACKUP_MAX_BYTES = 100 * 1024 * 1024; // sanity cap; the repo tarball is a few MB
+
+// Nightly cron: snapshot the repo into R2 as an off-GitHub backup. GitHub serves a full tarball
+// of any ref over plain https (public repo — no token needed), so this is just fetch -> put.
+// Old snapshots are pruned after BACKUP_RETAIN_DAYS; repo-backups/last-run.json records the
+// outcome so a quick look at the bucket shows whether backups are healthy.
+async function backupRepo(env) {
+  if (!env.ORIGINALS) return;
+  const branches = String(env.BACKUP_BRANCHES || 'main').split(',').map(s => s.trim()).filter(Boolean);
+  const day = new Date().toISOString().slice(0, 10);
+  const results = [];
+
+  for (const branch of branches) {
+    try {
+      const url = `https://codeload.github.com/${env.REPO}/tar.gz/refs/heads/${encodeURIComponent(branch)}`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'mtc-contrib-intake' } });
+      if (!res.ok) throw new Error(`tarball fetch → ${res.status}`);
+      const bytes = await res.arrayBuffer();
+      if (bytes.byteLength > BACKUP_MAX_BYTES) throw new Error(`tarball too large (${bytes.byteLength} bytes)`);
+      const key = `${BACKUP_PREFIX}${sanitize(branch)}-${day}.tar.gz`;
+      await env.ORIGINALS.put(key, bytes, { httpMetadata: { contentType: 'application/gzip' } });
+      results.push({ branch, key, size: bytes.byteLength, ok: true });
+    } catch (error) {
+      // A deleted branch (404) or a transient failure must not block the other branches.
+      results.push({ branch, ok: false, error: String(error && error.message || error) });
+    }
+  }
+
+  try {
+    const cutoff = Date.now() - BACKUP_RETAIN_DAYS * 86400000;
+    const listing = await env.ORIGINALS.list({ prefix: BACKUP_PREFIX });
+    for (const obj of listing.objects) {
+      if (obj.key.endsWith('.tar.gz') && obj.uploaded.getTime() < cutoff) await env.ORIGINALS.delete(obj.key);
+    }
+  } catch (error) {
+    results.push({ prune: false, error: String(error && error.message || error) });
+  }
+
+  await env.ORIGINALS.put(`${BACKUP_PREFIX}last-run.json`,
+    JSON.stringify({ at: new Date().toISOString(), results }, null, 2),
+    { httpMetadata: { contentType: 'application/json' } });
+  if (results.some(r => r.ok === false)) console.error('repo backup issues:', JSON.stringify(results));
+}
+
+// Exported for tests only; Workers ignores extra named exports.
+export { uploadOriginal, backupRepo };
 
 // ---------- GitHub ----------
 

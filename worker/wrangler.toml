@@ -13,4 +13,17 @@ ALLOWED_ORIGIN = "https://br0c.github.io"   # CORS: the app's origin
 GEO_RADIUS_M = "1000"                # within this of the field ⇒ geo-verified
 MAX_PHOTO_BYTES = "15728640"         # 15 MB
 MIN_PHOTO_LONG_EDGE = "2560"         # matches the pack image resize target
-RELEASE_TAG = "contrib-originals"    # release that stores full-size photo originals
+RELEASE_TAG = "contrib-originals"    # legacy release with pre-R2 photo originals (fallback path)
+# Public base URL of the R2 bucket (bucket Settings -> Public access, e.g.
+# https://pub-<hash>.r2.dev). While empty, photo originals fall back to release assets.
+R2_PUBLIC_BASE = ""
+BACKUP_BRANCHES = "main,dev"         # branches the nightly repo snapshot covers
+
+# Photo originals (originals/) + nightly repo snapshots (repo-backups/).
+# The bucket must exist before deploying: R2 -> Create bucket -> "mtc-data".
+[[r2_buckets]]
+binding = "ORIGINALS"
+bucket_name = "mtc-data"
+
+[triggers]
+crons = ["47 2 * * *"]               # nightly repo tarball snapshot into R2 (see backupRepo)

@@ -16,12 +16,17 @@ GPS. The app stays on GitHub Pages and just POSTs here.
    `needs-location-review`. EXIF is then **stripped** before the photo is stored anywhere.
    Device GPS is a fallback that only ever counts **in favour**: on-site ⇒ verified; far away ⇒
    silently ignored (never shown in the PR or the app).
-3. Uploads the full-size EXIF-stripped original as an asset on the rolling `RELEASE_TAG`
-   release — **no image bytes enter git**. The pack build later downloads and resizes it
-   (2560 px) like any other pack photo.
+3. Uploads the full-size EXIF-stripped original to the **R2 bucket** (`originals/` in `mtc-data`)
+   — **no image bytes enter git**. The pack build later downloads and resizes it (2560 px) like
+   any other pack photo. (While `R2_PUBLIC_BASE` is unset, it falls back to the legacy
+   `RELEASE_TAG` release-asset path; old release URLs keep working either way.)
 4. Opens a PR that adds `contributions/<fieldId>/<stamp>_<id>.json` (metadata + asset link) on a
-   new branch, labelled for review, with the photo embedded in the PR body. **Nothing is public
-   until a maintainer merges.**
+   new branch, labelled for review, with the photo embedded in the PR body. **Nothing is in the
+   app until a maintainer merges.**
+5. Nightly (cron `47 2 * * *`): snapshots the repo (`main` + `dev` tarballs from GitHub) into
+   `repo-backups/` in the same bucket as an off-GitHub backup — covers the code, merged
+   contributions, and the translation cache in one artifact. Snapshots are pruned after 90 days;
+   `repo-backups/last-run.json` records each run's outcome.
 
 ## Setup
 
@@ -32,6 +37,20 @@ npx wrangler login
 ```
 
 Edit `wrangler.toml` vars if needed (`REPO`, `ALLOWED_ORIGIN`, `GEO_RADIUS_M`, photo limits).
+
+### R2 bucket (photo originals + repo backups)
+
+One-time setup in the Cloudflare dashboard:
+
+1. **R2 → Create bucket** named exactly `mtc-data` (or edit `bucket_name` in `wrangler.toml`).
+   The deploy fails if the bucket referenced by the binding does not exist.
+2. Bucket → **Settings → Public access → Allow** (r2.dev subdomain), copy the
+   `https://pub-<hash>.r2.dev` URL and put it in `R2_PUBLIC_BASE` in `wrangler.toml`.
+   Until that var is set, photo uploads fall back to the legacy release-asset path
+   (the nightly repo backup works regardless — it never needs the public URL).
+
+Everything in the bucket is publicly readable via that URL; that matches the previous
+release-asset behaviour (photos are EXIF-stripped before storage, and the repo is public).
 
 ### Secrets
 
