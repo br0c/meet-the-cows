@@ -47,6 +47,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+# Pack registry + geofence (scripts/packs.py). Ensure this file's directory is importable
+# whether build_pack is run as a script or loaded by path in tests.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import packs  # noqa: E402
+
 DEFAULT_CUPX_URL = "https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx"
 OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 OURAIRPORTS_RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv"
@@ -688,6 +693,125 @@ def write_media_manifest(out_dir: Path, version: str) -> int:
     payload = {"version": version, "count": len(files), "files": files}
     (out_dir / "media-manifest.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return len(files)
+
+
+# ---------------------------------------------------------------------------
+# Multi-pack output: one merged, translated field set is sliced into several
+# packs (country packs + the Alps geofence pack). Each pack is self-contained —
+# it carries copies of just the media/docs its own fields reference — so it can
+# be downloaded on its own. Field ids are pack-independent (stable_id has no
+# pack component), so a field shared by, say, the France and Alps packs keeps
+# the same id and the app dedupes it when both packs are loaded.
+# ---------------------------------------------------------------------------
+
+def pack_media_refs(fields: Iterable[dict[str, Any]]) -> set[str]:
+    """Pack-relative media/doc paths (media[].url, thumbnailUrl, docs.vac) referenced by
+    `fields`. Absolute URLs are skipped — only local files get copied into a pack."""
+    refs: set[str] = set()
+    for field in fields:
+        for item in field.get("media") or []:
+            for key in ("url", "thumbnailUrl"):
+                url = clean(item.get(key))
+                if url and "://" not in url:
+                    refs.add(url)
+        vac = clean((field.get("docs") or {}).get("vac"))
+        if vac and "://" not in vac:
+            refs.add(vac)
+    return refs
+
+
+def copy_pack_media(refs: set[str], staging_dir: Path, pack_dir: Path) -> tuple[int, int]:
+    """Copy each referenced file from the shared staging tree into the pack, preserving its
+    relative path so the stored media URLs still resolve. Returns (files copied, total bytes)."""
+    copied = 0
+    total = 0
+    for rel in sorted(refs):
+        src = staging_dir / rel
+        if not src.is_file():
+            print(f"  media ref missing in staging: {rel}", file=sys.stderr)
+            continue
+        dst = pack_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        copied += 1
+        total += src.stat().st_size
+    return copied, total
+
+
+def pack_selector_label(pack_def: dict[str, Any]) -> str:
+    if pack_def.get("geofence"):
+        return f"geofence:{pack_def['geofence']}"
+    return "countries:" + ",".join(pack_def.get("countries", ()))
+
+
+def write_pack(
+    pack_def: dict[str, Any],
+    subset: list[dict[str, Any]],
+    staging_dir: Path,
+    out_root: Path,
+    *,
+    version: str,
+    generated_at: str,
+    source_state: dict[str, Any],
+    sources: list[dict[str, Any]],
+    notices: list[str],
+) -> dict[str, Any]:
+    """Write one pack directory (fields.json, manifest.json, media/docs copies, media-manifest,
+    state.json) and return its manifest, including the total download size in bytes."""
+    pack_dir = out_root / pack_def["id"]
+    if pack_dir.exists():
+        shutil.rmtree(pack_dir)
+    pack_dir.mkdir(parents=True)
+
+    subset = sorted(subset, key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
+    fields_bytes = json.dumps(subset, ensure_ascii=False, indent=2).encode("utf-8")
+    (pack_dir / "fields.json").write_bytes(fields_bytes)
+
+    media_files, media_bytes = copy_pack_media(pack_media_refs(subset), staging_dir, pack_dir)
+
+    manifest = {
+        "id": pack_def["id"],
+        "name": pack_def["name"],
+        "version": version,
+        "generatedAt": generated_at,
+        "isSample": False,
+        "fieldsUrl": "fields.json",
+        "fieldsCount": len(subset),
+        "mediaCount": count_media_items(subset),
+        "mediaFiles": media_files,
+        # Total bytes a pilot downloads for this pack on its own (fields.json + its media/docs).
+        # Shown in the picker so the download size is known before selecting.
+        "sizeBytes": len(fields_bytes) + media_bytes,
+        "selector": pack_selector_label(pack_def),
+        "sources": sources,
+        "notices": notices,
+    }
+    (pack_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_media_manifest(pack_dir, version)
+
+    state_out = dict(source_state)
+    state_out["builtAt"] = generated_at
+    (pack_dir / "state.json").write_text(json.dumps(state_out, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+def write_packs_index(manifests: list[dict[str, Any]], out_root: Path) -> None:
+    """Write packs.json listing every built pack with its size, for the app's pack picker."""
+    index = {
+        "schemaVersion": 2,
+        "updatedAt": dt.datetime.now(dt.UTC).isoformat(),
+        "packs": [
+            {
+                "id": m["id"],
+                "name": m["name"],
+                "manifestUrl": f"packs/{m['id']}/manifest.json",
+                "sizeBytes": m["sizeBytes"],
+                "fieldsCount": m["fieldsCount"],
+            }
+            for m in manifests
+        ],
+    }
+    (out_root / "packs.json").write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def extract_cup_and_pictures(blob: bytes) -> tuple[str, dict[str, bytes]]:
