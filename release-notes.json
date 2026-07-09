@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.7.0-beta",
+    "date": "2026-07-09",
+    "en": [
+      "Choose one or more regions to carry offline: France, Switzerland, Germany, Italy, Austria, plus an Alps pack that spans the whole range across borders",
+      "Pick several at once — fields shared between packs are never downloaded twice, and the total download size updates as you toggle packs",
+      "Share the app with another pilot from the button at the top of the screen"
+    ],
+    "fr": [
+      "Choisissez une ou plusieurs régions à emporter hors ligne : France, Suisse, Allemagne, Italie, Autriche, plus un pack Alpes couvrant tout le massif au-delà des frontières",
+      "Sélectionnez-en plusieurs à la fois — les terrains communs à plusieurs packs ne sont jamais téléchargés deux fois, et la taille totale se met à jour au fil de vos choix",
+      "Partagez l'application avec un autre pilote depuis le bouton en haut de l'écran"
+    ],
+    "de": [
+      "Wähle eine oder mehrere Regionen für offline: Frankreich, Schweiz, Deutschland, Italien, Österreich, dazu ein Alpen-Paket, das den gesamten Alpenraum über Grenzen hinweg abdeckt",
+      "Mehrere gleichzeitig auswählbar — Felder, die sich mehrere Pakete teilen, werden nie doppelt geladen, und die Gesamtgröße aktualisiert sich beim Umschalten",
+      "Teile die App mit einem anderen Piloten über die Schaltfläche oben am Bildschirm"
+    ]
+  },
+  {
     "version": "0.6.2-beta",
     "date": "2026-07-09",
     "en": [

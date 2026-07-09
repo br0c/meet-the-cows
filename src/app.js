@@ -1,4 +1,4 @@
-const APP_VERSION = '0.6.2-beta';
+const APP_VERSION = '0.7.0-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
