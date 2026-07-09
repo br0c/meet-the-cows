@@ -49,6 +49,7 @@ a { color: var(--accent); }
 .pack-option input { width: auto; transform: scale(1.2); }
 .pack-name { font-size: 15px; color: var(--text); }
 .pack-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.meta-list dd.download-total { font-weight: 650; font-variant-numeric: tabular-nums; }
 .gps-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

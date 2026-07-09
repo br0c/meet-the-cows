@@ -34,6 +34,24 @@ function formatBytes(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Actual combined download for the current selection: each pack's fields.json plus the media it
+// references, with shared media (referenced by several packs) counted once. Updates as packs are
+// toggled, so pilots see the real size rather than a sum that double-counts shared fields.
+function selectionDownloadBytes() {
+  let total = 0;
+  for (const p of state.activePacks || []) total += Number(p.manifest?.fieldsBytes) || 0;
+  const seen = new Set();
+  for (const field of state.fields) {
+    const base = field._base || state.currentManifestUrl || BASE_URL;
+    for (const item of field.media || []) {
+      if (!item?.url) continue;
+      const url = new URL(item.url, base).toString();
+      if (!seen.has(url)) { seen.add(url); total += Number(item.bytes) || 0; }
+    }
+  }
+  return total;
+}
+
 // Share the app itself: native share sheet on phones (the iOS icon the button mimics), else copy
 // the link to the clipboard, else a prompt with the URL to copy by hand.
 async function shareApp() {
@@ -79,7 +97,7 @@ const STRINGS = {
     settings: 'Settings', refreshPack: 'Refresh pack', done: 'Done',
     share: 'Share app', shareText: 'Meet the Cows — glider outlanding cockpit aid',
     shareCopied: 'Link copied to clipboard.', shareCopyPrompt: 'Copy this link:',
-    selectedPacks: 'Selected packs', fieldsWord: 'fields',
+    selectedPacks: 'Selected packs', fieldsWord: 'fields', downloadSize: 'Download size',
     app: 'App', version: 'Version', status: 'Status',
     betaStatus: 'Beta — not for primary navigation',
     language: 'Language', langAuto: 'Automatic (device)',
@@ -159,7 +177,7 @@ const STRINGS = {
     settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
     share: 'Partager l’app', shareText: 'Meet the Cows — aide cockpit pour vaches (vols de campagne)',
     shareCopied: 'Lien copié dans le presse-papiers.', shareCopyPrompt: 'Copiez ce lien :',
-    selectedPacks: 'Packs sélectionnés', fieldsWord: 'terrains',
+    selectedPacks: 'Packs sélectionnés', fieldsWord: 'terrains', downloadSize: 'Taille du téléchargement',
     app: 'Application', version: 'Version', status: 'Statut',
     betaStatus: 'Bêta — pas pour la navigation principale',
     language: 'Langue', langAuto: 'Automatique (appareil)',
@@ -239,7 +257,7 @@ const STRINGS = {
     settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
     share: 'App teilen', shareText: 'Meet the Cows — Cockpit-Hilfe für Außenlandungen',
     shareCopied: 'Link in die Zwischenablage kopiert.', shareCopyPrompt: 'Diesen Link kopieren:',
-    selectedPacks: 'Ausgewählte Pakete', fieldsWord: 'Felder',
+    selectedPacks: 'Ausgewählte Pakete', fieldsWord: 'Felder', downloadSize: 'Downloadgröße',
     app: 'App', version: 'Version', status: 'Status',
     betaStatus: 'Beta — nicht zur primären Navigation',
     language: 'Sprache', langAuto: 'Automatisch (Gerät)',
@@ -693,7 +711,6 @@ function render() {
           <button id="settingsToggle" class="icon-button" title="${t('settings')}" aria-label="${t('settings')}">⚙</button>
           <h1>🐄 Meet the Cows</h1>
           <button id="sharePack" class="icon-button" title="${t('share')}" aria-label="${t('share')}">${SHARE_ICON}</button>
-          <button id="refreshPack" class="icon-button" title="${t('refreshPack')}" aria-label="${t('refreshPack')}">↻</button>
         </div>
         ${renderStatus()}
       </header>
@@ -811,16 +828,13 @@ function renderUpdateBanner() {
 function renderSettingsPage() {
   const activeIds = new Set(activePackIds());
   const packList = state.packs.map(p => {
-    const bits = [];
-    if (typeof p.fieldsCount === 'number') bits.push(`${p.fieldsCount} ${t('fieldsWord')}`);
-    if (typeof p.sizeBytes === 'number') bits.push(formatBytes(p.sizeBytes));
+    const count = typeof p.fieldsCount === 'number' ? `${p.fieldsCount} ${t('fieldsWord')}` : '';
     return `<label class="pack-option">
         <input type="checkbox" class="packCheck" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
         <span class="pack-name">${escapeHtml(p.name)}</span>
-        <span class="pack-meta">${escapeHtml(bits.join(' · '))}</span>
+        <span class="pack-meta">${escapeHtml(count)}</span>
       </label>`;
   }).join('');
-  const totalBytes = activePacks().reduce((sum, p) => sum + (Number(p.sizeBytes) || 0), 0);
   const manifest = state.packManifest;
   const langOptions = [
     ['auto', t('langAuto')],
@@ -851,7 +865,7 @@ function renderSettingsPage() {
         <label>${t('selectedPacks')}</label>
         <div class="pack-list">${packList}</div>
         <dl class="meta-list">
-          <div><dt>${t('selectedPacks')}</dt><dd>${activePacks().length} · ${escapeHtml(formatBytes(totalBytes))}</dd></div>
+          <div><dt>${t('downloadSize')}</dt><dd class="download-total">${escapeHtml(formatBytes(selectionDownloadBytes()))}</dd></div>
           <div><dt>${t('fieldsCount')}</dt><dd>${state.fields.length}</dd></div>
           <div><dt>${t('version')}</dt><dd>${escapeHtml(manifest?.version || '—')}</dd></div>
           <div><dt>${t('offline')}</dt><dd>${escapeHtml(cacheStatusLabel(state.cacheStatus))}</dd></div>
@@ -1421,7 +1435,6 @@ function attachEvents() {
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#sharePack')?.addEventListener('click', shareApp);
-  document.querySelector('#refreshPack')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
   document.querySelector('#reloadPackSettings')?.addEventListener('click', async () => { await reloadSelectedPack(); render(); });
   document.querySelector('#languageSelect')?.addEventListener('change', e => {
     state.settings.language = e.target.value;
