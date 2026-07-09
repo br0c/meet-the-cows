@@ -4,8 +4,9 @@ A Cloudflare Worker that turns an in-app field contribution (a dated note and/or
 reviewable **GitHub pull request**, with a **geolocation pre-approval** step from the photo's EXIF
 GPS. The app stays on GitHub Pages and just POSTs here.
 
-> **Status: prototype.** The GitHub PR flow and the JPEG/EXIF helpers in `src/index.js` have not
-> been run end-to-end yet. Stand it up with `wrangler dev` and a test repo/label first.
+> **Status: live.** Deployed via CI (`.github/workflows/deploy-worker.yml`) at
+> `https://mtc-contrib-intake.br0c.workers.dev`. The in-app submission → GitHub PR flow has been
+> validated end-to-end in production.
 
 ## What it does
 
@@ -93,11 +94,13 @@ across deploys. So the GitHub PAT never enters GitHub Actions.
 
 Response: `{ ok: true, prUrl, prNumber, geo: { verified, source, distanceM } }`.
 
-## Still to do (tracked for Phase 2/3)
+## Still to do
 
-- App side: the Contribute button + form, client EXIF read for the live "pre-verified" hint,
-  JPEG normalization (HEIC→JPEG), and `CONTRIB_ENDPOINT`.
-- Build side: `merge_contributions()` in `scripts/build_pack.py` to fold merged
-  `contributions/` into the pack (localize notes, optimize photos).
-- Validate `readGps` / `stripExif` / `jpegLongEdge` against real phone photos; add unit tests.
+- App side: JPEG normalization (HEIC→JPEG) for photos coming off iOS.
+- Add unit tests for `readGps` / `stripExif` / `jpegLongEdge` (exercised in production, not yet
+  covered by tests).
 - Rate limiting (KV or Turnstile-only for now).
+
+Shipped: the in-app Contribute form + `CONTRIB_ENDPOINT`, the client EXIF read for the live
+"pre-verified" hint, and `merge_contributions()` in `scripts/build_pack.py` (folds merged
+`contributions/` into the pack — localized notes, optimized photos).
