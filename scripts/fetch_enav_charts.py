@@ -60,9 +60,13 @@ def cycle_date(cycle: str) -> str:
 
 
 def extract_ad2_pages(menu_html: str) -> dict[str, str]:
-    """ICAO -> AD 2 page href from the eAIP menu; the en-GB edition wins over it-IT."""
+    """ICAO -> AD 2 page href from the eAIP menu; the en-GB edition wins over it-IT.
+
+    \\s+ matters: certified airports read "LI-AD 2 LIPB - …" but the uncertified aerodromes
+    carry a double space ("LI-AD 2  LIDT - …"). Entries without content ([NIL]) point at
+    noContent.html and never match."""
     pages: dict[str, str] = {}
-    for href, code in re.findall(r"href='(LI-AD 2 (LI[A-Z]{2})[^']*?\.html)#", menu_html):
+    for href, code in re.findall(r"href='(LI-AD 2\s+(LI[A-Z]{2})[^']*?\.html)#", menu_html):
         current = pages.get(code)
         if current is None or ("-en-GB" in href and "-en-GB" not in current):
             pages[code] = href

@@ -1,60 +1,27 @@
 #!/usr/bin/env python3
-"""CI probe v7: locate the minor aerodromes in the eAIP menu.
+"""CI probe v8: end-to-end dry-run of the Italian chart fetcher on sample aerodromes.
 
-v5 decoded eAIP/menu.html (11.8MB XHTML, single-quoted hrefs): 107 aerodromes, one AD 2 page
-each ("LI-AD 2 LIPB - BOLZANO 1-it-IT.html"), no PDF links in the menu itself. v6 fetches a
-few AD 2 pages and dumps their PDF links to fix the fetcher's chart-name filter. Runs only in
-GitHub Actions with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD; prints structure and statuses,
-never credentials.
+v1-v7 mapped the portal (IDCS login, cycle list on default.html, 11.8MB eAIP/menu.html tree,
+per-aerodrome AD 2 pages carrying the chart PDF links, double-space quirk for uncertified
+aerodromes). v8 exercises scripts/fetch_enav_charts.py's real functions against one certified
+airport and two uncertified aerodromes, printing the selected chart names, sizes and merged
+page counts — the go/no-go check before wiring the fetch into CI. Runs only in GitHub Actions
+with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD; prints structure and statuses, never credentials.
 """
 from __future__ import annotations
 
-import collections
 import os
 import re
+import sys
 import urllib.parse
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-CYCLE = "(A07-26)_2026_07_09"
-BASE = f"https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/{CYCLE}"
-EXAMPLE_PDF = (f"{BASE}/documents/Root/ENAV/Cartografia/AD/AD_2/AD_2_PRINCIPALI/LIBF/2-1/"
-               "AERODROME%20CHART%20ICAO.pdf")
+sys.path.insert(0, str(Path(__file__).parent))
+import fetch_enav_charts as fec  # noqa: E402
 
-
-def fetch(ctx, url: str) -> tuple[int, bytes]:
-    res = ctx.request.get(url, timeout=60000)
-    return res.status, res.body()
-
-
-def summarize_tree(text: str) -> None:
-    """Dump the shape of whatever document tree the file encodes: PDF paths grouped by
-    aerodrome, distinct chart basenames, and a couple of full sample branches."""
-    pdf_refs = [re.sub(r"\?.*$", "", p)
-                for p in re.findall(r"['\"]([^'\"]{4,260}?\.pdf(?:\?[^'\"]{0,120})?)['\"]", text, re.I)]
-    print(f"  {len(pdf_refs)} .pdf refs, {len(set(pdf_refs))} unique")
-    decoded = [urllib.parse.unquote(p.replace("\\\\", "/").replace("\\", "/")) for p in set(pdf_refs)]
-    ad_refs = [p for p in decoded if "/AD_2" in p or "AD_2" in p]
-    print(f"  {len(ad_refs)} under AD_2")
-    by_code: dict[str, list[str]] = collections.defaultdict(list)
-    for p in ad_refs:
-        m = re.search(r"/(LI[A-Z]{2})/", p)
-        if m:
-            by_code[m.group(1)].append(p)
-    print(f"  {len(by_code)} aerodromes with AD_2 PDFs: {' '.join(sorted(by_code))}")
-    # Which subtree do codes sit in (PRINCIPALI vs MINORI vs other)?
-    subtrees = collections.Counter(re.search(r"AD_2/([^/]+)/", p).group(1)
-                                   for p in ad_refs if re.search(r"AD_2/([^/]+)/", p))
-    print("  AD_2 subtrees:", dict(subtrees))
-    # Distinct chart basenames tell us how to select "France-VAC-like" content.
-    names = collections.Counter(p.rsplit("/", 1)[-1] for p in ad_refs)
-    print("  top chart basenames:")
-    for name, count in names.most_common(40):
-        print(f"    {count:4d}  {name}")
-    for code in sorted(by_code)[:2]:
-        print(f"  full branch {code}:")
-        for p in sorted(by_code[code]):
-            print(f"    {p}")
+SAMPLE_CODES = ("LIPB", "LIDT", "LILH")  # Bolzano (certified), Trento + Voghera (uncertified)
 
 
 def main() -> int:
@@ -69,48 +36,66 @@ def main() -> int:
         ctx = browser.new_context()
         page = ctx.new_page()
 
+        print("== cycle discovery ==")
+        page.goto(f"{fec.PORTAL}/default.html", wait_until="domcontentloaded", timeout=60000)
+        cycles = sorted({m.group(0) for m in fec.CYCLE_RE.finditer(page.content())})
+        import datetime as dt
+        cycle = fec.pick_cycle(cycles, dt.date.today())
+        print(f"cycles {cycles} -> picked {cycle} (effective {fec.cycle_date(cycle)})")
+        menu_url = f"{fec.PORTAL}/{cycle}/eAIP/menu.html"
+
         print("== login ==")
-        page.goto(EXAMPLE_PDF, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_selector("input[type='password']", timeout=30000)
-        for candidate in ("input[type='email']", "input[type='text']"):
-            if page.query_selector(candidate):
-                page.fill(candidate, user)
-                break
-        page.fill("input[type='password']", password)
-        page.keyboard.press("Enter")
-        try:
-            page.wait_for_load_state("networkidle", timeout=45000)
-        except Exception:
-            pass
+        page.goto(menu_url, wait_until="domcontentloaded", timeout=60000)
+        if page.query_selector("input[type='password']"):
+            for candidate in ("input[type='email']", "input[type='text']"):
+                if page.query_selector(candidate):
+                    page.fill(candidate, user)
+                    break
+            page.fill("input[type='password']", password)
+            page.keyboard.press("Enter")
+            try:
+                page.wait_for_load_state("networkidle", timeout=45000)
+            except Exception:
+                pass
         print("logged in")
 
-        # v6 proved the AD 2 pages carry the chart links, but only 45 certified airports have
-        # such pages while the menu mentions 107 LIxx codes. Find where the rest live.
-        print("== menu.html: AD 2 aerodrome pages ==")
-        status, body = fetch(ctx, f"{BASE}/eAIP/menu.html")
-        menu = body.decode("utf-8", "replace")
-        pages: dict[str, str] = {}
-        for href, code in re.findall(r"href='(LI-AD 2 (LI[A-Z]{2})[^']*?\.html)#", menu):
-            pages.setdefault(code, href)
-        print(f"  {status}: {len(pages)} AD 2 pages: {' '.join(sorted(pages))}")
+        print("== menu -> AD 2 pages ==")
+        res = ctx.request.get(menu_url, timeout=90000)
+        pages = fec.extract_ad2_pages(res.body().decode("utf-8", "replace"))
+        print(f"{res.status}: {len(pages)} AD 2 aerodrome pages")
+        print("codes:", " ".join(sorted(pages)))
 
-        print("== distinct href section prefixes ==")
-        prefixes = sorted({m.split(" ")[0] + " " + (m.split(" ") + [""])[1]
-                           for m in re.findall(r"href='LI-([^']{2,60}?)(?: \d)?-(?:it-IT|en-GB)\.html", menu)})
-        for p in prefixes[:60]:
-            print("   ", p)
-
-        print("== token census ==")
-        for token in ("Minori", "minori", "Aviosuperfici", "AVIOSUPERFICI", "AD 3", "Eliporti", "AD 1.5"):
-            print(f"  count {token!r}: {menu.count(token)}")
-
-        for code in ("LIDT", "LILH", "LIDA"):
-            pos = menu.find(code)
-            print(f"== menu context around first {code!r} ==")
-            if pos < 0:
-                print("  (absent)")
+        for code in SAMPLE_CODES:
+            href = pages.get(code)
+            print(f"== {code}: {href} ==")
+            if not href:
+                print("  (no AD 2 page)")
                 continue
-            print("  ", " ".join(menu[max(0, pos - 400):pos + 400].split())[:760])
+            page_url = f"{fec.PORTAL}/{cycle}/eAIP/{urllib.parse.quote(href)}"
+            page_res = ctx.request.get(page_url, timeout=90000)
+            if page_res.status != 200:
+                print(f"  page -> HTTP {page_res.status}")
+                continue
+            links = fec.extract_pdf_links(page_res.body().decode("utf-8", "replace"), page_url)
+            charts = fec.select_visual_charts(links)
+            print(f"  {len(links)} PDF links, {len(charts)} selected as visual:")
+            chunks = []
+            for url in charts:
+                name = urllib.parse.unquote(url).rsplit("/", 1)[-1]
+                chart_res = ctx.request.get(url, timeout=90000)
+                body = chart_res.body()
+                print(f"   {chart_res.status} {len(body):>9,}B  {name}")
+                if chart_res.status == 200:
+                    chunks.append(body)
+            if chunks:
+                try:
+                    merged = fec.merge_pdfs(chunks)
+                    from pypdf import PdfReader
+                    import io
+                    n_pages = len(PdfReader(io.BytesIO(merged)).pages)
+                    print(f"  merged: {len(merged):,}B, {n_pages} pages")
+                except Exception as error:  # pypdf may be missing in older workflow revisions
+                    print(f"  merge skipped: {error}")
 
         browser.close()
     return 0

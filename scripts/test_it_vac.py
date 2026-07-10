@@ -122,14 +122,16 @@ class TestFetchHelpers(unittest.TestCase):
         self.assertEqual(fetch_enav_charts.cycle_date("(A07-26)_2026_07_09"), "2026-07-09")
 
     def test_extract_ad2_pages_prefers_english(self):
+        # LIDT uses the real menu quirk: uncertified aerodromes have a double space after AD 2.
         menu = ("<a href='LI-AD 2 LIPB - BOLZANO 1-it-IT.html#AD-2-LIPB---BOLZANO-1'>x</a>"
                 "<a href='LI-AD 2 LIPB - BOLZANO 1-en-GB.html#AD-2-LIPB---BOLZANO-1'>x</a>"
-                "<a href='LI-AD 2 LIDT - TRENTO Mattarello 1-it-IT.html#AD-2-LIDT'>x</a>"
+                "<a href='LI-AD 2  LIDT - TRENTO Mattarello 1-it-IT.html#AD-2--LIDT'>x</a>"
+                "<a href='noContent.html' onclick=\"setNoContentLabel('AD 2 LIDR - RAVENNA 8 ')\">nil</a>"
                 "<a href='LI-AD 1.5 Status-en-GB.html#AD-15'>not an aerodrome</a>")
         pages = fetch_enav_charts.extract_ad2_pages(menu)
         self.assertEqual(sorted(pages), ["LIDT", "LIPB"])
         self.assertEqual(pages["LIPB"], "LI-AD 2 LIPB - BOLZANO 1-en-GB.html")
-        self.assertEqual(pages["LIDT"], "LI-AD 2 LIDT - TRENTO Mattarello 1-it-IT.html")
+        self.assertEqual(pages["LIDT"], "LI-AD 2  LIDT - TRENTO Mattarello 1-it-IT.html")
 
     def test_select_visual_charts(self):
         base = "https://x/AIP/(A07-26)_2026_07_09/documents/Root/ENAV/Cartografia/AD/AD_2"

@@ -1,0 +1,51 @@
+name: Fetch ENAV charts (QA)
+
+# Manual QA run of scripts/fetch_enav_charts.py: logs in with the repo's ENAV secrets,
+# downloads the selected visual charts and uploads them as a short-lived CI artifact for
+# quality review. This does NOT deploy anything — Italian charts must not ship publicly
+# until ENAV grants redistribution permission. Once it does, the fetch becomes a step of
+# build-data-pack.yml feeding build_pack.py --it-vac-dir.
+on:
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: "Comma-separated ICAO whitelist (empty = every AD 2 aerodrome)"
+        required: false
+        default: ""
+      max:
+        description: "Max aerodromes to fetch (0 = no limit)"
+        required: false
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Playwright + pypdf
+        run: |
+          python -m pip install --quiet playwright pypdf
+          python -m playwright install --with-deps chromium
+      - name: Fetch charts
+        env:
+          ENAV_ACCOUNT_ID: ${{ secrets.ENAV_ACCOUNT_ID }}
+          ENAV_ACCOUNT_PASSWORD: ${{ secrets.ENAV_ACCOUNT_PASSWORD }}
+        run: |
+          python scripts/fetch_enav_charts.py \
+            --out enav-charts \
+            --codes "${{ inputs.codes }}" \
+            --max "${{ inputs.max }}"
+      - name: Upload charts artifact (QA only, never deployed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: enav-charts
+          path: enav-charts/
+          retention-days: 3
+          if-no-files-found: error
