@@ -151,7 +151,8 @@ _DEEPL_LOCK = threading.Lock()
 # v11: merged community contributions (contributions/) are folded into notes and media.
 # v13: Austrian AD 2 chart PDFs (Austro Control eAIP) attached to AT airfields.
 # v14: Italian ENAV charts attached to IT airfields; Alps pack split into West/East halves.
-PACK_SCHEMA_VERSION = 14
+# v15: second chart-attach pass so streckenflug-only airfields get their AT/DE/IT charts.
+PACK_SCHEMA_VERSION = 15
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
