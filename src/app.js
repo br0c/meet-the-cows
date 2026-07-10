@@ -1994,12 +1994,6 @@ const CUP_LABELS = {
   surface: ['Surface', 'Oberfläche', 'Oberflaeche'],
   direction: ['Direction', 'Richtung'],
 };
-// All localized structured-block labels, used only to strip those lines out of CUP prose.
-const CUP_STRUCTURED_LABELS = [
-  'Info', 'Surface', 'Direction', 'Slope', 'Visit', 'Modified', 'Feedback', 'Reported hazards',
-  'Oberfläche', 'Oberflaeche', 'Richtung', 'Neigung', 'Besichtigung', 'Geändert', 'Geaendert', 'Rückmeldungen', 'Rueckmeldungen', 'Gemeldete Gefahren',
-  'Pente', 'Visite', 'Modifié', 'Modifie', 'Retours', 'Dangers signalés', 'Dangers signales',
-];
 const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Pull a labelled value ("Surface: grass", "Direction: 07/25") out of the notes block. The
@@ -2011,37 +2005,16 @@ function cupNoteValue(notes, labels) {
   return match[1].split(/[.;\n]/)[0].trim().replace(/\s+/g, ' ').slice(0, 40);
 }
 
-// The Guide des Aires ("guide des vaches") free-text field description, kept alongside the
-// structured summary. Strips the streckenflug labelled block (any language), OpenAIP/VAC import
-// boilerplate, URLs, and a leading runway token so info already shown above (difficulty,
-// direction…) is not duplicated. Only guide-sourced fields carry this prose; other sources stay
-// compact. `notes` is the note already resolved to the export language.
-function cupGuideNotes(field, notes) {
-  if (!/Guide des Aires|planeur-net/i.test(field.source?.name || '')) return '';
-  const labelAlt = CUP_STRUCTURED_LABELS.map(escapeRegExp).join('|');
-  const text = String(notes || '')
-    .replace(/^\s*streckenflug\.at source:.*$/gim, '')
-    .replace(/^\s*(?:Landout Field|Airstrip|Airfield|Airport)\b.*$/gim, '')
-    .replace(new RegExp(`^\\s*(?:${labelAlt})\\s*:.*$`, 'gim'), '')
-    .replace(/^\s*-{2,}\s*$/gim, '')
-    .replace(/Glider-relevant airfield imported from OpenAIP[^.]*\.?/gi, '')
-    .replace(/Official aerodrome entry created from SIA VAC import\.?/gi, '')
-    .replace(/Coordinates\/dimensions are from the airport source[^.]*\.?/gi, '')
-    .replace(/Verify (?:current official AIP\/VAC data before use|the attached official VAC)\.?/gi, '')
-    .replace(/https?:\/\/\S+/gi, '')
-    .replace(/^\s*(?:[NSEW]{1,2}\/[NSEW]{1,2}|\d{1,3}\/\d{1,3}|\d{2,3})\b\.?\s+/, '');
-  return text.replace(/\s+/g, ' ').trim().slice(0, 240);
-}
-
-// Compact waypoint description: difficulty, frequency, length×width, surface, direction/pistes,
-// then the Guide des Aires prose. The full field notes stay in the app; the CUP stays readable.
-// Prose and structured values come from the note in the pilot's current language.
+// Minimal waypoint description: difficulty, runway (direction + dimensions), surface, and
+// frequency — nothing else. The detailed notes and photos stay in the app; briefing happens
+// there, the CUP is only for navigating to the field.
 function cupDescription(field) {
   const notes = fieldNotes(field);
   const parts = [];
   if (field.difficulty && field.difficulty !== 'UNKNOWN') parts.push(`[${field.difficulty}]`);
-  const freq = cupFrequency(field);
-  if (freq) parts.push(`${freq} MHz`);
+  const direction = cupNoteValue(notes, CUP_LABELS.direction)
+    || (Number.isFinite(field.runwayDirectionDeg) ? `${String(Math.round(field.runwayDirectionDeg)).padStart(3, '0')}°` : '');
+  if (direction) parts.push(direction);
   const length = Number(field.lengthM);
   const width = Number(field.widthM);
   if (Number.isFinite(length) && length > 0 && Number.isFinite(width) && width > 0) {
@@ -2051,11 +2024,8 @@ function cupDescription(field) {
   }
   const surface = cupNoteValue(notes, CUP_LABELS.surface);
   if (surface) parts.push(surface);
-  const direction = cupNoteValue(notes, CUP_LABELS.direction)
-    || (Number.isFinite(field.runwayDirectionDeg) ? `${String(Math.round(field.runwayDirectionDeg)).padStart(3, '0')}°` : '');
-  if (direction) parts.push(direction);
-  const prose = cupGuideNotes(field, notes);
-  if (prose) parts.push(prose);
+  const freq = cupFrequency(field);
+  if (freq) parts.push(`${freq} MHz`);
   return parts.join(' · ');
 }
 
