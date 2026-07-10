@@ -1,0 +1,24 @@
+{
+  "schema": 2,
+  "fieldId": "fr_la_motte_du_caire_44p3246_6p0313",
+  "fieldCode": "LF0431",
+  "fieldLat": 44.3245643,
+  "fieldLon": 6.0313223,
+  "fieldName": "La Motte du Caire",
+  "date": "2026-07-10",
+  "description": "",
+  "photoAsset": {
+    "storage": "r2",
+    "key": "originals/fr_la_motte_du_caire_44p3246_6p0313_2026-07-10T05-18-33-206_297f8aa4.jpg",
+    "name": "fr_la_motte_du_caire_44p3246_6p0313_2026-07-10T05-18-33-206_297f8aa4.jpg",
+    "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_la_motte_du_caire_44p3246_6p0313_2026-07-10T05-18-33-206_297f8aa4.jpg",
+    "size": 2844135
+  },
+  "submitter": null,
+  "geo": {
+    "verified": true,
+    "source": "device",
+    "distanceM": 97
+  },
+  "submittedAt": "2026-07-10T05:18:33.785Z"
+}
