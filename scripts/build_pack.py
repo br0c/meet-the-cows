@@ -150,7 +150,8 @@ _DEEPL_LOCK = threading.Lock()
 # v10: translation cache is published with the pack (self-heal for the evictable CI cache).
 # v11: merged community contributions (contributions/) are folded into notes and media.
 # v13: Austrian AD 2 chart PDFs (Austro Control eAIP) attached to AT airfields.
-PACK_SCHEMA_VERSION = 13
+# v14: Italian ENAV charts attached to IT airfields; Alps pack split into West/East halves.
+PACK_SCHEMA_VERSION = 14
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -237,7 +238,7 @@ def main() -> None:
     parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
     parser.add_argument("--at-vac-root", default=os.environ.get("AT_VAC_ROOT", "auto"), help="Austrian charts: auto (resolve the effective complete-AIP ZIP), an explicit AIP_AUSTRIA ZIP URL, or none to disable")
     parser.add_argument("--de-vac-root", default=os.environ.get("DE_VAC_ROOT", "auto"), help="DFS BasicVFR root chapter URL, auto to follow the portal redirect to the current cycle, or none to disable German charts")
-    parser.add_argument("--it-vac-dir", default=os.environ.get("IT_VAC_DIR", ""), help="Directory of pre-fetched ENAV Italian charts (<ICAO>.pdf files + manifest.json, produced by scripts/fetch_enav_charts.py in a separate authenticated CI step); empty or none disables Italian charts. Must stay disabled on public deploys until ENAV grants redistribution permission.")
+    parser.add_argument("--it-vac-dir", default=os.environ.get("IT_VAC_DIR", ""), help="Directory of pre-fetched ENAV Italian charts (<ICAO>.pdf files + manifest.json, produced by scripts/fetch_enav_charts.py in a separate authenticated CI step); empty or none disables Italian charts.")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
     parser.add_argument("--include-vac-airfields", action="store_true", help="Create VAC-only airfield entries when an LFxx VAC exists but the airfield is absent from the CUP")
     parser.add_argument("--airports-csv", default=os.environ.get("AIRPORTS_CSV", OURAIRPORTS_AIRPORTS_URL), help="Airport CSV URL/path with at least ident,name,latitude_deg,longitude_deg,elevation_ft; defaults to OurAirports")
@@ -898,7 +899,7 @@ def write_packs_index(manifests: list[dict[str, Any]], out_root: Path) -> None:
 # Shared across every pack in a build (the sources differ only by the args, the notices are fixed).
 PACK_NOTICES = [
     "Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.",
-    "Check official/current SIA (FR), Austro Control (AT) and DFS (DE) documents before flight. VAC/AD chart PDFs are cycle-specific.",
+    "Check official/current SIA (FR), Austro Control (AT), DFS (DE) and ENAV (IT) documents before flight. VAC/AD chart PDFs are cycle-specific.",
     "VAC-only airfield coordinates may come from a non-authoritative open dataset; the attached SIA VAC is the official source.",
 ]
 
@@ -937,7 +938,7 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "name": "ENAV AIP Italia aerodrome charts",
             "url": "https://onlineservices.enav.it" if it_vac_dir else "not imported",
             "updatedAt": it_vac_date or None,
-            "note": "© ENAV S.p.A. Redistribution permission pending — Italian charts stay disabled on public deploys until ENAV grants it.",
+            "note": "© ENAV S.p.A. (AIP Italia), retrieved from ENAV's free online self-briefing service. Verify current official publications before flight.",
         },
         {
             "name": "OpenAIP glider airfields" if args.airfield_source == "openaip" else "OurAirports airport/runway coordinates",
@@ -2340,8 +2341,9 @@ def import_de_vac_pdfs(
 # merged <ICAO>.pdf per aerodrome plus a manifest.json ({"cycle", "cycleDate", ...}). This
 # importer is pure filesystem: it attaches the pre-fetched charts to existing Italian airfields
 # exactly like the FR/AT/DE importers, so the build itself never needs the ENAV credentials.
-# NOTE: ENAV redistribution permission is still pending — keep --it-vac-dir disabled on public
-# deploys until it is granted.
+# Redistribution: shipped with attribution to ENAV per the owner's 2026-07-10 decision, based on
+# the eAIP help's distribution terms ("may be made available on-line … or off-line") and the
+# free self-briefing access.
 
 ICAO_IT_RE = re.compile(r"^LI[A-Z]{2}$")
 

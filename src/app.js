@@ -1,4 +1,4 @@
-const APP_VERSION = '0.7.2-beta';
+const APP_VERSION = '0.7.3-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -11,7 +11,7 @@ const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
 /** @typedef {{ id:string, kind?:'outlanding'|'airfield', name:string, code?:string, country?:string, latitude:number, longitude:number, elevationM:number|null, difficulty:string, rawDifficulty?:string, lengthM:number|null, widthM:number|null, runwayDirectionDeg:number|null, frequency?:string, frequencies?:Array<{type?:string,mhz?:number,description?:string,source?:string}>, notes:string, source?:object, media:Array<{type:string,url:string,thumbnailUrl?:string,caption?:string,source?:string,updatedAt?:string}> }} Field */
 
 const DEFAULT_SETTINGS = {
-  packIds: ['alps'],
+  packIds: ['alps-west', 'alps-east'],
   language: 'auto',
   safetyMarginM: 250,
   hideC: true,
@@ -525,6 +525,12 @@ function loadSettings() {
     if (!Array.isArray(settings.packIds)) {
       settings.packIds = stored.packId ? [stored.packId] : [...DEFAULT_SETTINGS.packIds];
     }
+    // 0.7.3: the whole-Alps pack was split into two overlapping halves. Map the retired id to
+    // both so existing Alps users keep their coverage (shared media stays cached — only the
+    // pack JSONs change).
+    if (settings.packIds.includes('alps')) {
+      settings.packIds = [...new Set(settings.packIds.flatMap(id => id === 'alps' ? ['alps-west', 'alps-east'] : [id]))];
+    }
     return Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map(key => [key, settings[key]]));
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -553,7 +559,15 @@ function activePackIds() {
   // An explicitly empty selection is honoured (the app works GPS-only, no offline data). The
   // first-pack fallback only kicks in when the stored ids no longer exist in packs.json.
   if (Array.isArray(stored) && stored.length === 0) return [];
-  const chosen = (stored || []).filter(id => state.packs.some(p => p.id === id));
+  const available = id => state.packs.some(p => p.id === id);
+  let chosen = (stored || []).filter(available);
+  if (!chosen.length && (stored || []).some(id => id === 'alps' || String(id).startsWith('alps-'))) {
+    // Alps split transition: the app shell and the pack index deploy minutes apart, so the
+    // stored Alps ids may not exist in the published packs.json yet (new app, old index) or
+    // anymore (old app, new index). Fall back to whichever Alps flavour is published rather
+    // than silently switching the pilot to the first pack in the list.
+    chosen = ['alps-west', 'alps-east', 'alps'].filter(available);
+  }
   return chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
 }
 

@@ -113,6 +113,30 @@ jobs:
             echo "CI cache was evicted; seeded from data/translation-cache.json ($(wc -c < .cache/translation-cache.json) bytes)"
           fi
 
+      # Italian charts sit behind ENAV's login, so they are fetched by a Playwright step and
+      # handed to the build as a local directory (--it-vac-dir). The directory is cached across
+      # runs: the fetcher checks the portal's current AIRAC cycle and skips the ~250 downloads
+      # when the cache already holds it. An ENAV outage must not sink the nightly build — the
+      # fetch soft-fails and the build then runs without Italian charts (they return with the
+      # next successful fetch).
+      - name: Restore ENAV charts cache
+        uses: actions/cache@v6
+        with:
+          path: .cache/enav-charts
+          key: enav-charts-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            enav-charts-
+
+      - name: Fetch Italian charts (ENAV, authenticated)
+        env:
+          ENAV_ACCOUNT_ID: ${{ secrets.ENAV_ACCOUNT_ID }}
+          ENAV_ACCOUNT_PASSWORD: ${{ secrets.ENAV_ACCOUNT_PASSWORD }}
+        run: |
+          python -m pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+          python scripts/fetch_enav_charts.py --out .cache/enav-charts \
+            || echo "::warning::ENAV fetch failed; building without Italian charts"
+
       - name: Build data pack
         id: build
         env:
@@ -125,8 +149,9 @@ jobs:
           # this is a one-time cost; routine incremental rebuilds spend almost nothing.
           DEEPL_MAX_CHARS: "0"
           # Incremental check + translation-cache self-heal read one pack's state; the fingerprint
-          # is identical across packs, so any pack works. Use the Alps pack as the canonical one.
-          PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/alps/state.json
+          # is identical across packs, so any pack works. Use the France pack as the canonical one
+          # (stable id — the Alps pack was split into alps-west/alps-east in schema 14).
+          PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/fr/state.json
           FORCE_FULL: ${{ steps.mode.outputs.force_full }}
         run: |
           rm -rf data/packs .cache/_multi dist/site
@@ -144,6 +169,7 @@ jobs:
             --vac-date auto \
             --at-vac-root auto \
             --de-vac-root auto \
+            --it-vac-dir .cache/enav-charts \
             --include-vac-airfields
 
       - name: No source changes (skipped rebuild)
@@ -152,7 +178,7 @@ jobs:
 
       - name: Smoke test pack
         if: steps.build.outputs.changed != 'false'
-        run: python scripts/smoke_test_pack.py data/packs/alps
+        run: python scripts/smoke_test_pack.py data/packs/alps-west
 
       # Durable layer 2: commit the updated cache to the repo. Only fires when the build added
       # translations (git diff check), and the commit touches only data/translation-cache.json,

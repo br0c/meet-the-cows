@@ -15,8 +15,9 @@ How the portal is laid out (mapped by scripts/probe_enav.py v1-v6):
    Oracle IDCS login.
 
 Only visual, France-VAC-like charts are kept (aerodrome chart + visual approach); instrument
-procedures are skipped to keep the packs flyable-size. NOTE: ENAV redistribution permission is
-still pending — the output must not be published until it is granted.
+procedures are skipped to keep the packs flyable-size. Redistribution: shipped with attribution
+to ENAV per the owner's 2026-07-10 decision, based on the eAIP help's distribution terms ("may
+be made available on-line … or off-line") and the free self-briefing access.
 """
 from __future__ import annotations
 
@@ -88,6 +89,22 @@ def select_visual_charts(pdf_urls: list[str]) -> list[str]:
             if WANTED_CHART_RE.search(urllib.parse.unquote(url).rsplit("/", 1)[-1])]
 
 
+def charts_up_to_date(out_dir: Path, cycle: str) -> bool:
+    """True when the output directory already holds this cycle's charts (manifest cycle matches
+    and every chart file exists) — the nightly build can then skip ~250 downloads."""
+    manifest_path = out_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - broken manifest -> refetch
+        return False
+    if manifest.get("cycle") != cycle:
+        return False
+    charts = manifest.get("charts") or {}
+    return bool(charts) and all((out_dir / f"{code}.pdf").is_file() for code in charts)
+
+
 def login_if_prompted(page, user: str, password: str, wait_ms: int = 8000) -> bool:
     """Complete the Oracle IDCS form if the current navigation landed on it. True when a
     login was performed. Gated URLs redirect to the IDCS domain, so this may need a moment
@@ -125,6 +142,7 @@ def main() -> int:
     parser.add_argument("--out", default=".cache/enav-charts", help="Output directory (build_pack --it-vac-dir)")
     parser.add_argument("--codes", default="", help="Optional comma-separated ICAO whitelist; default: every AD_2 aerodrome with visual charts")
     parser.add_argument("--max", type=int, default=0, help="Debug limit on aerodromes; 0 means no limit")
+    parser.add_argument("--force", action="store_true", help="Refetch even when the output directory already holds the current cycle")
     args = parser.parse_args()
 
     user = os.environ.get("ENAV_ACCOUNT_ID", "")
@@ -153,6 +171,10 @@ def main() -> int:
             print("ERROR: no cycle links found on default.html", file=sys.stderr)
             return 1
         print(f"cycle {cycle} (effective {cycle_date(cycle)}) of {cycles}")
+        if not args.force and charts_up_to_date(out_dir, cycle):
+            print(f"charts in {out_dir} already match cycle {cycle}; nothing to fetch")
+            browser.close()
+            return 0
         menu_url = f"{PORTAL}/{cycle}/eAIP/menu.html"
 
         # The eAIP itself is protected: trigger the IDCS login here if it hasn't happened yet.

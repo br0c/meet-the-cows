@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.7.3-beta",
+    "date": "2026-07-10",
+    "en": [
+      "New: Official aerodrome and visual approach charts for Italy, from ENAV's AIP Italia",
+      "New: The Alps pack is now two overlapping packs — Western Alps (up to Locarno/Como) and Eastern Alps (from Sion) — so you download only the side you fly; if you had Alps selected, both are kept",
+      "Fix: The CUP export description now carries only the essentials — difficulty, runway, surface and frequency"
+    ],
+    "fr": [
+      "Nouveau : Cartes d'aérodrome et d'approche à vue officielles pour l'Italie, issues de l'AIP Italia d'ENAV",
+      "Nouveau : Le pack Alpes devient deux packs qui se recouvrent — Alpes occidentales (jusqu'à Locarno/Côme) et Alpes orientales (depuis Sion) — pour ne télécharger que le versant où vous volez ; si vous aviez sélectionné Alpes, les deux sont conservés",
+      "Correctif : La description de l'export CUP ne contient plus que l'essentiel — difficulté, piste, surface et fréquence"
+    ],
+    "de": [
+      "Neu: Offizielle Flugplatz- und Sichtanflugkarten für Italien aus der AIP Italia von ENAV",
+      "Neu: Das Alpen-Paket besteht jetzt aus zwei überlappenden Paketen — Westalpen (bis Locarno/Como) und Ostalpen (ab Sion) — so lädst du nur die Seite, auf der du fliegst; war Alpen gewählt, bleiben beide erhalten",
+      "Fix: Die Beschreibung im CUP-Export enthält nur noch das Wesentliche — Schwierigkeit, Piste, Oberfläche und Frequenz"
+    ]
+  },
+  {
     "version": "0.7.2-beta",
     "date": "2026-07-10",
     "en": [
