@@ -237,6 +237,7 @@ def main() -> None:
     parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
     parser.add_argument("--at-vac-root", default=os.environ.get("AT_VAC_ROOT", "auto"), help="Austrian charts: auto (resolve the effective complete-AIP ZIP), an explicit AIP_AUSTRIA ZIP URL, or none to disable")
     parser.add_argument("--de-vac-root", default=os.environ.get("DE_VAC_ROOT", "auto"), help="DFS BasicVFR root chapter URL, auto to follow the portal redirect to the current cycle, or none to disable German charts")
+    parser.add_argument("--it-vac-dir", default=os.environ.get("IT_VAC_DIR", ""), help="Directory of pre-fetched ENAV Italian charts (<ICAO>.pdf files + manifest.json, produced by scripts/fetch_enav_charts.py in a separate authenticated CI step); empty or none disables Italian charts. Must stay disabled on public deploys until ENAV grants redistribution permission.")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
     parser.add_argument("--include-vac-airfields", action="store_true", help="Create VAC-only airfield entries when an LFxx VAC exists but the airfield is absent from the CUP")
     parser.add_argument("--airports-csv", default=os.environ.get("AIRPORTS_CSV", OURAIRPORTS_AIRPORTS_URL), help="Airport CSV URL/path with at least ident,name,latitude_deg,longitude_deg,elevation_ft; defaults to OurAirports")
@@ -314,11 +315,13 @@ def main() -> None:
             resolved_vac_date = inferred_vac_date or ""
     at_zip_url, at_zip_date = resolve_at_chart_zip(args.at_vac_root)
     de_vac_root, de_vac_date = resolve_de_vac_root(args.de_vac_root)
+    it_vac_dir, it_vac_date, it_vac_fingerprint = resolve_it_vac_dir(args.it_vac_dir)
     source_state = build_source_state(
         cupx=source_version_tag(args.cupx),
         vac=resolved_vac_date or resolved_vac_root,
         vac_at=at_zip_date or at_zip_url,
         vac_de=de_vac_date or de_vac_root,
+        vac_it=it_vac_fingerprint,
         streckenflug=(
             streckenflug_list_fingerprint(args.streckenflug_url, args.streckenflug_countries, raw_dir)
             if args.include_streckenflug else ""
@@ -386,6 +389,7 @@ def main() -> None:
 
     at_chart_count = 0
     de_vac_count = 0
+    it_chart_count = 0
 
     # VAC imports (FR + AT) and streckenflug are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
@@ -412,6 +416,15 @@ def main() -> None:
                 de_vac_date=de_vac_date,
                 max_vac=args.max_vac,
             )] = "de_vac"
+        if it_vac_dir:
+            futures[executor.submit(
+                import_it_chart_pdfs,
+                fields=fields,
+                charts_dir=it_vac_dir,
+                docs_dir=docs_dir,
+                it_vac_date=it_vac_date,
+                max_vac=args.max_vac,
+            )] = "it_charts"
         if resolved_vac_root:
             futures[executor.submit(
                 import_vac_pdfs,
@@ -449,6 +462,8 @@ def main() -> None:
                 at_chart_count = future.result()
             elif task == "de_vac":
                 de_vac_count = future.result()
+            elif task == "it_charts":
+                it_chart_count = future.result()
             elif task == "streckenflug":
                 streckenflug_fields = future.result()
                 streckenflug_count = len(streckenflug_fields)
@@ -474,7 +489,7 @@ def main() -> None:
 
     generated_at = dt.datetime.now(dt.UTC).isoformat()
     version = source_state_version(source_state)
-    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_zip_url, at_zip_date, de_vac_root, de_vac_date)
+    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_zip_url, at_zip_date, de_vac_root, de_vac_date, it_vac_dir, it_vac_date)
 
     if args.multi_pack:
         # Slice the one merged, translated field set into every pack (media staged in out_dir).
@@ -497,6 +512,7 @@ def main() -> None:
             "vacCount": vac_count,
             "atChartCount": at_chart_count,
             "deVacCount": de_vac_count,
+            "itChartCount": it_chart_count,
             "vacOnlyAirfieldsCreated": vac_created_airfields,
             "streckenflugCount": streckenflug_count,
             "contributionNotes": contrib_notes,
@@ -541,7 +557,7 @@ def main() -> None:
     label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
         f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
-        f"{vac_count} FR + {at_chart_count} AT + {de_vac_count} DE VAC PDFs, {vac_created_airfields} VAC-only airfields, "
+        f"{vac_count} FR + {at_chart_count} AT + {de_vac_count} DE + {it_chart_count} IT VAC PDFs, {vac_created_airfields} VAC-only airfields, "
         f"{streckenflug_count} streckenflug fields, {streckenflug_media_count} streckenflug images"
     )
 
@@ -632,13 +648,14 @@ def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_d
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
 
 
-def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "", vac_de: str = "") -> dict[str, Any]:
+def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "", vac_de: str = "", vac_it: str = "") -> dict[str, Any]:
     return {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "cupx": cupx,
         "vac": vac,
         "vacAt": vac_at,
         "vacDe": vac_de,
+        "vacIt": vac_it,
         "streckenflug": streckenflug,
         "contributions": contributions,
     }
@@ -664,7 +681,7 @@ def contributions_fingerprint(contrib_dir: Path) -> str:
 def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
     if not previous:
         return False
-    keys = ("schemaVersion", "cupx", "vac", "vacAt", "vacDe", "streckenflug", "contributions")
+    keys = ("schemaVersion", "cupx", "vac", "vacAt", "vacDe", "vacIt", "streckenflug", "contributions")
     return all(str(previous.get(k) or "") == str(current.get(k) or "") for k in keys)
 
 
@@ -889,7 +906,8 @@ PACK_NOTICES = [
 def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
                        frequency_index: dict[str, Any],
                        at_zip_url: str = "", at_zip_date: str = "",
-                       de_vac_root: str = "", de_vac_date: str = "") -> list[dict[str, Any]]:
+                       de_vac_root: str = "", de_vac_date: str = "",
+                       it_vac_dir: str = "", it_vac_date: str = "") -> list[dict[str, Any]]:
     """The attribution/sources block shared by every pack's manifest."""
     return [
         {
@@ -914,6 +932,12 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "url": de_vac_root or "not imported",
             "updatedAt": de_vac_date or None,
             "note": "Free-of-charge official German AIP VFR; © DFS Deutsche Flugsicherung GmbH.",
+        },
+        {
+            "name": "ENAV AIP Italia aerodrome charts",
+            "url": "https://onlineservices.enav.it" if it_vac_dir else "not imported",
+            "updatedAt": it_vac_date or None,
+            "note": "© ENAV S.p.A. Redistribution permission pending — Italian charts stay disabled on public deploys until ENAV grants it.",
         },
         {
             "name": "OpenAIP glider airfields" if args.airfield_source == "openaip" else "OurAirports airport/runway coordinates",
@@ -2308,6 +2332,92 @@ def import_de_vac_pdfs(
         progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
     progress.done(f"downloaded {downloaded}, err {errors}")
     return downloaded
+
+
+# --- Italy: ENAV AIP Italia aerodrome charts (pre-fetched directory) ---------------------------
+# ENAV's eAIP sits behind an Oracle IDCS login, so the charts are fetched by a separate
+# authenticated Playwright CI step (scripts/fetch_enav_charts.py) into a local directory of one
+# merged <ICAO>.pdf per aerodrome plus a manifest.json ({"cycle", "cycleDate", ...}). This
+# importer is pure filesystem: it attaches the pre-fetched charts to existing Italian airfields
+# exactly like the FR/AT/DE importers, so the build itself never needs the ENAV credentials.
+# NOTE: ENAV redistribution permission is still pending — keep --it-vac-dir disabled on public
+# deploys until it is granted.
+
+ICAO_IT_RE = re.compile(r"^LI[A-Z]{2}$")
+
+
+def resolve_it_vac_dir(spec: str) -> tuple[str, str, str]:
+    """Resolve (charts_dir, cycle_date, fingerprint) for a pre-fetched ENAV charts directory.
+
+    ('', '', '') when disabled, missing or empty — an absent fetch must not fail the build.
+    The fingerprint covers the cycle date plus every chart file's name and size, so a re-fetch
+    that adds or changes charts within the same AIRAC cycle still triggers a rebuild.
+    """
+    if not spec or spec.lower() in {"none", "off"}:
+        return "", "", ""
+    charts_dir = Path(spec)
+    pdfs = sorted(charts_dir.glob("*.pdf")) if charts_dir.is_dir() else []
+    if not pdfs:
+        print(f"IT VAC: no chart PDFs in {spec}; skipping Italian charts", file=sys.stderr)
+        return "", "", ""
+    cycle_date = ""
+    manifest_path = charts_dir / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            cycle_date = clean(json.loads(manifest_path.read_text(encoding="utf-8")).get("cycleDate"))
+        except Exception as error:  # noqa: BLE001 - a broken manifest only loses the date label
+            print(f"IT VAC: unreadable manifest.json ({error})", file=sys.stderr)
+    listing = "\n".join(f"{p.name}:{p.stat().st_size}" for p in pdfs)
+    digest = hashlib.sha256(listing.encode("utf-8")).hexdigest()[:16]
+    return str(charts_dir), cycle_date, f"{cycle_date}:{digest}" if cycle_date else digest
+
+
+def import_it_chart_pdfs(
+    *,
+    fields: list[dict[str, Any]],
+    charts_dir: str,
+    docs_dir: Path,
+    it_vac_date: str,
+    max_vac: int,
+) -> int:
+    """Attach one pre-fetched ENAV chart PDF per existing (non-major) Italian airfield.
+
+    Only charts for wanted codes are copied into docs_dir, so aerodromes the packs don't carry —
+    and majors that drop_major_airports would remove anyway — never bloat the deployed tree."""
+    by_code = index_fields_by_code(fields)
+    wanted = {code for code in by_code if ICAO_IT_RE.match(code)
+              and not any(is_major_airport(f) for f in by_code[code])}
+    source_dir = Path(charts_dir)
+    candidates = sorted(code for code in wanted if (source_dir / f"{code}.pdf").is_file())
+    progress = Progress(len(candidates), "IT VAC PDFs")
+    attached = 0
+    errors = 0
+    for index, code in enumerate(candidates, start=1):
+        if max_vac and attached >= max_vac:
+            progress.update(index - 1, extra=f"attached {attached}, skipped limit", force=True)
+            break
+        try:
+            data = optimize_pdf_bytes((source_dir / f"{code}.pdf").read_bytes(), label=f"IT {code}")
+            (docs_dir / f"{code}.pdf").write_bytes(data)
+        except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
+            errors += 1
+            progress.update(index, extra=f"{code}: {error} | ok {attached}, err {errors}", force=True)
+            continue
+        media = {
+            "type": "pdf",
+            "url": f"docs/vac/{code}.pdf",
+            "caption": f"VAC {code}",
+            "source": "ENAV S.p.A. (AIP Italia)",
+        }
+        if it_vac_date:
+            media["updatedAt"] = it_vac_date
+        for field in by_code[code]:
+            field["media"].append(dict(media))
+            field.setdefault("docs", {})["vac"] = media["url"]
+        attached += 1
+        progress.update(index, extra=f"{code}: attached | ok {attached}, err {errors}")
+    progress.done(f"attached {attached}, err {errors}")
+    return attached
 
 
 def import_vac_pdfs(
