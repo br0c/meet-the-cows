@@ -1,4 +1,4 @@
-const APP_VERSION = '0.7.3-beta';
+const APP_VERSION = '0.7.4-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -100,10 +100,12 @@ const TURNSTILE_SITEKEY = '0x4AAAAAADyIBMLj-XXHBK-v';
 const CONTRIB_MAX_BYTES = 15 * 1024 * 1024;   // keep in step with the Worker's MAX_PHOTO_BYTES
 const CONTRIB_MIN_LONG_EDGE = 2560;           // keep in step with MIN_PHOTO_LONG_EDGE
 const CONTRIB_GEO_RADIUS_M = 1000;            // keep in step with GEO_RADIUS_M
+const CONTRIB_MAX_PHOTOS = 5;                 // keep in step with MAX_PHOTOS
 
 // Transient state for the open contribution form (kept out of app state so typing in the form
 // never triggers a full re-render that would wipe the inputs).
 let contribForm = null;
+let newFieldForm = null;
 let bugForm = null;
 
 // Release notes: shipped with the app shell; shown from Settings and once as a banner after an
@@ -190,14 +192,14 @@ const STRINGS = {
     contribute: 'Contribute an update', contribTitle: 'Contribute an update',
     cDate: 'Date observed', cDesc: 'What changed?',
     cDescPlaceholder: 'New windsock, surface change, obstacle, hazard…',
-    cAddPhoto: 'Add photo (JPEG)', cChangePhoto: 'Change photo', cRemovePhoto: 'Remove',
+    cAddPhoto: 'Add photos (JPEG)', cRemovePhoto: 'Remove',
     cSubmitter: 'Your name or handle (optional)',
-    cLicense: 'I made this photo/note and agree to publish it under the project’s terms.',
+    cLicense: 'I made these photos/notes and agree to publish them under the project’s terms.',
     cSubmit: 'Submit for review', cSubmitting: 'Submitting…',
-    cGeoVerified: m => `📍 Photo ${m} m from the field — pre-verified.`,
-    cGeoFar: d => `📍 Photo ${d} away — will need manual review.`,
-    cGeoDevice: m => `📍 You are ${m} m from the field — pre-verified.`,
+    cGeoAllOk: n => n === 1 ? '📍 Photo location pre-verified.' : `📍 All ${n} photos pre-verified by location.`,
+    cGeoSomeReview: n => `📍 ${n} photo(s) without an on-site location — they will be reviewed manually.`,
     cGeoNone: 'No location on the photo — it will be reviewed manually.',
+    cMaxPhotos: n => `Maximum ${n} photos per submission.`,
     cThanks: 'Sent for review',
     cThanksBody: n => `Opened as pull request #${n}. It appears once a maintainer approves it.`,
     cViewPr: 'View on GitHub →', cErr: 'Could not submit',
@@ -205,6 +207,17 @@ const STRINGS = {
     cTooSmall: px => `Photo resolution too low (min ${px} px on the long edge).`,
     cJpegOnly: 'Please choose a JPEG photo.',
     cNeedContent: 'Add a note or a photo.', cNeedTurnstile: 'Please complete the anti-spam check.',
+    suggestField: 'Suggest a new field',
+    nfTitle: 'Suggest a new field',
+    nfIntro: 'Propose a field missing from the packs — a maintainer reviews every proposal before it is published.',
+    nfName: 'Field name', nfKind: 'Type', nfCountry: 'Country',
+    nfCoords: 'Coordinates (decimal degrees)', nfLat: 'Latitude', nfLon: 'Longitude',
+    nfUseGps: 'Use my position', nfGpsNone: 'No GPS position available yet.',
+    nfElev: 'Elevation (m)', nfDifficulty: 'Difficulty', nfDiffUnknown: 'Unknown',
+    nfRunway: 'Runway', nfLength: 'Length (m)', nfWidth: 'Width (m)',
+    nfSurface: 'Surface', nfSurfacePh: 'grass, asphalt…', nfFrequency: 'Frequency (MHz)',
+    nfDesc: 'Notes for pilots', nfDescPlaceholder: 'Access, obstacles, slope, who to call…',
+    nfNeedBasics: 'A name and coordinates are required.',
   },
   fr: {
     settings: 'Réglages', refreshPack: 'Actualiser le pack', done: 'OK',
@@ -280,14 +293,14 @@ const STRINGS = {
     contribute: 'Proposer une mise à jour', contribTitle: 'Proposer une mise à jour',
     cDate: 'Date d’observation', cDesc: 'Qu’est-ce qui a changé ?',
     cDescPlaceholder: 'Nouvelle manche à air, surface, obstacle, danger…',
-    cAddPhoto: 'Ajouter une photo (JPEG)', cChangePhoto: 'Changer la photo', cRemovePhoto: 'Retirer',
+    cAddPhoto: 'Ajouter des photos (JPEG)', cRemovePhoto: 'Retirer',
     cSubmitter: 'Votre nom ou pseudo (facultatif)',
-    cLicense: 'J’ai réalisé cette photo/note et j’accepte de la publier selon les conditions du projet.',
+    cLicense: 'J’ai réalisé ces photos/notes et j’accepte de les publier selon les conditions du projet.',
     cSubmit: 'Envoyer pour révision', cSubmitting: 'Envoi…',
-    cGeoVerified: m => `📍 Photo à ${m} m du terrain — pré-vérifiée.`,
-    cGeoFar: d => `📍 Photo à ${d} — révision manuelle nécessaire.`,
-    cGeoDevice: m => `📍 Vous êtes à ${m} m du terrain — pré-vérifié.`,
+    cGeoAllOk: n => n === 1 ? '📍 Localisation de la photo pré-vérifiée.' : `📍 Les ${n} photos sont pré-vérifiées par leur localisation.`,
+    cGeoSomeReview: n => `📍 ${n} photo(s) sans localisation sur site — révision manuelle.`,
     cGeoNone: 'Aucune localisation sur la photo — révision manuelle.',
+    cMaxPhotos: n => `Maximum ${n} photos par envoi.`,
     cThanks: 'Envoyé pour révision',
     cThanksBody: n => `Ouvert comme pull request #${n}. Visible après validation par un mainteneur.`,
     cViewPr: 'Voir sur GitHub →', cErr: 'Échec de l’envoi',
@@ -295,6 +308,17 @@ const STRINGS = {
     cTooSmall: px => `Résolution trop faible (min ${px} px sur le côté long).`,
     cJpegOnly: 'Veuillez choisir une photo JPEG.',
     cNeedContent: 'Ajoutez une note ou une photo.', cNeedTurnstile: 'Veuillez compléter la vérification anti-spam.',
+    suggestField: 'Proposer un nouveau terrain',
+    nfTitle: 'Proposer un nouveau terrain',
+    nfIntro: 'Proposez un terrain absent des packs — chaque proposition est relue par un mainteneur avant publication.',
+    nfName: 'Nom du terrain', nfKind: 'Type', nfCountry: 'Pays',
+    nfCoords: 'Coordonnées (degrés décimaux)', nfLat: 'Latitude', nfLon: 'Longitude',
+    nfUseGps: 'Utiliser ma position', nfGpsNone: 'Pas encore de position GPS.',
+    nfElev: 'Altitude (m)', nfDifficulty: 'Difficulté', nfDiffUnknown: 'Inconnue',
+    nfRunway: 'Piste', nfLength: 'Longueur (m)', nfWidth: 'Largeur (m)',
+    nfSurface: 'Surface', nfSurfacePh: 'herbe, asphalte…', nfFrequency: 'Fréquence (MHz)',
+    nfDesc: 'Notes pour les pilotes', nfDescPlaceholder: 'Accès, obstacles, pente, qui contacter…',
+    nfNeedBasics: 'Un nom et des coordonnées sont requis.',
   },
   de: {
     settings: 'Einstellungen', refreshPack: 'Paket aktualisieren', done: 'Fertig',
@@ -370,14 +394,14 @@ const STRINGS = {
     contribute: 'Update beitragen', contribTitle: 'Update beitragen',
     cDate: 'Beobachtungsdatum', cDesc: 'Was hat sich geändert?',
     cDescPlaceholder: 'Neuer Windsack, Oberfläche, Hindernis, Gefahr…',
-    cAddPhoto: 'Foto hinzufügen (JPEG)', cChangePhoto: 'Foto ändern', cRemovePhoto: 'Entfernen',
+    cAddPhoto: 'Fotos hinzufügen (JPEG)', cRemovePhoto: 'Entfernen',
     cSubmitter: 'Name oder Kürzel (optional)',
-    cLicense: 'Ich habe dieses Foto/diese Notiz erstellt und stimme der Veröffentlichung gemäß den Projektbedingungen zu.',
+    cLicense: 'Ich habe diese Fotos/Notizen erstellt und stimme der Veröffentlichung gemäß den Projektbedingungen zu.',
     cSubmit: 'Zur Prüfung senden', cSubmitting: 'Wird gesendet…',
-    cGeoVerified: m => `📍 Foto ${m} m vom Feld — vorab bestätigt.`,
-    cGeoFar: d => `📍 Foto ${d} entfernt — manuelle Prüfung nötig.`,
-    cGeoDevice: m => `📍 Sie sind ${m} m vom Feld — vorab bestätigt.`,
+    cGeoAllOk: n => n === 1 ? '📍 Fotostandort vorab bestätigt.' : `📍 Alle ${n} Fotos standortlich vorab bestätigt.`,
+    cGeoSomeReview: n => `📍 ${n} Foto(s) ohne Standort am Feld — manuelle Prüfung.`,
     cGeoNone: 'Kein Standort im Foto — wird manuell geprüft.',
+    cMaxPhotos: n => `Maximal ${n} Fotos pro Einsendung.`,
     cThanks: 'Zur Prüfung gesendet',
     cThanksBody: n => `Als Pull Request #${n} geöffnet. Erscheint, sobald ein Maintainer zustimmt.`,
     cViewPr: 'Auf GitHub ansehen →', cErr: 'Senden fehlgeschlagen',
@@ -385,6 +409,17 @@ const STRINGS = {
     cTooSmall: px => `Auflösung zu niedrig (mind. ${px} px an der langen Kante).`,
     cJpegOnly: 'Bitte ein JPEG-Foto wählen.',
     cNeedContent: 'Notiz oder Foto hinzufügen.', cNeedTurnstile: 'Bitte die Anti-Spam-Prüfung abschließen.',
+    suggestField: 'Neues Feld vorschlagen',
+    nfTitle: 'Neues Feld vorschlagen',
+    nfIntro: 'Schlage ein Feld vor, das in den Paketen fehlt — jeder Vorschlag wird vor der Veröffentlichung geprüft.',
+    nfName: 'Feldname', nfKind: 'Typ', nfCountry: 'Land',
+    nfCoords: 'Koordinaten (Dezimalgrad)', nfLat: 'Breitengrad', nfLon: 'Längengrad',
+    nfUseGps: 'Meine Position verwenden', nfGpsNone: 'Noch keine GPS-Position.',
+    nfElev: 'Höhe (m)', nfDifficulty: 'Schwierigkeit', nfDiffUnknown: 'Unbekannt',
+    nfRunway: 'Piste', nfLength: 'Länge (m)', nfWidth: 'Breite (m)',
+    nfSurface: 'Oberfläche', nfSurfacePh: 'Gras, Asphalt…', nfFrequency: 'Frequenz (MHz)',
+    nfDesc: 'Hinweise für Piloten', nfDescPlaceholder: 'Zufahrt, Hindernisse, Neigung, Ansprechpartner…',
+    nfNeedBasics: 'Name und Koordinaten sind erforderlich.',
   },
 };
 
@@ -458,6 +493,7 @@ let state = {
   gpsError: '',
   selectedFieldId: null,
   contribFor: null,
+  showNewField: false,
   showBugReport: false,
   releaseNotes: [],
   showReleaseNotes: false,
@@ -852,6 +888,7 @@ function render() {
       </main>
       ${selected ? renderDetail(selected) : ''}
       ${state.contribFor ? renderContribute(state.fields.find(f => f.id === state.contribFor)) : ''}
+      ${renderNewField()}
       ${state.showReleaseNotes ? renderReleaseNotes() : ''}
       ${renderBugReport()}
       ${renderOfflineBar()}
@@ -859,7 +896,7 @@ function render() {
   `;
   // Lock background scroll while an overlay is open, so scrolling a short bottom-sheet doesn't
   // fall through to the list behind it.
-  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showReleaseNotes || state.showBugReport));
+  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport));
   attachEvents();
   requestAnimationFrame(() => {
     const detail = document.querySelector('.detail');
@@ -1154,8 +1191,11 @@ function renderFieldList() {
   }
   const query = state.searchQuery.trim();
   if (query) {
+    // The suggest row closes every search — most prominently the fruitless one, where a pilot
+    // just discovered the field they know is missing from the pack.
+    const suggest = `<button id="suggestField" class="suggest-field">➕ ${t('suggestField')}</button>`;
     const rows = searchMatches(query);
-    if (!rows.length) return `<div class="warning">${escapeHtml(t('noMatches', query))}</div>`;
+    if (!rows.length) return `<div class="warning">${escapeHtml(t('noMatches', query))}</div>${suggest}`;
     return `
       <section class="field-list" aria-label="${escapeHtml(t('searchResults'))}">
         <div class="field-list-head">
@@ -1163,6 +1203,7 @@ function renderFieldList() {
         </div>
         ${rows.map(renderFieldRow).join('')}
       </section>
+      ${suggest}
     `;
   }
   if (!state.position) return `<div class="warning">${escapeHtml(t('waitingGps'))}</div>`;
@@ -1264,9 +1305,9 @@ function renderContribute(field) {
           <input id="cDate" type="date" value="${today}" />
           <label for="cDesc">${t('cDesc')}</label>
           <textarea id="cDesc" rows="4" placeholder="${escapeHtml(t('cDescPlaceholder'))}"></textarea>
-          <input id="cPhoto" type="file" accept="image/jpeg" hidden />
+          <input id="cPhoto" type="file" accept="image/jpeg" multiple hidden />
           <button type="button" id="cPhotoBtn" class="contrib-photo-btn">🖼️ ${t('cAddPhoto')}</button>
-          <div id="cPhotoInfo" class="contrib-photo-info" hidden></div>
+          <div id="cPhotoList" class="contrib-photo-list"></div>
           <div id="cGeo" class="contrib-geo" hidden></div>
           <input id="cSubmitter" type="text" autocomplete="off" placeholder="${escapeHtml(t('cSubmitter'))}" />
           <label class="checkbox-row contrib-license"><input id="cLicense" type="checkbox" /><span>${escapeHtml(t('cLicense'))}</span></label>
@@ -1280,7 +1321,7 @@ function renderContribute(field) {
 }
 
 function openContribute(fieldId) {
-  contribForm = { photoBlob: null, photoName: null, geo: null, busy: false, turnstileWidget: null };
+  contribForm = { photos: [], busy: false, turnstileWidget: null };
   state.contribFor = fieldId;
   render();
 }
@@ -1304,90 +1345,96 @@ function updateContribValidity() {
   if (!submit || !contribForm) return;
   const hasNote = (document.querySelector('#cDesc')?.value || '').trim().length > 0;
   const licensed = !!document.querySelector('#cLicense')?.checked;
-  submit.disabled = contribForm.busy || !licensed || !(hasNote || contribForm.photoBlob);
+  submit.disabled = contribForm.busy || !licensed || !(hasNote || contribForm.photos.length);
 }
 
-function showContribGeo(geo) {
+// Aggregate geo line under the photo list: every staged photo pre-verified -> ok; otherwise
+// say how many will need manual review. The Worker re-checks per photo authoritatively.
+function showContribGeo(photos) {
   const el = document.querySelector('#cGeo');
   if (!el) return;
+  if (!photos.length) { el.hidden = true; el.textContent = ''; return; }
   el.hidden = false;
   el.classList.remove('ok', 'warn');
-  if (geo.verified) { el.classList.add('ok'); el.textContent = geo.source === 'device' ? t('cGeoDevice', geo.distanceM) : t('cGeoVerified', geo.distanceM); }
-  else if (geo.distanceM != null && geo.source === 'exif') { el.classList.add('warn'); el.textContent = t('cGeoFar', geo.distanceM >= 2000 ? fmtKm(geo.distanceM) : `${geo.distanceM} m`); }
-  else { el.classList.add('warn'); el.textContent = t('cGeoNone'); }
+  const unverified = photos.filter(p => !p.geo.verified).length;
+  if (!unverified) { el.classList.add('ok'); el.textContent = t('cGeoAllOk', photos.length); }
+  else { el.classList.add('warn'); el.textContent = t('cGeoSomeReview', unverified); }
 }
 
-// Advisory client-side geo hint. The Worker re-checks authoritatively; this just gives feedback.
-function contribGeoHint(field, exifGps) {
-  if (exifGps) {
-    const d = Math.round(haversineMeters(exifGps.lat, exifGps.lon, field.latitude, field.longitude));
+// Advisory client-side geo hint against target coordinates (an existing field, or the
+// coordinates typed into the new-field form). The Worker re-checks authoritatively.
+function contribGeoHint(targetLat, targetLon, exifGps) {
+  const hasTarget = Number.isFinite(targetLat) && Number.isFinite(targetLon);
+  if (exifGps && hasTarget) {
+    const d = Math.round(haversineMeters(exifGps.lat, exifGps.lon, targetLat, targetLon));
     return { verified: d <= CONTRIB_GEO_RADIUS_M, source: 'exif', distanceM: d };
   }
-  if (state.position) {
-    const d = Math.round(haversineMeters(state.position.latitude, state.position.longitude, field.latitude, field.longitude));
+  if (state.position && hasTarget) {
+    const d = Math.round(haversineMeters(state.position.latitude, state.position.longitude, targetLat, targetLon));
     if (d <= CONTRIB_GEO_RADIUS_M) return { verified: true, source: 'device', distanceM: d };
   }
   return { verified: false, source: 'none', distanceM: null };
 }
 
-async function onContribFile(field, file) {
-  const form = contribForm;
-  if (!form || !file) return;
+// Stage picked files onto `form.photos` (shared by the update form and the new-field form).
+// A file that fails validation shows the error and is skipped — photos already staged stay,
+// visibly listed, so a bad pick can never silently drop or replace a good one.
+async function stageContribPhotos(form, files, coordsProvider) {
+  const isLive = () => form === contribForm || form === newFieldForm;
   contribShowError('');
-  let blob = file;
-  let name = file.name || 'photo.jpg';
-  let exifGps = null;
-  try {
-    if (file.type === 'image/jpeg') {
-      const buf = await file.arrayBuffer();
-      exifGps = readJpegGps(buf);
-    } else {
-      // Convert PNG/HEIC-that-slipped-through to JPEG so the Worker (JPEG-only) accepts it.
-      // Conversion loses EXIF, so the geo hint falls back to device GPS. (The picker asks for
-      // image/jpeg, so iPhones transcode HEIC at pick time and keep the EXIF GPS.)
-      blob = await imageToJpeg(file);
-      name = name.replace(/\.[^.]+$/, '') + '.jpg';
+  for (const file of Array.from(files || [])) {
+    if (!isLive()) return;
+    if (form.photos.length >= CONTRIB_MAX_PHOTOS) { contribShowError(t('cMaxPhotos', CONTRIB_MAX_PHOTOS)); break; }
+    let blob = file;
+    let name = file.name || 'photo.jpg';
+    let exifGps = null;
+    try {
+      if (file.type === 'image/jpeg') {
+        const buf = await file.arrayBuffer();
+        exifGps = readJpegGps(buf);
+      } else {
+        // Convert PNG/HEIC-that-slipped-through to JPEG so the Worker (JPEG-only) accepts it.
+        // Conversion loses EXIF, so the geo hint falls back to device GPS. (The picker asks for
+        // image/jpeg, so iPhones transcode HEIC at pick time and keep the EXIF GPS.)
+        blob = await imageToJpeg(file);
+        name = name.replace(/\.[^.]+$/, '') + '.jpg';
+      }
+    } catch {
+      if (isLive()) contribShowError(t('cJpegOnly'));
+      continue;
     }
-  } catch (err) {
-    if (contribForm === form) clearContribPhoto(t('cJpegOnly'));
-    return;
+    if (!isLive()) return; // form closed/reopened during the decode
+    if (blob.size > CONTRIB_MAX_BYTES) { contribShowError(t('cTooLarge')); continue; }
+    const longEdge = await imageLongEdge(blob);
+    if (!isLive()) return;
+    if (longEdge != null && longEdge < CONTRIB_MIN_LONG_EDGE) { contribShowError(t('cTooSmall', CONTRIB_MIN_LONG_EDGE)); continue; }
+    const target = coordsProvider();
+    form.photos.push({ blob, name, geo: contribGeoHint(target?.lat, target?.lon, exifGps) });
   }
-  if (contribForm !== form) return; // form closed/reopened during the decode
-  if (blob.size > CONTRIB_MAX_BYTES) { clearContribPhoto(t('cTooLarge')); return; }
-  const longEdge = await imageLongEdge(blob);
-  if (contribForm !== form) return;
-  if (longEdge != null && longEdge < CONTRIB_MIN_LONG_EDGE) { clearContribPhoto(t('cTooSmall', CONTRIB_MIN_LONG_EDGE)); return; }
-
-  form.photoBlob = blob;
-  form.photoName = name;
-  form.geo = contribGeoHint(field, exifGps);
-
-  const info = document.querySelector('#cPhotoInfo');
-  if (info) { info.hidden = false; info.textContent = `${name} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`; }
-  const btn = document.querySelector('#cPhotoBtn');
-  if (btn) btn.textContent = `🖼️ ${t('cChangePhoto')}`;
-  showContribGeo(form.geo);
-  updateContribValidity();
+  const input = document.querySelector('#cPhoto');
+  if (input) input.value = ''; // re-picking the same file must fire `change` again
+  renderContribPhotoList(form);
 }
 
-// A rejected replacement photo must not leave the previous one silently staged: clear the
-// staged blob and its UI whenever a new pick fails validation, so Submit can never send a
-// photo the pilot believes was replaced.
-function clearContribPhoto(errorMessage) {
-  contribShowError(errorMessage || '');
-  if (!contribForm) return;
-  contribForm.photoBlob = null;
-  contribForm.photoName = null;
-  contribForm.geo = null;
-  const input = document.querySelector('#cPhoto');
-  if (input) input.value = '';
-  const info = document.querySelector('#cPhotoInfo');
-  if (info) { info.hidden = true; info.textContent = ''; }
-  const geoEl = document.querySelector('#cGeo');
-  if (geoEl) geoEl.hidden = true;
+function renderContribPhotoList(form) {
+  const list = document.querySelector('#cPhotoList');
+  if (!list) return;
+  list.innerHTML = form.photos.map((p, i) => `
+    <div class="contrib-photo-row">
+      <span class="contrib-photo-geo ${p.geo.verified ? 'ok' : 'warn'}" title="${escapeHtml(p.geo.verified ? t('cGeoAllOk', 1) : t('cGeoNone'))}">${p.geo.verified ? '📍' : '❓'}</span>
+      <span class="contrib-photo-name">${escapeHtml(p.name)} · ${(p.blob.size / 1024 / 1024).toFixed(1)} MB</span>
+      <button type="button" class="contrib-photo-remove" data-photo-idx="${i}" aria-label="${escapeHtml(t('cRemovePhoto'))}">✕</button>
+    </div>
+  `).join('');
+  list.querySelectorAll('.contrib-photo-remove').forEach(btn => btn.addEventListener('click', () => {
+    form.photos.splice(Number(btn.getAttribute('data-photo-idx')), 1);
+    renderContribPhotoList(form);
+  }));
   const btn = document.querySelector('#cPhotoBtn');
-  if (btn) btn.textContent = `🖼️ ${t('cAddPhoto')}`;
-  updateContribValidity();
+  if (btn) btn.textContent = `🖼️ ${t('cAddPhoto')}${form.photos.length ? ` (${form.photos.length}/${CONTRIB_MAX_PHOTOS})` : ''}`;
+  showContribGeo(form.photos);
+  if (form === contribForm) updateContribValidity();
+  else updateNewFieldValidity();
 }
 
 async function imageToJpeg(file) {
@@ -1502,13 +1549,13 @@ async function submitContribution(field) {
   fd.set('submitter', (document.querySelector('#cSubmitter')?.value || '').trim());
   if (state.position) { fd.set('deviceLat', String(state.position.latitude)); fd.set('deviceLon', String(state.position.longitude)); }
   if (token) fd.set('turnstileToken', token);
-  if (form.photoBlob) fd.set('photo', form.photoBlob, form.photoName || 'photo.jpg');
+  for (const p of form.photos) fd.append('photos', p.blob, p.name || 'photo.jpg');
 
   try {
     const res = await fetch(CONTRIB_ENDPOINT, { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
     if (contribForm !== form) return; // form closed while the request was in flight
-    if (res.ok && data.ok) { showContribSuccess(data); return; }
+    if (res.ok && data.ok) { showContribSuccess(data, closeContribute); return; }
     contribShowError(`${t('cErr')}: ${String(data.error || res.status)}`);
   } catch (err) {
     if (contribForm !== form) return;
@@ -1522,7 +1569,7 @@ async function submitContribution(field) {
   updateContribValidity();
 }
 
-function showContribSuccess(data) {
+function showContribSuccess(data, onDone) {
   const body = document.querySelector('#contribBody');
   if (!body) return;
   const verified = data.geo && data.geo.verified;
@@ -1536,7 +1583,183 @@ function showContribSuccess(data) {
       <button id="cDone" class="primary">${t('done')}</button>
     </div>
   `;
-  document.querySelector('#cDone')?.addEventListener('click', closeContribute);
+  document.querySelector('#cDone')?.addEventListener('click', onDone);
+}
+
+// --- "Suggest a new field": a proposal form reached from the search results. Submits the
+// proposed field's data + photos to the same intake Worker, which opens a reviewable PR. ---
+
+function renderNewField() {
+  if (!state.showNewField) return '';
+  const countries = ['FR', 'CH', 'DE', 'IT', 'AT'];
+  return `
+    <div class="detail-backdrop contrib-backdrop" id="newFieldBackdrop">
+      <article class="detail contrib" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('nfTitle'))}">
+        <button id="closeNewField">${t('close')}</button>
+        <div class="detail-title-row"><h2>${escapeHtml(t('nfTitle'))}</h2></div>
+        <div class="detail-meta">${escapeHtml(t('nfIntro'))}</div>
+        <div id="contribBody" class="contrib-form">
+          <label for="nfName">${t('nfName')}</label>
+          <input id="nfName" type="text" autocomplete="off" value="${escapeHtml(state.searchQuery.trim())}" />
+          <div class="nf-grid">
+            <div><label for="nfKind">${t('nfKind')}</label>
+              <select id="nfKind">
+                <option value="outlanding">${escapeHtml(t('outlanding'))}</option>
+                <option value="airfield">${escapeHtml(t('airfield'))}</option>
+              </select></div>
+            <div><label for="nfCountry">${t('nfCountry')}</label>
+              <select id="nfCountry">${countries.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
+          </div>
+          <label>${t('nfCoords')}</label>
+          <div class="nf-grid nf-coords">
+            <input id="nfLat" type="number" step="any" min="-90" max="90" placeholder="${escapeHtml(t('nfLat'))}" />
+            <input id="nfLon" type="number" step="any" min="-180" max="180" placeholder="${escapeHtml(t('nfLon'))}" />
+            <button type="button" id="nfUseGps" class="contrib-photo-btn">📍 ${t('nfUseGps')}</button>
+          </div>
+          <div class="nf-grid">
+            <div><label for="nfElev">${t('nfElev')}</label><input id="nfElev" type="number" step="1" /></div>
+            <div><label for="nfDifficulty">${t('nfDifficulty')}</label>
+              <select id="nfDifficulty">
+                <option value="">${escapeHtml(t('nfDiffUnknown'))}</option>
+                <option value="A">A</option><option value="B">B</option><option value="C">C</option>
+              </select></div>
+          </div>
+          <div class="nf-grid nf-runway">
+            <div><label for="nfRunway">${t('nfRunway')}</label><input id="nfRunway" type="text" autocomplete="off" placeholder="07/25" /></div>
+            <div><label for="nfLength">${t('nfLength')}</label><input id="nfLength" type="number" step="1" min="0" /></div>
+            <div><label for="nfWidth">${t('nfWidth')}</label><input id="nfWidth" type="number" step="1" min="0" /></div>
+          </div>
+          <div class="nf-grid">
+            <div><label for="nfSurface">${t('nfSurface')}</label><input id="nfSurface" type="text" autocomplete="off" placeholder="${escapeHtml(t('nfSurfacePh'))}" /></div>
+            <div><label for="nfFrequency">${t('nfFrequency')}</label><input id="nfFrequency" type="text" autocomplete="off" placeholder="123.500" /></div>
+          </div>
+          <label for="cDesc">${t('nfDesc')}</label>
+          <textarea id="cDesc" rows="4" placeholder="${escapeHtml(t('nfDescPlaceholder'))}"></textarea>
+          <input id="cPhoto" type="file" accept="image/jpeg" multiple hidden />
+          <button type="button" id="cPhotoBtn" class="contrib-photo-btn">🖼️ ${t('cAddPhoto')}</button>
+          <div id="cPhotoList" class="contrib-photo-list"></div>
+          <div id="cGeo" class="contrib-geo" hidden></div>
+          <input id="cSubmitter" type="text" autocomplete="off" placeholder="${escapeHtml(t('cSubmitter'))}" />
+          <label class="checkbox-row contrib-license"><input id="cLicense" type="checkbox" /><span>${escapeHtml(t('cLicense'))}</span></label>
+          <div id="cTurnstile" class="contrib-turnstile"></div>
+          <div id="cError" class="contrib-error" hidden></div>
+          <button id="cSubmit" class="primary contrib-submit" disabled>${t('cSubmit')}</button>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+function openNewField() {
+  newFieldForm = { photos: [], busy: false, turnstileWidget: null };
+  state.showNewField = true;
+  render();
+}
+
+function closeNewField() {
+  state.showNewField = false;
+  newFieldForm = null;
+  render();
+}
+
+function newFieldCoords() {
+  const lat = Number(document.querySelector('#nfLat')?.value);
+  const lon = Number(document.querySelector('#nfLon')?.value);
+  const plausible = Number.isFinite(lat) && Number.isFinite(lon)
+    && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && (lat !== 0 || lon !== 0);
+  return plausible ? { lat, lon } : null;
+}
+
+function updateNewFieldValidity() {
+  const submit = document.querySelector('#cSubmit');
+  if (!submit || !newFieldForm) return;
+  const named = (document.querySelector('#nfName')?.value || '').trim().length >= 3;
+  const licensed = !!document.querySelector('#cLicense')?.checked;
+  submit.disabled = newFieldForm.busy || !licensed || !named || !newFieldCoords();
+}
+
+async function submitNewField() {
+  const form = newFieldForm;
+  if (!form || form.busy) return;
+  contribShowError('');
+  const coords = newFieldCoords();
+  const name = (document.querySelector('#nfName')?.value || '').trim();
+  if (!name || !coords) { contribShowError(t('nfNeedBasics')); return; }
+  let token = '';
+  if (window.turnstile && form.turnstileWidget != null) {
+    token = window.turnstile.getResponse(form.turnstileWidget) || '';
+    if (!token) { contribShowError(t('cNeedTurnstile')); return; }
+  }
+  const submit = document.querySelector('#cSubmit');
+  form.busy = true;
+  if (submit) { submit.disabled = true; submit.textContent = t('cSubmitting'); }
+
+  const val = id => (document.querySelector(`#${id}`)?.value || '').trim();
+  const fd = new FormData();
+  fd.set('type', 'new-field');
+  fd.set('name', name);
+  fd.set('kind', val('nfKind') || 'outlanding');
+  fd.set('country', val('nfCountry'));
+  fd.set('lat', String(coords.lat));
+  fd.set('lon', String(coords.lon));
+  fd.set('elevationM', val('nfElev'));
+  fd.set('difficulty', val('nfDifficulty'));
+  fd.set('runway', val('nfRunway'));
+  fd.set('lengthM', val('nfLength'));
+  fd.set('widthM', val('nfWidth'));
+  fd.set('surface', val('nfSurface'));
+  fd.set('frequency', val('nfFrequency'));
+  fd.set('description', val('cDesc'));
+  fd.set('submitter', val('cSubmitter'));
+  if (state.position) { fd.set('deviceLat', String(state.position.latitude)); fd.set('deviceLon', String(state.position.longitude)); }
+  if (token) fd.set('turnstileToken', token);
+  for (const p of form.photos) fd.append('photos', p.blob, p.name || 'photo.jpg');
+
+  try {
+    const res = await fetch(CONTRIB_ENDPOINT, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (newFieldForm !== form) return; // form closed while the request was in flight
+    if (res.ok && data.ok) { showContribSuccess(data, closeNewField); return; }
+    contribShowError(`${t('cErr')}: ${String(data.error || res.status)}`);
+  } catch (err) {
+    if (newFieldForm !== form) return;
+    contribShowError(`${t('cErr')}: ${String(err && err.message || err)}`);
+  }
+  // Turnstile tokens are single-use: reset so a retry gets a fresh token (see submitContribution).
+  try { if (window.turnstile && form.turnstileWidget != null) window.turnstile.reset(form.turnstileWidget); } catch { /* widget gone */ }
+  form.busy = false;
+  if (submit) { submit.textContent = t('cSubmit'); }
+  updateNewFieldValidity();
+}
+
+function wireNewFieldForm() {
+  document.querySelector('#closeNewField')?.addEventListener('click', closeNewField);
+  document.querySelector('#newFieldBackdrop')?.addEventListener('click', e => { if (e.target.id === 'newFieldBackdrop') closeNewField(); });
+  document.querySelector('#nfUseGps')?.addEventListener('click', () => {
+    if (!state.position) { contribShowError(t('nfGpsNone')); return; }
+    const latInput = document.querySelector('#nfLat');
+    const lonInput = document.querySelector('#nfLon');
+    if (latInput) latInput.value = state.position.latitude.toFixed(5);
+    if (lonInput) lonInput.value = state.position.longitude.toFixed(5);
+    contribShowError('');
+    updateNewFieldValidity();
+  });
+  document.querySelector('#cPhotoBtn')?.addEventListener('click', () => document.querySelector('#cPhoto')?.click());
+  document.querySelector('#cPhoto')?.addEventListener('change', e => stageContribPhotos(newFieldForm, e.target.files, newFieldCoords));
+  for (const id of ['nfName', 'nfLat', 'nfLon']) {
+    document.querySelector(`#${id}`)?.addEventListener('input', updateNewFieldValidity);
+  }
+  document.querySelector('#cLicense')?.addEventListener('change', updateNewFieldValidity);
+  document.querySelector('#cSubmit')?.addEventListener('click', submitNewField);
+  if (newFieldForm && newFieldForm.turnstileWidget == null) {
+    ensureTurnstile(() => {
+      const holder = document.querySelector('#cTurnstile');
+      if (holder && window.turnstile && newFieldForm && newFieldForm.turnstileWidget == null) {
+        try { newFieldForm.turnstileWidget = window.turnstile.render(holder, { sitekey: TURNSTILE_SITEKEY }); } catch { /* already rendered */ }
+      }
+    });
+  }
+  updateNewFieldValidity();
 }
 
 // --- In-app bug report: a short anonymous form; the Worker files the GitHub issue. ---
@@ -1659,7 +1882,7 @@ function wireContribForm(field) {
   document.querySelector('#closeContribute')?.addEventListener('click', closeContribute);
   document.querySelector('#contribBackdrop')?.addEventListener('click', e => { if (e.target.id === 'contribBackdrop') closeContribute(); });
   document.querySelector('#cPhotoBtn')?.addEventListener('click', () => document.querySelector('#cPhoto')?.click());
-  document.querySelector('#cPhoto')?.addEventListener('change', e => onContribFile(field, e.target.files && e.target.files[0]));
+  document.querySelector('#cPhoto')?.addEventListener('change', e => stageContribPhotos(contribForm, e.target.files, () => ({ lat: field.latitude, lon: field.longitude })));
   document.querySelector('#cDesc')?.addEventListener('input', updateContribValidity);
   document.querySelector('#cLicense')?.addEventListener('change', updateContribValidity);
   document.querySelector('#cSubmit')?.addEventListener('click', () => submitContribution(field));
@@ -1691,6 +1914,8 @@ function attachFieldRowEvents(root) {
     state.detailScrollTop = 0;
     render();
   }));
+  // Rendered as part of the search results, so it must be (re)wired on every in-place update.
+  root.querySelectorAll('#suggestField').forEach(btn => btn.addEventListener('click', openNewField));
 }
 
 function attachEvents() {
@@ -1707,6 +1932,7 @@ function attachEvents() {
     const contribField = state.fields.find(f => f.id === state.contribFor);
     if (contribField) wireContribForm(contribField);
   }
+  if (state.showNewField) wireNewFieldForm();
   document.querySelector('#releaseBannerBtn')?.addEventListener('click', openReleaseNotes);
   document.querySelector('#whatsNewLink')?.addEventListener('click', e => { e.preventDefault(); openReleaseNotes(); });
   document.querySelector('#closeNotes')?.addEventListener('click', () => { state.showReleaseNotes = false; render(); });

@@ -1,8 +1,9 @@
 # Contribution intake Worker
 
-A Cloudflare Worker that turns an in-app field contribution (a dated note and/or a photo) into a
-reviewable **GitHub pull request**, with a **geolocation pre-approval** step from the photo's EXIF
-GPS. The app stays on GitHub Pages and just POSTs here.
+A Cloudflare Worker that turns an in-app field contribution (a dated note and/or up to 5 photos —
+an update to an existing field, or a proposed **new field** with its own metadata) into a
+reviewable **GitHub pull request**, with a **geolocation pre-approval** step from each photo's
+EXIF GPS. The app stays on GitHub Pages and just POSTs here.
 
 > **Status: live.** Deployed via CI (`.github/workflows/deploy-worker.yml`) at
 > `https://mtc-contrib-intake.br0c.workers.dev`. The in-app submission → GitHub PR flow has been

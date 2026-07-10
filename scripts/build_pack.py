@@ -3474,6 +3474,82 @@ def _fetch_contribution_asset(url: str) -> bytes:
         return response.read()
 
 
+# A proposed field this close to an existing one is almost certainly the same place: fold the
+# submission into the existing field instead of creating a duplicate next to it.
+NEW_FIELD_DEDUPE_M = 300.0
+
+
+def parse_runway_direction_deg(runway: str) -> float | None:
+    """'07/25' -> 70, '070' -> 70, '25' -> 250; None when nothing parseable."""
+    match = re.match(r"\s*(\d{1,3})", str(runway or ""))
+    if not match:
+        return None
+    value = int(match.group(1))
+    if len(match.group(1)) <= 2 and value <= 36:
+        return float(value * 10)
+    return float(value) if 0 <= value <= 360 else None
+
+
+def create_proposed_field(fields: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    """Resolve a new-field contribution: (existing nearby field, False) when the proposal sits
+    within NEW_FIELD_DEDUPE_M of a field we already carry, else (newly created field, True).
+
+    The created field's id is deterministic (proposal id + coordinate hash) so rebuilds keep
+    contribution photos and app bookmarks stable. Structured attributes the app and the CUP
+    export read from notes (Surface:/Direction: lines) are folded into the localized note.
+    """
+    proposed = meta.get("proposed")
+    if not isinstance(proposed, dict):
+        return None, False
+    lat = parse_float(proposed.get("latitude"))
+    lon = parse_float(proposed.get("longitude"))
+    name = clean(proposed.get("name"))
+    if lat is None or lon is None or not name:
+        return None, False
+
+    nearest, nearest_d = None, NEW_FIELD_DEDUPE_M
+    for field in fields:
+        d = distance_m(lat, lon, field.get("latitude"), field.get("longitude"))
+        if d is not None and d <= nearest_d:
+            nearest, nearest_d = field, d
+    if nearest is not None:
+        print(f"new-field proposal '{name}' is {nearest_d:.0f} m from {nearest.get('name')!r}; "
+              f"merging as an update instead of creating a duplicate", file=sys.stderr)
+        return nearest, False
+
+    note_lines = [clean(meta.get("description"))]
+    if clean(proposed.get("surface")):
+        note_lines.append(f"Surface: {clean(proposed.get('surface'))}")
+    if clean(proposed.get("runway")):
+        note_lines.append(f"Direction: {clean(proposed.get('runway'))}")
+    date = clean(meta.get("date")) or clean(meta.get("submittedAt"))[:10]
+    difficulty = clean(proposed.get("difficulty")).upper()
+    field = {
+        "id": f"{sanitize_id(meta.get('fieldId') or name)}-{hashlib.sha1(f'{lat:.4f},{lon:.4f}'.encode()).hexdigest()[:6]}",
+        "kind": "airfield" if clean(proposed.get("kind")) == "airfield" else "outlanding",
+        "name": name,
+        "country": clean(proposed.get("country")).upper(),
+        "latitude": lat,
+        "longitude": lon,
+        "elevationM": parse_float(proposed.get("elevationM")),
+        "difficulty": difficulty if difficulty in ("A", "B", "C") else "UNKNOWN",
+        "lengthM": parse_float(proposed.get("lengthM")),
+        "widthM": parse_float(proposed.get("widthM")),
+        "runwayDirectionDeg": parse_runway_direction_deg(proposed.get("runway")),
+        "frequency": clean(proposed.get("frequency")),
+        "notes": localize_note("\n".join(line for line in note_lines if line)),
+        "source": {"name": "Community contribution", "importedAt": date},
+        "media": [],
+    }
+    fields.append(field)
+    return field, True
+
+
+def sanitize_id(value: Any) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
+    return slug[:48] or "field"
+
+
 def merge_contributions(fields: list[dict[str, Any]], contrib_dir: Path, media_dir: Path) -> tuple[int, int]:
     """Fold merged community contributions into the pack fields.
 
@@ -3496,7 +3572,17 @@ def merge_contributions(fields: list[dict[str, Any]], contrib_dir: Path, media_d
             continue
         if not isinstance(meta, dict):
             continue
-        field = find_contribution_field(fields, meta)
+        description = clean(meta.get("description"))
+        if clean(meta.get("type")) == "new-field":
+            field, created = create_proposed_field(fields, meta)
+            if field is None:
+                print(f"new-field proposal skipped (bad data): {path.name}", file=sys.stderr)
+                continue
+            if created:
+                notes_added += 1
+                description = ""  # already folded into the new field's base notes
+        else:
+            field = find_contribution_field(fields, meta)
         if field is None:
             print(f"contribution skipped (no matching field): {path.name} -> {meta.get('fieldId')}", file=sys.stderr)
             continue
@@ -3505,7 +3591,6 @@ def merge_contributions(fields: list[dict[str, Any]], contrib_dir: Path, media_d
         handle = clean((meta.get("submitter") or {}).get("handle")) if isinstance(meta.get("submitter"), dict) else ""
         attribution = f" ({handle})" if handle else ""
 
-        description = clean(meta.get("description"))
         if description:
             localized = localize_note(description)
             notes = field.get("notes")
@@ -3517,8 +3602,14 @@ def merge_contributions(fields: list[dict[str, Any]], contrib_dir: Path, media_d
             field["notes"] = notes
             notes_added += 1
 
-        asset = meta.get("photoAsset") if isinstance(meta.get("photoAsset"), dict) else None
-        if asset and clean(asset.get("url")):
+        # Multi-photo submissions carry photoAssets (schema 3); the legacy single photoAsset
+        # is still read so previously merged contributions keep working.
+        assets = meta.get("photoAssets") if isinstance(meta.get("photoAssets"), list) else []
+        if isinstance(meta.get("photoAsset"), dict):
+            assets = [*assets, meta["photoAsset"]]
+        for asset in assets:
+            if not isinstance(asset, dict) or not clean(asset.get("url")):
+                continue
             try:
                 data = _fetch_contribution_asset(clean(asset.get("url")))
                 name = safe_filename(clean(asset.get("name")) or f"{path.stem}.jpg")

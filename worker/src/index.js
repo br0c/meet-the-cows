@@ -60,29 +60,75 @@ async function handleBugReport(request, env, origin) {
   return json(origin, 200, { ok: true, issueUrl: issue.html_url, issueNumber: issue.number });
 }
 
+const NEW_FIELD_COUNTRIES = ['FR', 'CH', 'DE', 'IT', 'AT'];
+
 async function handleSubmit(request, env, origin) {
   const form = await request.formData();
   const get = k => (form.get(k) ?? '').toString().trim();
 
   // Blank -> NaN (Number('') is 0, which would silently pass the finite check as 0,0).
   const num = key => { const v = get(key); return v === '' ? NaN : Number(v); };
-  const fieldId = get('fieldId');
-  const fieldCode = get('fieldCode');
-  const fieldLat = num('fieldLat');
-  const fieldLon = num('fieldLon');
-  const fieldName = get('fieldName');
+  const optNum = key => { const v = num(key); return Number.isFinite(v) ? v : null; };
+
+  // Two submission types share the pipeline: 'update' (default; note/photos for an existing
+  // field) and 'new-field' (a proposed field with its own metadata). Both end as a reviewed PR.
+  const type = get('type') === 'new-field' ? 'new-field' : 'update';
+  let fieldId, fieldCode, fieldName, fieldLat, fieldLon;
+  let proposed = null;
+  if (type === 'new-field') {
+    fieldName = get('name').slice(0, 80);
+    fieldLat = num('lat');
+    fieldLon = num('lon');
+    if (fieldName.length < 3) return json(origin, 400, { error: 'Give the field a name (3+ characters).' });
+    if (!Number.isFinite(fieldLat) || Math.abs(fieldLat) > 90 || !Number.isFinite(fieldLon) || Math.abs(fieldLon) > 180) {
+      return json(origin, 400, { error: 'Valid coordinates are required.' });
+    }
+    const country = get('country').toUpperCase();
+    if (!NEW_FIELD_COUNTRIES.includes(country)) return json(origin, 400, { error: "Pick the field's country." });
+    const difficulty = get('difficulty').toUpperCase();
+    proposed = {
+      name: fieldName,
+      kind: get('kind') === 'airfield' ? 'airfield' : 'outlanding',
+      country,
+      latitude: fieldLat,
+      longitude: fieldLon,
+      elevationM: optNum('elevationM'),
+      difficulty: ['A', 'B', 'C'].includes(difficulty) ? difficulty : '',
+      runway: get('runway').slice(0, 20),
+      lengthM: optNum('lengthM'),
+      widthM: optNum('widthM'),
+      surface: get('surface').slice(0, 60),
+      frequency: get('frequency').slice(0, 20),
+    };
+    fieldCode = '';
+    fieldId = `new-${fieldName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'field'}`;
+  } else {
+    fieldId = get('fieldId');
+    fieldCode = get('fieldCode');
+    fieldName = get('fieldName');
+    fieldLat = num('fieldLat');
+    fieldLon = num('fieldLon');
+    if (!fieldId || !Number.isFinite(fieldLat) || !Number.isFinite(fieldLon)) {
+      return json(origin, 400, { error: 'Missing field reference.' });
+    }
+  }
   const date = get('date');
   const description = get('description');
   const submitter = get('submitter');
   const deviceLat = get('deviceLat') ? Number(get('deviceLat')) : null;
   const deviceLon = get('deviceLon') ? Number(get('deviceLon')) : null;
-  const photo = form.get('photo'); // File | null
+
+  // Photos arrive as repeated 'photos' entries; the legacy single 'photo' key is still
+  // accepted because installed app shells update lazily.
+  const photoFiles = [...form.getAll('photos'), form.get('photo')]
+    .filter(f => f && typeof f === 'object' && Number(f.size) > 0);
+  const maxPhotos = Number(env.MAX_PHOTOS || 5);
+  if (photoFiles.length > maxPhotos) {
+    return json(origin, 400, { error: `At most ${maxPhotos} photos per submission.` });
+  }
 
   // --- validation ---
-  if (!fieldId || !Number.isFinite(fieldLat) || !Number.isFinite(fieldLon)) {
-    return json(origin, 400, { error: 'Missing field reference.' });
-  }
-  if (!description && !(photo && photo.size)) {
+  if (type === 'update' && !description && !photoFiles.length) {
     return json(origin, 400, { error: 'Add a note, a photo, or both.' });
   }
   const turnstileToken = get('turnstileToken');
@@ -92,61 +138,67 @@ async function handleSubmit(request, env, origin) {
   const ok = await verifyTurnstile(turnstileToken, env, request.headers.get('CF-Connecting-IP'));
   if (!ok) return json(origin, 403, { error: 'Spam check failed. Please retry.' });
 
-  let photoBytes = null;
-  let geo = { verified: false, source: 'none', distanceM: null };
+  const radiusM = Number(env.GEO_RADIUS_M || 1000);
+  const maxBytes = Number(env.MAX_PHOTO_BYTES || 15728640);
+  const minEdge = Number(env.MIN_PHOTO_LONG_EDGE || 2560);
 
-  if (photo && photo.size) {
-    if (photo.type !== 'image/jpeg') return json(origin, 415, { error: 'Photo must be a JPEG.' });
-    const maxBytes = Number(env.MAX_PHOTO_BYTES || 15728640);
-    if (photo.size > maxBytes) return json(origin, 413, { error: 'Photo is too large.' });
-
+  // Validate every photo and compute its own geo verdict before anything is uploaded, so a
+  // bad file rejects the submission without leaving orphaned originals behind.
+  const staged = []; // { bytes, geo }
+  for (const photo of photoFiles) {
+    if (photo.type !== 'image/jpeg') return json(origin, 415, { error: 'Photos must be JPEGs.' });
+    if (photo.size > maxBytes) return json(origin, 413, { error: `Photo "${photo.name}" is too large.` });
     const raw = new Uint8Array(await photo.arrayBuffer());
     const longEdge = jpegLongEdge(raw);
-    const minEdge = Number(env.MIN_PHOTO_LONG_EDGE || 2560);
     if (longEdge != null && longEdge < minEdge) {
       return json(origin, 422, { error: `Photo resolution too low (min ${minEdge}px on the long edge).` });
     }
-
     // Read GPS BEFORE stripping metadata; then store a location-free copy.
     const gps = await readGps(raw);
-    geo = geoVerdict(gps, deviceLat, deviceLon, fieldLat, fieldLon, Number(env.GEO_RADIUS_M || 1000));
-    photoBytes = stripLocationMetadata(raw);
-    if (!photoBytes) return json(origin, 415, { error: 'This photo file looks corrupt — please try another JPEG.' });
-  } else {
-    geo = geoVerdict(null, deviceLat, deviceLon, fieldLat, fieldLon, Number(env.GEO_RADIUS_M || 1000));
+    const photoGeo = geoVerdict(gps, deviceLat, deviceLon, fieldLat, fieldLon, radiusM);
+    const bytes = stripLocationMetadata(raw);
+    if (!bytes) return json(origin, 415, { error: 'A photo file looks corrupt — please try another JPEG.' });
+    staged.push({ bytes, geo: photoGeo });
   }
+  // Aggregate verdict (response + PR label): every photo pre-verified, or — with no photos —
+  // the on-site device check.
+  const geo = staged.length
+    ? { ...(staged.find(p => !p.geo.verified) || staged[0]).geo, verified: staged.every(p => p.geo.verified) }
+    : geoVerdict(null, deviceLat, deviceLon, fieldLat, fieldLon, radiusM);
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
   const shortId = (crypto.randomUUID && crypto.randomUUID().slice(0, 8)) || Math.random().toString(16).slice(2, 10);
   const base = `contributions/${sanitize(fieldId)}/${stamp}_${shortId}`;
 
-  // The full-size (EXIF-stripped) original goes to R2, not into git — the repo stays lean and
-  // the pack build later downloads + resizes it like any other pack photo. Without the bucket
-  // binding (e.g. local dev), fall back to the legacy release-asset path.
-  let photoAsset = null;
+  // Full-size (EXIF-stripped) originals go to R2, not into git — the repo stays lean and the
+  // pack build later downloads + resizes them like any other pack photo. Without the bucket
+  // binding (e.g. local dev), fall back to the legacy release-asset path. A failed upload
+  // drops that one photo (warn), never the submission.
+  const photoAssets = [];
   let photoUploadFailed = false;
-  if (photoBytes) {
-    const name = `${sanitize(fieldId)}_${stamp}_${shortId}.jpg`;
+  for (const [index, photo] of staged.entries()) {
+    const name = `${sanitize(fieldId)}_${stamp}_${shortId}_${index + 1}.jpg`;
     try {
-      photoAsset = env.ORIGINALS
-        ? await uploadOriginal(env, new URL(request.url).origin, name, photoBytes)
-        : await uploadReleaseAsset(env, name, photoBytes);
+      const asset = env.ORIGINALS
+        ? await uploadOriginal(env, new URL(request.url).origin, name, photo.bytes)
+        : await uploadReleaseAsset(env, name, photo.bytes);
+      photoAssets.push({ ...asset, geo: photo.geo });
     } catch (error) {
-      // Keep the note: a failed photo upload must not discard a valid submission (mirrors the
-      // pack build, which keeps the note when the photo download fails).
       photoUploadFailed = true;
       console.warn('photo upload failed', error);
     }
   }
-  if (photoUploadFailed && !description) {
+  if (photoUploadFailed && !description && type === 'update') {
+    await deleteOriginals(env, photoAssets);
     return json(origin, 502, { error: 'Photo upload failed — please try again.' });
   }
 
   const meta = {
-    schema: 2, fieldId, fieldCode, fieldLat, fieldLon, fieldName,
+    schema: 3, type, fieldId, fieldCode, fieldLat, fieldLon, fieldName,
+    proposed, // the suggested field's data (new-field submissions only)
     date: date || new Date().toISOString().slice(0, 10),
     description,
-    photoAsset, // { storage, key|id, name, url, size } | null — full-size original (R2, or legacy release)
+    photoAssets, // [{ storage, key|id, name, url, size, geo }] — full-size originals (R2, or legacy release)
     submitter: submitter ? { handle: submitter } : null,
     geo,
     submittedAt: new Date().toISOString(),
@@ -156,18 +208,22 @@ async function handleSubmit(request, env, origin) {
 
   let pr;
   try {
-    pr = await openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset, photoUploadFailed });
+    pr = await openPr(env, { type, fieldId, fieldName, fieldCode, proposed, description, geo, files, photoAssets, photoUploadFailed });
   } catch (error) {
-    // Don't leave an orphaned original behind when the PR could not be opened.
-    if (photoAsset) {
-      try {
-        if (photoAsset.storage === 'r2') await env.ORIGINALS.delete(photoAsset.key);
-        else await gh(env, `/releases/assets/${photoAsset.id}`, 'DELETE');
-      } catch { /* best effort */ }
-    }
+    // Don't leave orphaned originals behind when the PR could not be opened.
+    await deleteOriginals(env, photoAssets);
     throw error;
   }
   return json(origin, 200, { ok: true, prUrl: pr.html_url, prNumber: pr.number, geo });
+}
+
+async function deleteOriginals(env, photoAssets) {
+  for (const asset of photoAssets) {
+    try {
+      if (asset.storage === 'r2') await env.ORIGINALS.delete(asset.key);
+      else await gh(env, `/releases/assets/${asset.id}`, 'DELETE');
+    } catch { /* best effort */ }
+  }
 }
 
 // ---------- geolocation ----------
@@ -353,7 +409,7 @@ function geoSummary(geo) {
   return '⚠️ no location data — needs review';
 }
 
-async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, files, photoAsset, photoUploadFailed }) {
+async function openPr(env, { type, fieldId, fieldName, fieldCode, proposed, description, geo, files, photoAssets, photoUploadFailed }) {
   const baseBranch = env.BASE_BRANCH || 'main';
   // Random suffix: Date.now() alone collides when two pilots submit for the same field in the
   // same millisecond (the JSON/asset names already carry a random id; the branch must too).
@@ -362,30 +418,39 @@ async function openPr(env, { fieldId, fieldName, fieldCode, description, geo, fi
   const baseRef = await gh(env, `/git/ref/heads/${baseBranch}`);
   await gh(env, '/git/refs', 'POST', { ref: `refs/heads/${branch}`, sha: baseRef.object.sha });
 
+  const title = type === 'new-field'
+    ? `New field: ${fieldName}`
+    : `Contribution: ${fieldName || fieldCode || fieldId}`;
   try {
     for (const f of files) {
-      await gh(env, `/contents/${f.path}`, 'PUT', {
-        message: `Contribution: ${fieldName || fieldCode || fieldId}`,
-        content: f.content, branch,
-      });
+      await gh(env, `/contents/${f.path}`, 'PUT', { message: title, content: f.content, branch });
     }
 
     const label = geo.verified ? 'geo-verified' : 'needs-location-review';
+    const photoLines = photoAssets.map((a, i) =>
+      `\n**Photo ${i + 1}** (full-size original, location metadata stripped) — ${geoSummary(a.geo)}:\n\n![contribution photo ${i + 1}](${a.url})`);
+    const proposalLines = proposed ? [
+      `**Proposed new field** (build creates it once this PR merges):`,
+      `- Kind: ${proposed.kind} · Country: ${proposed.country}`,
+      `- Coordinates: ${proposed.latitude}, ${proposed.longitude}${proposed.elevationM != null ? ` · Elevation: ${proposed.elevationM} m` : ''}`,
+      `- Difficulty: ${proposed.difficulty || 'unknown'}${proposed.runway ? ` · Runway: ${proposed.runway}` : ''}${proposed.lengthM ? ` · ${proposed.lengthM}${proposed.widthM ? `×${proposed.widthM}` : ''} m` : ''}`,
+      `${proposed.surface ? `- Surface: ${proposed.surface}` : ''}${proposed.frequency ? ` · Frequency: ${proposed.frequency}` : ''}`,
+    ].filter(Boolean).join('\n') : '';
     const body = [
-      `**Field:** ${fieldName || '—'} (${fieldCode || fieldId})`,
-      description ? `\n**Update:**\n${description}` : '',
+      proposalLines || `**Field:** ${fieldName || '—'} (${fieldCode || fieldId})`,
+      description ? `\n**${proposed ? 'Notes' : 'Update'}:**\n${description}` : '',
       `\n**Geo-check:** ${geoSummary(geo)}`,
-      photoAsset ? `\n**Photo** (full-size original, location metadata stripped):\n\n![contribution photo](${photoAsset.url})` : '',
-      photoUploadFailed ? '\n**Photo:** upload failed — this is a note-only submission.' : '',
-      `\n_Submitted via the in-app contribution form. A maintainer must review and merge before this goes live._`,
+      ...photoLines,
+      photoUploadFailed ? '\n**Photo:** at least one upload failed — fewer photos than submitted.' : '',
+      `\n_Submitted via the in-app ${proposed ? 'new-field' : 'contribution'} form. A maintainer must review and merge before this goes live._`,
     ].join('\n');
 
     const pr = await gh(env, '/pulls', 'POST', {
-      title: `Contribution: ${fieldName || fieldCode || fieldId}`,
-      head: branch, base: baseBranch, body, maintainer_can_modify: true,
+      title, head: branch, base: baseBranch, body, maintainer_can_modify: true,
     });
 
-    try { await gh(env, `/issues/${pr.number}/labels`, 'POST', { labels: ['contribution', label] }); } catch { /* labels are cosmetic */ }
+    const labels = ['contribution', label, ...(type === 'new-field' ? ['new-field'] : [])];
+    try { await gh(env, `/issues/${pr.number}/labels`, 'POST', { labels }); } catch { /* labels are cosmetic */ }
     return pr;
   } catch (error) {
     // Don't leave a dangling contrib/* branch when the commit or PR step fails.

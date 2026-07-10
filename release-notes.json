@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.7.4-beta",
+    "date": "2026-07-10",
+    "en": [
+      "New: Suggest a brand-new field straight from the search — name, position, runway, surface and photos; every proposal is reviewed before publication",
+      "New: Attach up to 5 photos to a contribution, each pre-verified by its location"
+    ],
+    "fr": [
+      "Nouveau : Proposez un tout nouveau terrain depuis la recherche — nom, position, piste, surface et photos ; chaque proposition est relue avant publication",
+      "Nouveau : Joignez jusqu'à 5 photos à une contribution, chacune pré-vérifiée par sa localisation"
+    ],
+    "de": [
+      "Neu: Schlage direkt aus der Suche ein ganz neues Feld vor — Name, Position, Piste, Oberfläche und Fotos; jeder Vorschlag wird vor der Veröffentlichung geprüft",
+      "Neu: Hänge bis zu 5 Fotos an einen Beitrag, jedes standortlich vorverifiziert"
+    ]
+  },
+  {
     "version": "0.7.3-beta",
     "date": "2026-07-10",
     "en": [

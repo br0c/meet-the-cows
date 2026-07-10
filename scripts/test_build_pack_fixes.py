@@ -450,6 +450,93 @@ def test_merge_contributions_notes_and_photo():
         bp._fetch_contribution_asset = original_fetch
 
 
+def test_merge_new_field_proposal_and_multi_photo():
+    import io as _io
+    import tempfile
+    from pathlib import Path
+    from PIL import Image
+
+    bp.DEEPL_API_KEY = ""
+    bp.DEEPL_API_URL = ""
+    bp._DEEPL_DISABLED = False
+    bp._TRANSLATION_CACHE = {}
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (3000, 2000), (60, 90, 120)).save(buf, "JPEG", quality=60)
+    jpeg_bytes = buf.getvalue()
+    original_fetch = bp._fetch_contribution_asset
+    bp._fetch_contribution_asset = lambda url: jpeg_bytes
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            contrib = tmp / "contributions" / "new-les-crots"
+            contrib.mkdir(parents=True)
+            (contrib / "2026-07-10_p1.json").write_text(json.dumps({
+                "schema": 3, "type": "new-field", "fieldId": "new-les-crots",
+                "fieldLat": 44.53, "fieldLon": 6.44, "fieldName": "Les Crots",
+                "proposed": {
+                    "name": "Les Crots", "kind": "outlanding", "country": "FR",
+                    "latitude": 44.53, "longitude": 6.44, "elevationM": 790,
+                    "difficulty": "B", "runway": "07/25", "lengthM": 420, "widthM": 40,
+                    "surface": "grass", "frequency": "123.500",
+                },
+                "date": "2026-07-10",
+                "description": "Long meadow by the lake, land uphill.",
+                "photoAssets": [
+                    {"name": "p1_1.jpg", "url": "https://example.org/1.jpg", "geo": {"verified": True}},
+                    {"name": "p1_2.jpg", "url": "https://example.org/2.jpg", "geo": {"verified": False}},
+                ],
+                "submitter": {"handle": "smoke"},
+                "geo": {"verified": False, "source": "exif", "distanceM": 1400},
+            }))
+            # A second proposal 80 m from an existing field must fold into it, not duplicate it.
+            dup = tmp / "contributions" / "new-vinon-bis"
+            dup.mkdir(parents=True)
+            (dup / "2026-07-10_p2.json").write_text(json.dumps({
+                "schema": 3, "type": "new-field", "fieldId": "new-vinon-bis",
+                "fieldLat": 43.7378, "fieldLon": 5.7836, "fieldName": "Vinon bis",
+                "proposed": {"name": "Vinon bis", "kind": "outlanding", "country": "FR",
+                             "latitude": 43.7385, "longitude": 5.7838},
+                "date": "2026-07-10", "description": "Actually the same strip.",
+                "photoAssets": [], "geo": {"verified": True, "source": "device", "distanceM": 20},
+            }))
+
+            fields = [{
+                "id": "id_a", "code": "LFNF", "latitude": 43.7378, "longitude": 5.7836,
+                "notes": {"en": "Grass strip.", "fr": "Piste en herbe.", "de": "Graspiste."},
+                "media": [],
+            }]
+            notes, photos = bp.merge_contributions(fields, tmp / "contributions", tmp / "media")
+            assert photos == 2
+            assert len(fields) == 2, "exactly one new field created"
+            created = fields[1]
+            assert created["name"] == "Les Crots" and created["kind"] == "outlanding"
+            assert created["country"] == "FR" and created["difficulty"] == "B"
+            assert created["runwayDirectionDeg"] == 70.0 and created["lengthM"] == 420
+            assert created["id"].startswith("new-les-crots-")
+            assert "Long meadow" in created["notes"]["en"]
+            assert "Surface: grass" in created["notes"]["en"]
+            assert "Direction: 07/25" in created["notes"]["en"]
+            assert len(created["media"]) == 2, "both photos attached to the created field"
+            # Duplicate proposal became a note on the existing field instead of a new one.
+            assert "Actually the same strip" in fields[0]["notes"]["en"]
+            # Deterministic id across rebuilds.
+            again, created_flag = bp.create_proposed_field([], json.loads((contrib / "2026-07-10_p1.json").read_text()))
+            assert created_flag and again["id"] == created["id"]
+    finally:
+        bp._fetch_contribution_asset = original_fetch
+
+
+def test_parse_runway_direction():
+    assert bp.parse_runway_direction_deg("07/25") == 70.0
+    assert bp.parse_runway_direction_deg("070") == 70.0
+    assert bp.parse_runway_direction_deg("25") == 250.0
+    assert bp.parse_runway_direction_deg("361") is None
+    assert bp.parse_runway_direction_deg("grass") is None
+    assert bp.parse_runway_direction_deg("") is None
+
+
 def test_extract_streckenflug_list_versions():
     page = (
         "<table><tr><td>Name</td><td>Country</td><td>Region</td><td>Category</td><td>Visit</td><td></td></tr>"
