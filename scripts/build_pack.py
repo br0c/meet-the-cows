@@ -2119,10 +2119,20 @@ DE_MONTHS = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
 
 
 def _fetch_de_vac(url: str) -> tuple[bytes, str]:
-    """(body, final_url) with a browser UA; separate function so tests can stub it."""
-    request = urllib.request.Request(url, headers={"User-Agent": DE_VAC_UA})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read(), response.geturl()
+    """(body, final_url) with a browser UA; separate function so tests can stub it.
+
+    Retries transient failures: the full crawl is ~1,250 requests, and a single connection
+    reset should cost one retry, not an aerodrome's charts until the next weekly rebuild."""
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": DE_VAC_UA})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.read(), response.geturl()
+        except Exception as error:  # noqa: BLE001
+            last_error = error
+            time.sleep(1 + attempt)
+    raise RuntimeError(f"could not fetch {url}: {last_error}")
 
 
 def de_cycle_date(base_url: str) -> str:
