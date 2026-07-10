@@ -1,0 +1,38 @@
+name: Probe ENAV eAIP access
+
+# Manual one-shot: validates the ENAV login flow with the repo's ENAV_ACCOUNT_ID /
+# ENAV_ACCOUNT_PASSWORD secrets and maps the static chart URL structure, so the Italian
+# VAC fetcher can be designed against real findings. Prints statuses and structure only —
+# never credentials. Delete this workflow once the real fetcher ships.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Playwright
+        run: |
+          python -m pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+      - name: Run probe
+        env:
+          ENAV_ACCOUNT_ID: ${{ secrets.ENAV_ACCOUNT_ID }}
+          ENAV_ACCOUNT_PASSWORD: ${{ secrets.ENAV_ACCOUNT_PASSWORD }}
+        run: python scripts/probe_enav.py
+      - name: Upload login-page screenshot (pre-fill only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: enav-login-page
+          path: enav-login-page.png
+          retention-days: 3
+          if-no-files-found: ignore

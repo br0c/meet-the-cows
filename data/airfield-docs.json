@@ -1,0 +1,12 @@
+{
+  "comment": "Curated operator-published aerodrome documents, attached to the matching airfield at build time. For countries without a freely redistributable AIP chart source (currently Switzerland: aerodrome charts exist only in the paid eVFR Manual). Rules: only documents the aerodrome operator publishes openly on its own website; attribute the operator in 'source'; NEVER simulator charts (IVAO/VATSIM are 'flight simulation use only') and never paid-manual extracts. 'updatedAt' is the operator's document date when known.",
+  "documents": [
+    {
+      "code": "LSZS",
+      "url": "https://www.engadin-airport.ch/wp-content/uploads/2025/07/Briefing-Segelflug.pdf",
+      "caption": "Briefing Segelflug LSZS",
+      "source": "Engadin Airport St. Moritz–Samedan (operator briefing)",
+      "updatedAt": "2025-07"
+    }
+  ]
+}

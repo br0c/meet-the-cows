@@ -235,6 +235,7 @@ def main() -> None:
     parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
     parser.add_argument("--at-vac-root", default=os.environ.get("AT_VAC_ROOT", "auto"), help="Austro Control eAIP cycle base URL (…/lo/<YYMMDD>/), auto to detect the effective cycle, or none to disable Austrian charts")
     parser.add_argument("--de-vac-root", default=os.environ.get("DE_VAC_ROOT", "auto"), help="DFS BasicVFR root chapter URL, auto to follow the portal redirect to the current cycle, or none to disable German charts")
+    parser.add_argument("--airfield-docs", default=os.environ.get("AIRFIELD_DOCS", "auto"), help="Curated operator-document JSON (default data/airfield-docs.json when present), or none to disable")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
     parser.add_argument("--include-vac-airfields", action="store_true", help="Create VAC-only airfield entries when an LFxx VAC exists but the airfield is absent from the CUP")
     parser.add_argument("--airports-csv", default=os.environ.get("AIRPORTS_CSV", OURAIRPORTS_AIRPORTS_URL), help="Airport CSV URL/path with at least ident,name,latitude_deg,longitude_deg,elevation_ft; defaults to OurAirports")
@@ -312,11 +313,17 @@ def main() -> None:
             resolved_vac_date = inferred_vac_date or ""
     at_vac_base, at_vac_date, at_vac_index = resolve_at_vac_root(args.at_vac_root)
     de_vac_root, de_vac_date = resolve_de_vac_root(args.de_vac_root)
+    if args.airfield_docs.lower() in {"none", "off"}:
+        airfield_doc_entries, airfield_docs_fp = [], ""
+    else:
+        docs_path = root / "data" / "airfield-docs.json" if args.airfield_docs.lower() == "auto" else Path(args.airfield_docs)
+        airfield_doc_entries, airfield_docs_fp = load_airfield_docs(docs_path)
     source_state = build_source_state(
         cupx=source_version_tag(args.cupx),
         vac=resolved_vac_date or resolved_vac_root,
         vac_at=at_vac_date or at_vac_base,
         vac_de=de_vac_date or de_vac_root,
+        airfield_docs=airfield_docs_fp,
         streckenflug=(
             streckenflug_list_fingerprint(args.streckenflug_url, args.streckenflug_countries, raw_dir)
             if args.include_streckenflug else ""
@@ -384,13 +391,22 @@ def main() -> None:
 
     at_vac_count = 0
     de_vac_count = 0
+    operator_docs_count = 0
 
     # VAC imports (FR + AT) and streckenflug are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
     # remote source while the others could already be downloading. The importers mutate
     # disjoint fields (LF vs LO codes), so concurrent attachment is safe.
     futures: dict[Any, str] = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        if airfield_doc_entries:
+            futures[executor.submit(
+                import_airfield_docs,
+                fields=fields,
+                entries=airfield_doc_entries,
+                docs_dir=docs_dir,
+                max_vac=args.max_vac,
+            )] = "operator_docs"
         if de_vac_root:
             futures[executor.submit(
                 import_de_vac_pdfs,
@@ -446,6 +462,8 @@ def main() -> None:
                 at_vac_count = future.result()
             elif task == "de_vac":
                 de_vac_count = future.result()
+            elif task == "operator_docs":
+                operator_docs_count = future.result()
             elif task == "streckenflug":
                 streckenflug_fields = future.result()
                 streckenflug_count = len(streckenflug_fields)
@@ -494,6 +512,7 @@ def main() -> None:
             "vacCount": vac_count,
             "atVacCount": at_vac_count,
             "deVacCount": de_vac_count,
+            "operatorDocsCount": operator_docs_count,
             "vacOnlyAirfieldsCreated": vac_created_airfields,
             "streckenflugCount": streckenflug_count,
             "contributionNotes": contrib_notes,
@@ -538,7 +557,7 @@ def main() -> None:
     label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
         f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
-        f"{vac_count} FR + {at_vac_count} AT + {de_vac_count} DE VAC PDFs, {vac_created_airfields} VAC-only airfields, "
+        f"{vac_count} FR + {at_vac_count} AT + {de_vac_count} DE VAC PDFs, {operator_docs_count} operator docs, {vac_created_airfields} VAC-only airfields, "
         f"{streckenflug_count} streckenflug fields, {streckenflug_media_count} streckenflug images"
     )
 
@@ -629,13 +648,14 @@ def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_d
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
 
 
-def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "", vac_de: str = "") -> dict[str, Any]:
+def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "", vac_de: str = "", airfield_docs: str = "") -> dict[str, Any]:
     return {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "cupx": cupx,
         "vac": vac,
         "vacAt": vac_at,
         "vacDe": vac_de,
+        "airfieldDocs": airfield_docs,
         "streckenflug": streckenflug,
         "contributions": contributions,
     }
@@ -661,7 +681,7 @@ def contributions_fingerprint(contrib_dir: Path) -> str:
 def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
     if not previous:
         return False
-    keys = ("schemaVersion", "cupx", "vac", "vacAt", "vacDe", "streckenflug", "contributions")
+    keys = ("schemaVersion", "cupx", "vac", "vacAt", "vacDe", "airfieldDocs", "streckenflug", "contributions")
     return all(str(previous.get(k) or "") == str(current.get(k) or "") for k in keys)
 
 
@@ -905,6 +925,11 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "url": at_vac_base or "not imported",
             "updatedAt": at_vac_date or None,
             "note": "Official Austrian aerodrome charts; non-commercial use — commercial reproduction requires Austro Control's written consent.",
+        },
+        {
+            "name": "Aerodrome operator documents (curated, data/airfield-docs.json)",
+            "url": "various aerodrome operator websites",
+            "note": "Openly published operator briefings/procedures for countries without a freely redistributable AIP chart source (CH); attributed per document.",
         },
         {
             "name": "DFS BasicVFR (AIP VFR Germany) aerodrome charts",
@@ -2232,6 +2257,84 @@ def import_de_vac_pdfs(
         for field in by_code[code]:
             field["media"].append(dict(media))
             field.setdefault("docs", {})["vac"] = media["url"]
+        downloaded += 1
+        progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
+    progress.done(f"downloaded {downloaded}, err {errors}")
+    return downloaded
+
+
+# --- Curated aerodrome operator documents (currently Switzerland) ------------------------------
+# Some countries have no freely redistributable AIP chart source (CH: aerodrome charts exist
+# only in the paid eVFR Manual). Aerodrome operators do publish briefing sheets and arrival
+# procedures on their own websites; data/airfield-docs.json curates those URLs by ICAO code and
+# the build attaches them like any other document, attributed to the operator. Entries must be
+# operator-published, openly accessible documents — never simulator charts (IVAO/VATSIM are
+# "flight simulation use only") and never paid-manual extracts.
+
+def _fetch_airfield_doc(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": DE_VAC_UA})
+    with urllib.request.urlopen(request, timeout=90) as response:
+        return response.read()
+
+
+def load_airfield_docs(path: Path) -> tuple[list[dict[str, Any]], str]:
+    """(entries, content fingerprint); ([], '') when the file is absent or unreadable."""
+    if not path.exists():
+        return [], ""
+    try:
+        raw = path.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
+        entries = [e for e in data.get("documents", []) if isinstance(e, dict) and e.get("code") and e.get("url")]
+        return entries, hashlib.sha256(raw).hexdigest()[:16]
+    except Exception as error:  # noqa: BLE001 - a broken curation file must not fail the build
+        print(f"airfield-docs: could not read {path}: {error}", file=sys.stderr)
+        return [], ""
+
+
+def import_airfield_docs(
+    *,
+    fields: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+    docs_dir: Path,
+    max_vac: int,
+) -> int:
+    """Attach curated operator documents to existing airfields. Returns the download count."""
+    by_code = index_fields_by_code(fields)
+    progress = Progress(len(entries), "operator docs")
+    downloaded = 0
+    errors = 0
+    briefing_dir = docs_dir.parent / "briefing"
+    for index, entry in enumerate(entries, start=1):
+        if max_vac and downloaded >= max_vac:
+            progress.update(index - 1, extra=f"downloaded {downloaded}, skipped limit", force=True)
+            break
+        code = clean(entry.get("code")).upper()
+        if code not in by_code:
+            progress.update(index, extra=f"{code}: no matching airfield | ok {downloaded}, err {errors}")
+            continue
+        try:
+            data = _fetch_airfield_doc(str(entry["url"]))
+            if not data.startswith(b"%PDF"):
+                raise ValueError("not a PDF")
+        except Exception as error:  # noqa: BLE001 - one dead link must not fail the build
+            errors += 1
+            progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
+            continue
+        slug = safe_filename(clean(entry.get("caption")) or "briefing").replace(" ", "-").lower()
+        briefing_dir.mkdir(parents=True, exist_ok=True)
+        name = f"{code}-{slug}.pdf"
+        (briefing_dir / name).write_bytes(data)
+        media = {
+            "type": "pdf",
+            "url": f"docs/briefing/{name}",
+            "caption": clean(entry.get("caption")) or f"Briefing {code}",
+            "source": clean(entry.get("source")) or "Aerodrome operator",
+        }
+        if clean(entry.get("updatedAt")):
+            media["updatedAt"] = clean(entry.get("updatedAt"))
+        for field in by_code[code]:
+            field["media"].append(dict(media))
+            field.setdefault("docs", {})["briefing"] = media["url"]
         downloaded += 1
         progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
     progress.done(f"downloaded {downloaded}, err {errors}")
