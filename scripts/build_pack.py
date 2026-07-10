@@ -2089,11 +2089,26 @@ def resolve_at_chart_zip(spec: str) -> tuple[str, str]:
         return "", ""
 
 
-def _download_at_zip(url: str, target: Path) -> None:
-    """Stream the ~450 MB complete-AIP ZIP to disk; separate function so tests can stub it."""
-    request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.7"})
-    with urllib.request.urlopen(request, timeout=1800) as response, open(target, "wb") as out:
-        shutil.copyfileobj(response, out, 1024 * 512)
+def _download_at_zip(url: str, target: Path, *, attempts: int = 3) -> None:
+    """Stream the ~450 MB complete-AIP ZIP to disk; separate function so tests can stub it.
+
+    Retries with backoff: a mid-stream connection drop (IncompleteRead) on a download this large
+    is a routine transient, and one blip must not sink a ~20-minute build. The partial file is
+    removed before each retry so a truncated download is never mistaken for a complete one."""
+    for attempt in range(1, attempts + 1):
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.7"})
+            with urllib.request.urlopen(request, timeout=1800) as response, open(target, "wb") as out:
+                shutil.copyfileobj(response, out, 1024 * 512)
+            return
+        except Exception as error:  # noqa: BLE001 - retry any network/read failure
+            target.unlink(missing_ok=True)
+            if attempt >= attempts:
+                raise
+            wait = 2 ** attempt
+            print(f"AT charts: ZIP download failed ({error}); retry {attempt}/{attempts - 1} in {wait}s",
+                  file=sys.stderr)
+            time.sleep(wait)
 
 
 def has_vac_doc(field: dict[str, Any]) -> bool:
@@ -2132,7 +2147,13 @@ def import_at_chart_pdfs(
     zip_path = raw_dir / f"at_aip_{re.sub(r'[^0-9]', '', at_vac_date) or 'current'}.zip"
     if not zip_path.exists() or zip_path.stat().st_size == 0:
         print(f"AT charts: downloading complete AIP ZIP ({zip_url})", file=sys.stderr)
-        _download_at_zip(zip_url, zip_path)
+        try:
+            _download_at_zip(zip_url, zip_path)
+        except Exception as error:  # noqa: BLE001 - an AT source outage must not sink the build
+            print(f"AT charts: download failed after retries ({error}); "
+                  f"building without Austrian charts (they return with the next build).",
+                  file=sys.stderr)
+            return 0
 
     selected: dict[str, list[tuple[str, str, str]]] = {}
     with zipfile.ZipFile(zip_path) as archive:

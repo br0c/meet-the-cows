@@ -107,6 +107,63 @@ class TestChartZip(unittest.TestCase):
         self.assertEqual(lowi["docs"]["vac"], "docs/vac/LOWI.pdf")
         self.assertEqual(fields[2]["media"], [])  # LOGK untouched
 
+    def test_download_retries_then_succeeds(self):
+        # A mid-stream drop on the first attempt must be retried, not fatal, and the partial
+        # file from the failed attempt must be cleaned up before the retry writes the good one.
+        import http.client
+        import urllib.request
+
+        original_sleep = build_pack.time.sleep
+        orig_urlopen = urllib.request.urlopen
+        build_pack.time.sleep = lambda *_: None
+        attempt = {"n": 0}
+
+        class FakeResp:
+            """First attempt drops mid-read; second streams one chunk then EOF (empty read)."""
+            def __init__(self, fail):
+                self.fail, self.sent = fail, False
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, n=-1):
+                if self.fail:
+                    raise http.client.IncompleteRead(b"partial")
+                if self.sent:
+                    return b""
+                self.sent = True
+                return b"complete-zip-bytes"
+
+        def fake_urlopen(request, timeout=0):
+            attempt["n"] += 1
+            return FakeResp(fail=(attempt["n"] == 1))
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp) / "aip.zip"
+                target.write_bytes(b"stale-partial")  # must be cleaned up after the failed attempt
+                urllib.request.urlopen = fake_urlopen
+                build_pack._download_at_zip("https://x/aip.zip", target, attempts=3)
+                self.assertEqual(attempt["n"], 2)                       # retried exactly once
+                self.assertEqual(target.read_bytes(), b"complete-zip-bytes")
+        finally:
+            build_pack.time.sleep = original_sleep
+            urllib.request.urlopen = orig_urlopen
+
+    def test_import_soft_fails_when_download_gives_up(self):
+        # Austro Control outage: the importer degrades to zero charts, never raising.
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "raw"; raw.mkdir()
+            docs = Path(tmp) / "docs" / "vac"; docs.mkdir(parents=True)
+            fields = [make_field("LOWI")]
+
+            def boom(url, target, **kwargs):
+                raise OSError("connection reset")
+            build_pack._download_at_zip = boom
+            count = build_pack.import_at_chart_pdfs(
+                fields=fields, zip_url="https://x/zip", docs_dir=docs,
+                at_vac_date="2026-07-09", raw_dir=raw, max_vac=0)
+            self.assertEqual(count, 0)
+            self.assertEqual(fields[0]["media"], [])  # no charts, but the build goes on
+
     def test_state_includes_at_cycle(self):
         state = build_pack.build_source_state(cupx="c", vac="2026-07-09", vac_at="2026-07-01", streckenflug="s")
         self.assertEqual(state["vacAt"], "2026-07-01")
