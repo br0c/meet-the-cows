@@ -314,6 +314,8 @@ def main() -> None:
         if resolved_vac_date.lower() == "auto":
             resolved_vac_date = inferred_vac_date or ""
     at_vac_base, at_vac_date, at_vac_index = resolve_at_vac_root(args.at_vac_root)
+    at_zip_url, at_zip_date = resolve_at_chart_zip(
+        "none" if args.at_vac_root.lower() in {"none", "off"} else "auto")
     de_vac_root, de_vac_date = resolve_de_vac_root(args.de_vac_root)
     if args.airfield_docs.lower() in {"none", "off"}:
         airfield_doc_entries, airfield_docs_fp = [], ""
@@ -323,7 +325,7 @@ def main() -> None:
     source_state = build_source_state(
         cupx=source_version_tag(args.cupx),
         vac=resolved_vac_date or resolved_vac_root,
-        vac_at=at_vac_date or at_vac_base,
+        vac_at=(at_vac_date or at_vac_base) + (f"|charts:{at_zip_date}" if at_zip_date else ""),
         vac_de=de_vac_date or de_vac_root,
         airfield_docs=airfield_docs_fp,
         streckenflug=(
@@ -392,6 +394,7 @@ def main() -> None:
     streckenflug_fields: list[dict[str, Any]] = []
 
     at_vac_count = 0
+    at_chart_count = 0
     de_vac_count = 0
     operator_docs_count = 0
 
@@ -400,7 +403,17 @@ def main() -> None:
     # remote source while the others could already be downloading. The importers mutate
     # disjoint fields (LF vs LO codes), so concurrent attachment is safe.
     futures: dict[Any, str] = {}
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        if at_zip_url:
+            futures[executor.submit(
+                import_at_chart_pdfs,
+                fields=fields,
+                zip_url=at_zip_url,
+                docs_dir=docs_dir,
+                at_vac_date=at_zip_date,
+                raw_dir=raw_dir,
+                max_vac=args.max_vac,
+            )] = "at_charts"
         if airfield_doc_entries:
             futures[executor.submit(
                 import_airfield_docs,
@@ -462,6 +475,8 @@ def main() -> None:
                 vac_created_airfields = vac_result["createdAirfields"]
             elif task == "at_vac":
                 at_vac_count = future.result()
+            elif task == "at_charts":
+                at_chart_count = future.result()
             elif task == "de_vac":
                 de_vac_count = future.result()
             elif task == "operator_docs":
@@ -513,6 +528,7 @@ def main() -> None:
             "mediaCount": count_media_items(fields),
             "vacCount": vac_count,
             "atVacCount": at_vac_count,
+            "atChartCount": at_chart_count,
             "deVacCount": de_vac_count,
             "operatorDocsCount": operator_docs_count,
             "vacOnlyAirfieldsCreated": vac_created_airfields,
@@ -559,7 +575,7 @@ def main() -> None:
     label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
         f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
-        f"{vac_count} FR + {at_vac_count} AT + {de_vac_count} DE VAC PDFs, {operator_docs_count} operator docs, {vac_created_airfields} VAC-only airfields, "
+        f"{vac_count} FR + {at_chart_count} AT + {de_vac_count} DE VAC PDFs, {at_vac_count} AT AIP sheets, {operator_docs_count} operator docs, {vac_created_airfields} VAC-only airfields, "
         f"{streckenflug_count} streckenflug fields, {streckenflug_media_count} streckenflug images"
     )
 
@@ -923,10 +939,10 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "licence": "Licence Ouverte for SIA public digital products, subject to attribution and no misrepresentation.",
         },
         {
-            "name": "Austro Control eAIP (AIP Austria) AD 2 charts",
+            "name": "Austro Control AIP Austria (AD 2 data sheets + aerodrome charts)",
             "url": at_vac_base or "not imported",
             "updatedAt": at_vac_date or None,
-            "note": "Official Austrian aerodrome charts; non-commercial use — commercial reproduction requires Austro Control's written consent.",
+            "licence": "AIP charts are CC BY 4.0 (AIP Austria GEN 3.2); attribution to Austro Control GmbH.",
         },
         {
             "name": "Aerodrome operator documents (curated, data/airfield-docs.json)",
@@ -2137,6 +2153,121 @@ def resolve_at_vac_root(spec: str) -> tuple[str, str, dict[str, str]]:
         return "", "", {}
 
 
+
+AT_AIM_AIP_PAGE = "https://www.austrocontrol.at/en/pilots/pre-flight_preparation/aim_products/aip"
+# Chart types worth carrying for VFR/glider use: 1-1 aerodrome chart, 14-x visual/VFR charts.
+AT_CHART_TYPES_RE = re.compile(r"^(1-1|14(-\d+)*)$")
+
+
+def resolve_at_chart_zip(spec: str) -> tuple[str, str]:
+    """(zip_url, cycle_date) of the effective complete-AIP ZIP (with charts); ('', '') when
+    disabled or unreachable. The AIM page lists one ZIP per published cycle; NO_CHARTS variants
+    are ignored. Charts are CC BY 4.0 per GEN 3.2."""
+    if not spec or spec.lower() in {"none", "off"}:
+        return "", ""
+    try:
+        if spec.lower() != "auto":
+            match = re.search(r"AIP_AUSTRIA_(\d{6})_", spec)
+            return spec, at_cycle_date(match.group(1)) if match else ""
+        html = _fetch_at_vac(AT_AIM_AIP_PAGE).decode("utf-8", "replace")
+        base_match = re.search(r'<base href="([^"]+)"', html)
+        base = urllib.parse.urljoin(AT_AIM_AIP_PAGE, base_match.group(1)) if base_match else AT_AIM_AIP_PAGE
+        links = {}
+        for href in re.findall(r'href="([^"]*AIP_AUSTRIA_\d{6}_[^"]*\.zip)"', html):
+            if "NO_CHARTS" in href:
+                continue
+            cycle = re.search(r"AIP_AUSTRIA_(\d{6})_", href).group(1)
+            links[cycle] = urllib.parse.urljoin(base, href)
+        cycle = pick_at_cycle(list(links))
+        if not cycle:
+            print("AT charts: no AIP ZIP links found; skipping", file=sys.stderr)
+            return "", ""
+        return links[cycle], at_cycle_date(cycle)
+    except Exception as error:  # noqa: BLE001 - source outage must not fail the build
+        print(f"AT charts: resolve failed ({error}); skipping", file=sys.stderr)
+        return "", ""
+
+
+def _download_at_zip(url: str, target: Path) -> None:
+    """Stream the ~450 MB complete-AIP ZIP to disk; separate function so tests can stub it."""
+    request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.7"})
+    with urllib.request.urlopen(request, timeout=1800) as response, open(target, "wb") as out:
+        shutil.copyfileobj(response, out, 1024 * 512)
+
+
+def import_at_chart_pdfs(
+    *,
+    fields: list[dict[str, Any]],
+    zip_url: str,
+    docs_dir: Path,
+    at_vac_date: str,
+    raw_dir: Path,
+    max_vac: int,
+) -> int:
+    """Attach real Austrian charts (aerodrome chart + visual/VFR charts, merged per aerodrome)
+    from the complete-AIP ZIP. Only ~16 of our airfields have published charts; the rest keep
+    just their AD 2 data sheet."""
+    import io
+    from pypdf import PdfReader, PdfWriter
+
+    zip_path = raw_dir / f"at_aip_{re.sub(r'[^0-9]', '', at_vac_date) or 'current'}.zip"
+    if not zip_path.exists() or zip_path.stat().st_size == 0:
+        print(f"AT charts: downloading complete AIP ZIP ({zip_url})", file=sys.stderr)
+        _download_at_zip(zip_url, zip_path)
+
+    by_code = index_fields_by_code(fields)
+    selected: dict[str, list[tuple[str, str, str]]] = {}
+    with zipfile.ZipFile(zip_path) as archive:
+        for name in archive.namelist():
+            match = re.search(r"Charts/[^/]*/LO_AD_2_(LO[A-Z]{2})_([0-9-]+)_(en|de)\.pdf$", name)
+            if not match:
+                continue
+            code, chart_type, lang = match.groups()
+            if code in by_code and AT_CHART_TYPES_RE.match(chart_type):
+                selected.setdefault(code, []).append((chart_type, lang, name))
+
+        progress = Progress(len(selected), "AT chart PDFs")
+        downloaded = 0
+        errors = 0
+        for index, code in enumerate(sorted(selected), start=1):
+            if max_vac and downloaded >= max_vac:
+                progress.update(index - 1, extra=f"attached {downloaded}, skipped limit", force=True)
+                break
+            try:
+                # English edition preferred per chart type; numeric order (1-1 first, then 14-x).
+                per_type: dict[str, str] = {}
+                for chart_type, lang, name in sorted(selected[code], key=lambda t: (t[0], t[1] != "en")):
+                    per_type.setdefault(chart_type, name)
+                writer = PdfWriter()
+                for chart_type in sorted(per_type):
+                    reader = PdfReader(io.BytesIO(archive.read(per_type[chart_type])))
+                    for page in reader.pages:
+                        writer.add_page(page)
+                buffer = io.BytesIO()
+                writer.write(buffer)
+                data = optimize_pdf_bytes(buffer.getvalue(), code)
+            except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
+                errors += 1
+                progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
+                continue
+            (docs_dir / f"{code}.pdf").write_bytes(data)
+            media = {
+                "type": "pdf",
+                "url": f"docs/vac/{code}.pdf",
+                "caption": f"VAC {code}",
+                "source": "Austro Control (AIP Austria charts, CC BY 4.0)",
+            }
+            if at_vac_date:
+                media["updatedAt"] = at_vac_date
+            for field in by_code[code]:
+                field["media"].append(dict(media))
+                field.setdefault("docs", {})["vac"] = media["url"]
+            downloaded += 1
+            progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
+        progress.done(f"attached {downloaded}, err {errors}")
+    return downloaded
+
+
 def import_at_vac_pdfs(
     *,
     fields: list[dict[str, Any]],
@@ -2161,18 +2292,20 @@ def import_at_vac_pdfs(
             errors += 1
             progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
             continue
-        (docs_dir / f"{code}.pdf").write_bytes(data)
+        aip_dir = docs_dir.parent / "aip"
+        aip_dir.mkdir(parents=True, exist_ok=True)
+        (aip_dir / f"{code}.pdf").write_bytes(data)
         media = {
             "type": "pdf",
-            "url": f"docs/vac/{code}.pdf",
-            "caption": f"VAC {code}",
-            "source": "Austro Control (AIP Austria)",
+            "url": f"docs/aip/{code}.pdf",
+            "caption": f"AIP {code}",
+            "source": "Austro Control (AIP Austria, AD 2 data sheet)",
         }
         if at_vac_date:
             media["updatedAt"] = at_vac_date
         for field in by_code[code]:
             field["media"].append(dict(media))
-            field.setdefault("docs", {})["vac"] = media["url"]
+            field.setdefault("docs", {})["aip"] = media["url"]
         downloaded += 1
         progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
     progress.done(f"downloaded {downloaded}, err {errors}")
