@@ -84,24 +84,29 @@ def main() -> int:
             pass
         print("logged in")
 
-        for name in ("eAIP/menu.html", "commands.html"):
-            url = f"{BASE}/{name}"
-            print(f"== {name} ==")
-            try:
-                status, body = fetch(ctx, url)
-                print(f"  {status}, {len(body):,}B")
-                if status != 200:
-                    continue
-                text = body.decode("utf-8", "replace")
-                if ".pdf" in text.lower():
-                    summarize_tree(text)
-                hrefs = re.findall(r'href="([^"]{2,200})"', text)
-                non_pdf = [h for h in hrefs if ".pdf" not in h.lower()]
-                print(f"  {len(hrefs)} hrefs total, {len(non_pdf)} non-pdf; sample non-pdf:")
-                for h in non_pdf[:25]:
-                    print("   ->", h)
-            except Exception as error:
-                print(f"  ERR {error}")
+        url = f"{BASE}/eAIP/menu.html"
+        print("== eAIP/menu.html ==")
+        try:
+            res = ctx.request.get(url, timeout=90000)
+            body = res.body()
+            text = body.decode("utf-8", "replace")
+            lower = text.lower()
+            print(f"  {res.status}, {len(body):,}B, content-type {res.headers.get('content-type', '?')}")
+            # v4 found no href="..." and no ".pdf" in 11.8MB — learn the actual encoding.
+            for token in ("href", "onclick", "<a ", "pdf", "cartografia", "documents", "ad_2",
+                          "<script", "<div", ".html"):
+                print(f"  count {token!r}: {lower.count(token)}")
+            codes = sorted(set(re.findall(r"\bLI[A-Z]{2}\b", text)))
+            print(f"  {len(codes)} LIxx tokens: {' '.join(codes[:60])}")
+            print("  head:", " ".join(text[:700].split())[:680])
+            for token in ("Cartografia", "AD 2", "LIPB", "LIML"):
+                pos = text.find(token)
+                if pos >= 0:
+                    print(f"  around first {token!r}:", " ".join(text[max(0, pos - 200):pos + 500].split())[:640])
+            if ".pdf" in lower:
+                summarize_tree(text)
+        except Exception as error:
+            print(f"  ERR {error}")
 
         browser.close()
     return 0
