@@ -1,30 +1,32 @@
 #!/usr/bin/env python3
-"""CI probe: validate the ENAV eAIP login flow and map the static chart URL structure.
+"""CI probe v2: map how the ENAV eAIP enumerates aerodromes and their charts.
 
-Runs only in GitHub Actions (workflow_dispatch) with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD
-from repo secrets. Prints structure findings and HTTP statuses — never the credentials.
-Artifacts: a screenshot of the (unfilled) login page for flow debugging.
+v1 proved the IDCS login and that authenticated PDF fetches work. v2 answers the remaining
+design question for the Italian fetcher: where is the machine-readable AD 2 / chart index?
+Runs only in GitHub Actions with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD; prints structure
+and statuses, never credentials.
 """
 from __future__ import annotations
 
 import os
-import sys
+import re
 
 from playwright.sync_api import sync_playwright
 
-EXAMPLE_PDF = ("https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/"
-               "(A07-26)_2026_07_09/documents/Root/ENAV/Cartografia/AD/AD_2/"
-               "AD_2_PRINCIPALI/LIBF/2-1/AERODROME%20CHART%20ICAO.pdf")
-# Candidate index/listing URLs to map how aerodromes and their charts can be enumerated.
-PROBE_URLS = [
-    EXAMPLE_PDF,
-    EXAMPLE_PDF.rsplit("/", 1)[0] + "/",                     # 2-1 folder
-    EXAMPLE_PDF.rsplit("/", 2)[0] + "/",                     # LIBF folder
-    EXAMPLE_PDF.rsplit("/", 3)[0] + "/",                     # AD_2_PRINCIPALI folder
-    EXAMPLE_PDF.rsplit("/", 4)[0] + "/",                     # AD_2 folder
-    "https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/",
-    "https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/(A07-26)_2026_07_09/",
-    "https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/(A07-26)_2026_07_09/documents/",
+CYCLE = "(A07-26)_2026_07_09"
+BASE = f"https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/{CYCLE}"
+EXAMPLE_PDF = (f"{BASE}/documents/Root/ENAV/Cartografia/AD/AD_2/AD_2_PRINCIPALI/LIBF/2-1/"
+               "AERODROME%20CHART%20ICAO.pdf")
+# Standard EUROCONTROL eAIP layouts + likely SPA data endpoints.
+CANDIDATES = [
+    f"{BASE}/html/index.html",
+    f"{BASE}/html/index-en-GB.html",
+    f"{BASE}/html/eAIP/IT-menu-en-GB.html",
+    f"{BASE}/html/eAIP/IT-AD-2.en-GB.html",
+    f"{BASE}/index.html",
+    f"{BASE}/structure.json",
+    f"{BASE}/documents.json",
+    "https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/default.html",
 ]
 
 
@@ -32,7 +34,7 @@ def main() -> int:
     user = os.environ.get("ENAV_ACCOUNT_ID", "")
     password = os.environ.get("ENAV_ACCOUNT_PASSWORD", "")
     if not user or not password:
-        print("ERROR: ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD not set")
+        print("ERROR: credentials not set")
         return 1
 
     with sync_playwright() as p:
@@ -40,56 +42,61 @@ def main() -> int:
         ctx = browser.new_context()
         page = ctx.new_page()
 
-        print("== step 1: hit the example PDF anonymously (expect SSO redirect) ==")
+        print("== login ==")
         page.goto(EXAMPLE_PDF, wait_until="domcontentloaded", timeout=60000)
-        print("landed on:", page.url.split("?")[0])
-        page.screenshot(path="enav-login-page.png")
-
-        print("== step 2: locate login form ==")
         page.wait_for_selector("input[type='password']", timeout=30000)
-        inputs = page.eval_on_selector_all(
-            "input", "els => els.map(e => ({type: e.type, name: e.name, id: e.id}))")
-        print("inputs on login page:", inputs)
-        user_sel = None
-        for candidate in ("input[type='email']", "input[type='text']", "input[name*='user' i]", "input[id*='user' i]"):
+        for candidate in ("input[type='email']", "input[type='text']"):
             if page.query_selector(candidate):
-                user_sel = candidate
+                page.fill(candidate, user)
                 break
-        if not user_sel:
-            print("ERROR: no username input found")
-            return 1
-        page.fill(user_sel, user)
         page.fill("input[type='password']", password)
         page.keyboard.press("Enter")
         try:
             page.wait_for_load_state("networkidle", timeout=45000)
         except Exception:
             pass
-        print("after login, landed on:", page.url.split("?")[0])
+        print("logged in, landed on:", page.url.split("?")[0][:100])
 
-        print("== step 3: authenticated probes ==")
-        for url in PROBE_URLS:
+        print("== candidate index endpoints ==")
+        for url in CANDIDATES:
             try:
-                res = ctx.request.get(url, timeout=60000)
+                res = ctx.request.get(url, timeout=45000)
                 body = res.body()
                 kind = res.headers.get("content-type", "?")
-                head = body[:200].decode("utf-8", "replace").replace("\n", " ") if not body.startswith(b"%PDF") else "%PDF..."
-                print(f"{res.status} {kind:40s} {len(body):>9,}B  {url}")
-                if "html" in kind and b"Index of" in body[:2000]:
-                    print("        ^^ DIRECTORY LISTING ENABLED")
-                if url != EXAMPLE_PDF and b"href" in body[:5000]:
-                    print("        head:", head[:180])
+                print(f"{res.status} {kind:32s} {len(body):>9,}B  {url}")
+                if res.status == 200 and (b"html" in body[:200].lower() or "json" in kind):
+                    text = body.decode("utf-8", "replace")
+                    links = re.findall(r'(?:href|src)="([^"]{4,140})"', text)[:20]
+                    for link in links:
+                        print("     ->", link)
+                    for m in re.findall(r'"[^"]*\.json[^"]*"', text)[:10]:
+                        print("     json ref:", m)
             except Exception as error:
                 print(f"ERR  {url}: {error}")
 
-        print("== step 4: portal AIP index (how the UI enumerates aerodromes) ==")
-        for url in ("https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/default.html",
-                    "https://www.enav.it/services/list"):
-            try:
-                res = ctx.request.get(url, timeout=60000)
-                print(f"{res.status} {res.headers.get('content-type', '?')} {url}")
-            except Exception as error:
-                print(f"ERR  {url}: {error}")
+        print("== SPA network capture: load default.html and watch requests ==")
+        seen: list[str] = []
+        page.on("request", lambda r: seen.append(f"{r.method} {r.url}") if "enav" in r.url else None)
+        try:
+            page.goto("https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP/default.html",
+                      wait_until="networkidle", timeout=60000)
+        except Exception as error:
+            print("SPA load issue:", error)
+        # give the SPA a moment to fetch its data
+        page.wait_for_timeout(5000)
+        for line in seen[:60]:
+            print("  ", line[:170])
+        print(f"({len(seen)} requests total)")
+
+        print("== SPA DOM: links/frames after load ==")
+        try:
+            frames = [f.url[:120] for f in page.frames]
+            print("frames:", frames)
+            hrefs = page.eval_on_selector_all("a", "els => els.map(e => e.getAttribute('href')).filter(Boolean).slice(0, 40)")
+            for h in hrefs:
+                print("   a:", str(h)[:140])
+        except Exception as error:
+            print("DOM dump issue:", error)
 
         browser.close()
     return 0
