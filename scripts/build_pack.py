@@ -472,6 +472,23 @@ def main() -> None:
 
     if streckenflug_fields:
         fields.extend(streckenflug_fields)
+        # Streckenflug introduces ICAO-coded airfields (e.g. LIPB Bolzano, LIDA Asiago) that did
+        # not exist when the concurrent chart imports indexed the field list — a second,
+        # incremental attach pass gives those late fields their charts too. The importers are
+        # idempotent (fields already carrying a VAC doc are skipped, chart files on disk are
+        # reused), so this pass only pays for the genuinely new codes.
+        if at_zip_url:
+            at_chart_count += import_at_chart_pdfs(
+                fields=fields, zip_url=at_zip_url, docs_dir=docs_dir,
+                at_vac_date=at_zip_date, raw_dir=raw_dir, max_vac=args.max_vac)
+        if de_vac_root:
+            de_vac_count += import_de_vac_pdfs(
+                fields=fields, root_chapter_url=de_vac_root, docs_dir=docs_dir,
+                de_vac_date=de_vac_date, max_vac=args.max_vac)
+        if it_vac_dir:
+            it_chart_count += import_it_chart_pdfs(
+                fields=fields, charts_dir=it_vac_dir, docs_dir=docs_dir,
+                it_vac_date=it_vac_date, max_vac=args.max_vac)
 
     # Drop major airports / military bases (any source) before translating or merging: a glider
     # must not land there, and they otherwise dominate the pinned "best options" list.
@@ -2093,6 +2110,13 @@ def _download_at_zip(url: str, target: Path) -> None:
         shutil.copyfileobj(response, out, 1024 * 512)
 
 
+def has_vac_doc(field: dict[str, Any]) -> bool:
+    """True when a chart import pass already attached a VAC document to this field. Makes the
+    importers idempotent so the post-streckenflug second pass only touches new fields."""
+    docs = field.get("docs")
+    return isinstance(docs, dict) and bool(clean(docs.get("vac")))
+
+
 def import_at_chart_pdfs(
     *,
     fields: list[dict[str, Any]],
@@ -2104,7 +2128,8 @@ def import_at_chart_pdfs(
 ) -> int:
     """Attach real Austrian charts (aerodrome chart + visual/VFR charts, merged per aerodrome)
     from the complete-AIP ZIP. Only ~16 of our airfields have published charts; the rest keep
-    just their AD 2 data sheet."""
+    just their AD 2 data sheet. Idempotent: fields already carrying a VAC doc are skipped and
+    chart files already on disk are reused, so a second attach pass is cheap."""
     import io
     from pypdf import PdfReader, PdfWriter
 
@@ -2114,6 +2139,7 @@ def import_at_chart_pdfs(
         _download_at_zip(zip_url, zip_path)
 
     by_code = index_fields_by_code(fields)
+    pending = {code for code, group in by_code.items() if any(not has_vac_doc(f) for f in group)}
     selected: dict[str, list[tuple[str, str, str]]] = {}
     with zipfile.ZipFile(zip_path) as archive:
         for name in archive.namelist():
@@ -2121,7 +2147,7 @@ def import_at_chart_pdfs(
             if not match:
                 continue
             code, chart_type, lang = match.groups()
-            if code in by_code and AT_CHART_TYPES_RE.match(chart_type):
+            if code in pending and AT_CHART_TYPES_RE.match(chart_type):
                 selected.setdefault(code, []).append((chart_type, lang, name))
 
         progress = Progress(len(selected), "AT chart PDFs")
@@ -2131,24 +2157,25 @@ def import_at_chart_pdfs(
             if max_vac and downloaded >= max_vac:
                 progress.update(index - 1, extra=f"attached {downloaded}, skipped limit", force=True)
                 break
-            try:
-                # English edition preferred per chart type; numeric order (1-1 first, then 14-x).
-                per_type: dict[str, str] = {}
-                for chart_type, lang, name in sorted(selected[code], key=lambda t: (t[0], t[1] != "en")):
-                    per_type.setdefault(chart_type, name)
-                writer = PdfWriter()
-                for chart_type in sorted(per_type):
-                    reader = PdfReader(io.BytesIO(archive.read(per_type[chart_type])))
-                    for page in reader.pages:
-                        writer.add_page(page)
-                buffer = io.BytesIO()
-                writer.write(buffer)
-                data = optimize_pdf_bytes(buffer.getvalue(), code)
-            except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
-                errors += 1
-                progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
-                continue
-            (docs_dir / f"{code}.pdf").write_bytes(data)
+            out_path = docs_dir / f"{code}.pdf"
+            if not out_path.is_file():
+                try:
+                    # English edition preferred per chart type; numeric order (1-1 first, then 14-x).
+                    per_type: dict[str, str] = {}
+                    for chart_type, lang, name in sorted(selected[code], key=lambda t: (t[0], t[1] != "en")):
+                        per_type.setdefault(chart_type, name)
+                    writer = PdfWriter()
+                    for chart_type in sorted(per_type):
+                        reader = PdfReader(io.BytesIO(archive.read(per_type[chart_type])))
+                        for page in reader.pages:
+                            writer.add_page(page)
+                    buffer = io.BytesIO()
+                    writer.write(buffer)
+                    out_path.write_bytes(optimize_pdf_bytes(buffer.getvalue(), code))
+                except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
+                    errors += 1
+                    progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
+                    continue
             media = {
                 "type": "pdf",
                 "url": f"docs/vac/{code}.pdf",
@@ -2158,6 +2185,8 @@ def import_at_chart_pdfs(
             if at_vac_date:
                 media["updatedAt"] = at_vac_date
             for field in by_code[code]:
+                if has_vac_doc(field):
+                    continue
                 field["media"].append(dict(media))
                 field.setdefault("docs", {})["vac"] = media["url"]
             downloaded += 1
@@ -2295,12 +2324,18 @@ def import_de_vac_pdfs(
     de_vac_date: str,
     max_vac: int,
 ) -> int:
-    """Crawl BasicVFR and attach one assembled chart PDF per existing DE airfield."""
+    """Crawl BasicVFR and attach one assembled chart PDF per existing DE airfield. Idempotent:
+    fields already carrying a VAC doc are skipped and assembled PDFs on disk are reused, so a
+    second attach pass only crawls the genuinely new codes."""
     by_code = index_fields_by_code(fields)
     wanted = {code for code in by_code if ICAO_DE_RE.match(code)
-              and not any(is_major_airport(f) for f in by_code[code])}
-    chart_pages = crawl_de_chart_pages(root_chapter_url, wanted)
-    candidates = sorted(chart_pages)
+              and not any(is_major_airport(f) for f in by_code[code])
+              and any(not has_vac_doc(f) for f in by_code[code])}
+    if not wanted:
+        return 0
+    already = {code for code in wanted if (docs_dir / f"{code}.pdf").is_file()}
+    chart_pages = crawl_de_chart_pages(root_chapter_url, wanted - already) if wanted - already else {}
+    candidates = sorted(set(chart_pages) | already)
     progress = Progress(len(candidates), "DE VAC PDFs")
     downloaded = 0
     errors = 0
@@ -2308,16 +2343,17 @@ def import_de_vac_pdfs(
         if max_vac and downloaded >= max_vac:
             progress.update(index - 1, extra=f"downloaded {downloaded}, skipped limit", force=True)
             break
-        try:
-            page_htmls = [_fetch_de_vac(url)[0] for url in chart_pages[code]]
-            if not de_pages_to_pdf(page_htmls, docs_dir / f"{code}.pdf"):
+        if not (docs_dir / f"{code}.pdf").is_file():
+            try:
+                page_htmls = [_fetch_de_vac(url)[0] for url in chart_pages[code]]
+                if not de_pages_to_pdf(page_htmls, docs_dir / f"{code}.pdf"):
+                    errors += 1
+                    progress.update(index, extra=f"{code}: no chart images | ok {downloaded}, err {errors}", force=True)
+                    continue
+            except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
                 errors += 1
-                progress.update(index, extra=f"{code}: no chart images | ok {downloaded}, err {errors}", force=True)
+                progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
                 continue
-        except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
-            errors += 1
-            progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
-            continue
         media = {
             "type": "pdf",
             "url": f"docs/vac/{code}.pdf",
@@ -2327,6 +2363,8 @@ def import_de_vac_pdfs(
         if de_vac_date:
             media["updatedAt"] = de_vac_date
         for field in by_code[code]:
+            if has_vac_doc(field):
+                continue
             field["media"].append(dict(media))
             field.setdefault("docs", {})["vac"] = media["url"]
         downloaded += 1
@@ -2385,10 +2423,13 @@ def import_it_chart_pdfs(
     """Attach one pre-fetched ENAV chart PDF per existing (non-major) Italian airfield.
 
     Only charts for wanted codes are copied into docs_dir, so aerodromes the packs don't carry —
-    and majors that drop_major_airports would remove anyway — never bloat the deployed tree."""
+    and majors that drop_major_airports would remove anyway — never bloat the deployed tree.
+    Idempotent: fields already carrying a VAC doc are skipped and optimized PDFs on disk are
+    reused, so a second attach pass only pays for the genuinely new codes."""
     by_code = index_fields_by_code(fields)
     wanted = {code for code in by_code if ICAO_IT_RE.match(code)
-              and not any(is_major_airport(f) for f in by_code[code])}
+              and not any(is_major_airport(f) for f in by_code[code])
+              and any(not has_vac_doc(f) for f in by_code[code])}
     source_dir = Path(charts_dir)
     candidates = sorted(code for code in wanted if (source_dir / f"{code}.pdf").is_file())
     progress = Progress(len(candidates), "IT VAC PDFs")
@@ -2398,13 +2439,14 @@ def import_it_chart_pdfs(
         if max_vac and attached >= max_vac:
             progress.update(index - 1, extra=f"attached {attached}, skipped limit", force=True)
             break
-        try:
-            data = optimize_pdf_bytes((source_dir / f"{code}.pdf").read_bytes(), label=f"IT {code}")
-            (docs_dir / f"{code}.pdf").write_bytes(data)
-        except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
-            errors += 1
-            progress.update(index, extra=f"{code}: {error} | ok {attached}, err {errors}", force=True)
-            continue
+        if not (docs_dir / f"{code}.pdf").is_file():
+            try:
+                data = optimize_pdf_bytes((source_dir / f"{code}.pdf").read_bytes(), label=f"IT {code}")
+                (docs_dir / f"{code}.pdf").write_bytes(data)
+            except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
+                errors += 1
+                progress.update(index, extra=f"{code}: {error} | ok {attached}, err {errors}", force=True)
+                continue
         media = {
             "type": "pdf",
             "url": f"docs/vac/{code}.pdf",
@@ -2414,6 +2456,8 @@ def import_it_chart_pdfs(
         if it_vac_date:
             media["updatedAt"] = it_vac_date
         for field in by_code[code]:
+            if has_vac_doc(field):
+                continue
             field["media"].append(dict(media))
             field.setdefault("docs", {})["vac"] = media["url"]
         attached += 1
