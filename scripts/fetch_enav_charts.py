@@ -88,6 +88,27 @@ def select_visual_charts(pdf_urls: list[str]) -> list[str]:
             if WANTED_CHART_RE.search(urllib.parse.unquote(url).rsplit("/", 1)[-1])]
 
 
+def login_if_prompted(page, user: str, password: str, wait_ms: int = 8000) -> bool:
+    """Complete the Oracle IDCS form if the current navigation landed on it. True when a
+    login was performed. Gated URLs redirect to the IDCS domain, so this may need a moment
+    for the form to appear — hence the bounded wait instead of an immediate query."""
+    try:
+        page.wait_for_selector("input[type='password']", timeout=wait_ms)
+    except Exception:
+        return False
+    for candidate in ("input[type='email']", "input[type='text']"):
+        if page.query_selector(candidate):
+            page.fill(candidate, user)
+            break
+    page.fill("input[type='password']", password)
+    page.keyboard.press("Enter")
+    try:
+        page.wait_for_load_state("networkidle", timeout=45000)
+    except Exception:
+        pass
+    return True
+
+
 def merge_pdfs(chunks: list[bytes]) -> bytes:
     from pypdf import PdfReader, PdfWriter
     writer = PdfWriter()
@@ -120,9 +141,13 @@ def main() -> int:
         ctx = browser.new_context()
         page = ctx.new_page()
 
-        # Cycle discovery (public page).
+        # Open the portal (logging in if the entry page is gated), then read the cycle list
+        # over the request API — the live page keeps navigating, so page.content() races.
         page.goto(f"{PORTAL}/default.html", wait_until="domcontentloaded", timeout=60000)
-        cycles = sorted({m.group(0) for m in CYCLE_RE.finditer(page.content())})
+        if login_if_prompted(page, user, password):
+            print("logged in (portal entry)")
+        listing = ctx.request.get(f"{PORTAL}/default.html", timeout=60000)
+        cycles = sorted({m.group(0) for m in CYCLE_RE.finditer(listing.body().decode("utf-8", "replace"))})
         cycle = pick_cycle(cycles, dt.date.today())
         if not cycle:
             print("ERROR: no cycle links found on default.html", file=sys.stderr)
@@ -130,20 +155,10 @@ def main() -> int:
         print(f"cycle {cycle} (effective {cycle_date(cycle)}) of {cycles}")
         menu_url = f"{PORTAL}/{cycle}/eAIP/menu.html"
 
-        # First protected request triggers the Oracle IDCS login form.
+        # The eAIP itself is protected: trigger the IDCS login here if it hasn't happened yet.
         page.goto(menu_url, wait_until="domcontentloaded", timeout=60000)
-        if page.query_selector("input[type='password']"):
-            for candidate in ("input[type='email']", "input[type='text']"):
-                if page.query_selector(candidate):
-                    page.fill(candidate, user)
-                    break
-            page.fill("input[type='password']", password)
-            page.keyboard.press("Enter")
-            try:
-                page.wait_for_load_state("networkidle", timeout=45000)
-            except Exception:
-                pass
-            print("logged in")
+        if login_if_prompted(page, user, password):
+            print("logged in (eAIP)")
 
         response = ctx.request.get(menu_url, timeout=90000)
         if response.status != 200:

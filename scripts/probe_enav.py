@@ -36,28 +36,21 @@ def main() -> int:
         ctx = browser.new_context()
         page = ctx.new_page()
 
-        print("== cycle discovery ==")
+        print("== portal entry + cycle discovery ==")
         page.goto(f"{fec.PORTAL}/default.html", wait_until="domcontentloaded", timeout=60000)
-        cycles = sorted({m.group(0) for m in fec.CYCLE_RE.finditer(page.content())})
+        if fec.login_if_prompted(page, user, password):
+            print("logged in (portal entry)")
+        listing = ctx.request.get(f"{fec.PORTAL}/default.html", timeout=60000)
+        cycles = sorted({m.group(0) for m in fec.CYCLE_RE.finditer(listing.body().decode("utf-8", "replace"))})
         import datetime as dt
         cycle = fec.pick_cycle(cycles, dt.date.today())
         print(f"cycles {cycles} -> picked {cycle} (effective {fec.cycle_date(cycle)})")
         menu_url = f"{fec.PORTAL}/{cycle}/eAIP/menu.html"
 
-        print("== login ==")
+        print("== eAIP login ==")
         page.goto(menu_url, wait_until="domcontentloaded", timeout=60000)
-        if page.query_selector("input[type='password']"):
-            for candidate in ("input[type='email']", "input[type='text']"):
-                if page.query_selector(candidate):
-                    page.fill(candidate, user)
-                    break
-            page.fill("input[type='password']", password)
-            page.keyboard.press("Enter")
-            try:
-                page.wait_for_load_state("networkidle", timeout=45000)
-            except Exception:
-                pass
-        print("logged in")
+        if fec.login_if_prompted(page, user, password):
+            print("logged in (eAIP)")
 
         print("== menu -> AD 2 pages ==")
         res = ctx.request.get(menu_url, timeout=90000)
