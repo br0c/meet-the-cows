@@ -83,6 +83,23 @@ def in_alps(field: dict[str, Any]) -> bool:
         return False
 
 
+# The Alps pack ships as two overlapping halves so pilots download only the side they fly.
+# The overlap band (Sion -> Locarno/Como) is the classic cross-border corridor: both packs
+# carry it, and the app dedupes shared fields by id when both are selected.
+ALPS_WEST_MAX_LON = 9.2   # eastern edge of the Western pack (keeps Locarno 8.78E, Alzate 9.16E)
+ALPS_EAST_MIN_LON = 7.3   # western edge of the Eastern pack (keeps Sion 7.33E)
+
+
+def in_alps_band(field: dict[str, Any], *, min_lon: float | None = None, max_lon: float | None = None) -> bool:
+    """in_alps further clipped to a longitude band (bounds inclusive)."""
+    if not in_alps(field):
+        return False
+    lon = float(field["longitude"])  # in_alps already validated the coordinates
+    if min_lon is not None and lon < min_lon:
+        return False
+    return not (max_lon is not None and lon > max_lon)
+
+
 # Pack registry. `countries` selects by political country code; `geofence` selects by
 # position. A pack uses exactly one selector. `name` is the display label shown in the app's
 # pack picker (kept multilingual inline until the app localizes pack names from the manifest).
@@ -92,7 +109,8 @@ PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {"id": "de", "names": {"en": "Germany", "fr": "Allemagne", "de": "Deutschland"}, "countries": ("DE",)},
     {"id": "it", "names": {"en": "Italy", "fr": "Italie", "de": "Italien"}, "countries": ("IT",)},
     {"id": "at", "names": {"en": "Austria", "fr": "Autriche", "de": "Österreich"}, "countries": ("AT",)},
-    {"id": "alps", "names": {"en": "Alps", "fr": "Alpes", "de": "Alpen"}, "geofence": "alps"},
+    {"id": "alps-west", "names": {"en": "Western Alps", "fr": "Alpes occidentales", "de": "Westalpen"}, "geofence": "alps-west"},
+    {"id": "alps-east", "names": {"en": "Eastern Alps", "fr": "Alpes orientales", "de": "Ostalpen"}, "geofence": "alps-east"},
 )
 
 # Every country a build must pull so the packs above can be sliced from one merged field set.
@@ -104,8 +122,13 @@ def field_in_pack(field: dict[str, Any], pack: dict[str, Any]) -> bool:
     countries = pack.get("countries")
     if countries:
         return str(field.get("country") or "").upper() in {c.upper() for c in countries}
-    if pack.get("geofence") == "alps":
+    geofence = pack.get("geofence")
+    if geofence == "alps":
         return in_alps(field)
+    if geofence == "alps-west":
+        return in_alps_band(field, max_lon=ALPS_WEST_MAX_LON)
+    if geofence == "alps-east":
+        return in_alps_band(field, min_lon=ALPS_EAST_MIN_LON)
     return False
 
 

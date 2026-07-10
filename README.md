@@ -110,21 +110,35 @@ originals live on the `contrib-originals` release.
 
 ## Data
 
-The public app loads a static data pack from same-origin GitHub Pages paths:
+The public app loads static data packs from same-origin GitHub Pages paths. One build produces
+the country packs (`fr`, `ch`, `de`, `it`, `at`) and two geofenced Alps packs, all sliced from
+one merged field set with their media shared in `_shared/`:
 
 ```text
 /meet-the-cows/packs/packs.json
-/meet-the-cows/packs/fr-alps/manifest.json
-/meet-the-cows/packs/fr-alps/fields.json
-/meet-the-cows/packs/fr-alps/media-manifest.json
-/meet-the-cows/packs/fr-alps/state.json
-/meet-the-cows/packs/fr-alps/media/...
-/meet-the-cows/packs/fr-alps/docs/...
+/meet-the-cows/packs/<pack-id>/manifest.json
+/meet-the-cows/packs/<pack-id>/fields.json
+/meet-the-cows/packs/<pack-id>/media-manifest.json
+/meet-the-cows/packs/<pack-id>/state.json
+/meet-the-cows/packs/_shared/media/...
+/meet-the-cows/packs/_shared/docs/...
 ```
 
 `media-manifest.json` lists a content hash for every media/doc file; the app diffs it to
 download only changed files on an update. `state.json` is the source fingerprint the build
 uses to decide whether a rebuild is needed. Generated pack files are not committed to the repository.
+
+### Alps pack boundaries
+
+The Alps ship as two overlapping packs so pilots download only the side they fly: **Western
+Alps** reaches east to Alzate/Locarno (9.2°E) and **Eastern Alps** starts at Sion (7.3°E).
+The Sion → Locarno / Como corridor between the two is carried by both packs; fields shared by
+two selected packs are deduplicated by the app and never downloaded twice.
+
+![Map of the Western and Eastern Alps pack boundaries with their shared corridor](docs/alps-packs.svg)
+
+The boundary polygon lives in `scripts/packs.py` (`ALPS_GEOFENCE` plus the two split
+longitudes); regenerate the map with `python scripts/generate_alps_pack_map.py` after tuning it.
 
 ## Credits and Data Sources
 
@@ -132,6 +146,9 @@ Meet the Cows stands on work published by several aviation and gliding data prov
 
 - [planeur-net / Guide des Aires de Securite](https://github.com/planeur-net/outlanding): outlanding field data and source photos where included.
 - [Service de l'Information Aeronautique (SIA)](https://www.sia.aviation-civile.gouv.fr): official French VAC documents where included.
+- [Austro Control](https://www.austrocontrol.at): Austrian AIP aerodrome charts (CC BY 4.0 per AIP Austria GEN 3.2) where included.
+- [DFS Deutsche Flugsicherung](https://aip.dfs.de/basicVFR): German AIP VFR (BasicVFR) aerodrome charts where included.
+- [ENAV](https://www.enav.it): Italian AIP aerodrome and visual approach charts (© ENAV S.p.A., retrieved from the free online self-briefing service) where included.
 - [OpenAIP](https://www.openaip.net): airfield metadata used to help discover and place glider-relevant airfields.
 - [streckenflug.at Landout Database](https://landout.streckenflug.at): additional landout notes and photos where the pack build includes them.
 - [OurAirports](https://ourairports.com): optional airport/runway coordinate fallback for some pack builds.
