@@ -61,7 +61,7 @@ a { color: var(--accent); }
   color: var(--muted);
   font-size: 11px;
 }
-.gps-strip span {
+.gps-strip > span {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -71,7 +71,7 @@ a { color: var(--accent); }
   text-overflow: ellipsis;
 }
 .gps-strip strong { color: var(--text); font-weight: 800; }
-.gps-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: baseline; }
+.gps-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: -1px; }
 .gps-dot.ok { background: #22c55e; }
 .gps-dot.bad { background: #ef4444; }
 .main { flex: 1; padding: 8px 8px 80px; }
