@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""CI probe v4: extract the ENAV eAIP document tree from eAIP/menu.html.
+"""CI probe v6: dump the chart-PDF links of sample AD 2 aerodrome pages.
 
-v3 narrowed it down: menu.js/commands.js are IDS AIRNAV UI helpers, and toc-frameset.html
-frames point at eAIP/menu.html — that's the actual TOC. v4 pulls it and summarizes the chart
-tree — aerodrome codes, chart-type basenames, sample branches — so the fetcher can enumerate
-without guessing. Runs only in GitHub Actions with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD;
-prints structure and statuses, never credentials.
+v5 decoded eAIP/menu.html (11.8MB XHTML, single-quoted hrefs): 107 aerodromes, one AD 2 page
+each ("LI-AD 2 LIPB - BOLZANO 1-it-IT.html"), no PDF links in the menu itself. v6 fetches a
+few AD 2 pages and dumps their PDF links to fix the fetcher's chart-name filter. Runs only in
+GitHub Actions with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD; prints structure and statuses,
+never credentials.
 """
 from __future__ import annotations
 
@@ -84,29 +84,35 @@ def main() -> int:
             pass
         print("logged in")
 
-        url = f"{BASE}/eAIP/menu.html"
-        print("== eAIP/menu.html ==")
-        try:
-            res = ctx.request.get(url, timeout=90000)
-            body = res.body()
-            text = body.decode("utf-8", "replace")
-            lower = text.lower()
-            print(f"  {res.status}, {len(body):,}B, content-type {res.headers.get('content-type', '?')}")
-            # v4 found no href="..." and no ".pdf" in 11.8MB — learn the actual encoding.
-            for token in ("href", "onclick", "<a ", "pdf", "cartografia", "documents", "ad_2",
-                          "<script", "<div", ".html"):
-                print(f"  count {token!r}: {lower.count(token)}")
-            codes = sorted(set(re.findall(r"\bLI[A-Z]{2}\b", text)))
-            print(f"  {len(codes)} LIxx tokens: {' '.join(codes[:60])}")
-            print("  head:", " ".join(text[:700].split())[:680])
-            for token in ("Cartografia", "AD 2", "LIPB", "LIML"):
-                pos = text.find(token)
-                if pos >= 0:
-                    print(f"  around first {token!r}:", " ".join(text[max(0, pos - 200):pos + 500].split())[:640])
-            if ".pdf" in lower:
-                summarize_tree(text)
-        except Exception as error:
-            print(f"  ERR {error}")
+        # v5 decoded the menu: single-quoted hrefs, one AD 2 page per aerodrome, e.g.
+        # href='LI-AD 2 LIPB - BOLZANO 1-it-IT.html#AD-2-LIPB---BOLZANO-1'. The PDFs must be
+        # linked from those pages — fetch a major and a minor one and dump their PDF links.
+        print("== menu.html: AD 2 aerodrome pages ==")
+        status, body = fetch(ctx, f"{BASE}/eAIP/menu.html")
+        menu = body.decode("utf-8", "replace")
+        pages: dict[str, str] = {}
+        for href, code in re.findall(r"href='(LI-AD 2 (LI[A-Z]{2})[^']*?\.html)#", menu):
+            pages.setdefault(code, href)
+        print(f"  {status}: {len(pages)} aerodrome pages; sample: {list(pages.values())[:3]}")
+
+        for code in ("LIPB", "LIDT", "LILH"):
+            href = pages.get(code)
+            print(f"== AD 2 page {code}: {href} ==")
+            if not href:
+                print("  (not in menu)")
+                continue
+            try:
+                page_url = f"{BASE}/eAIP/{urllib.parse.quote(href)}"
+                status, body = fetch(ctx, page_url)
+                text = body.decode("utf-8", "replace")
+                print(f"  {status}, {len(body):,}B")
+                pdfs = sorted({re.sub(r"\?.*$", "", m)
+                               for m in re.findall(r"href=['\"]([^'\"]{4,260}?\.pdf(?:\?[^'\"]{0,160})?)['\"]", text, re.I)})
+                print(f"  {len(pdfs)} PDF links:")
+                for p in pdfs[:30]:
+                    print("   ->", urllib.parse.unquote(p))
+            except Exception as error:
+                print(f"  ERR {error}")
 
         browser.close()
     return 0

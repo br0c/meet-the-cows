@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for the Italian chart import: pre-fetched directory resolution/fingerprint and the
-local attach importer (the authenticated ENAV fetch itself runs in a separate CI step)."""
+"""Tests for the Italian chart import: pre-fetched directory resolution/fingerprint, the
+local attach importer, and the pure helpers of the authenticated ENAV fetcher (whose network
+side runs only in CI)."""
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import sys
@@ -12,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import build_pack  # noqa: E402
+import fetch_enav_charts  # noqa: E402
 
 
 def make_field(code: str, **extra) -> dict:
@@ -100,6 +103,39 @@ class TestImport(unittest.TestCase):
         # A pre-Italy published state (no vacIt key) must still match while imports stay disabled.
         old = {k: v for k, v in state.items() if k != "vacIt"}
         self.assertTrue(build_pack.source_states_match(old, dict(state, vacIt="")))
+
+
+class TestFetchHelpers(unittest.TestCase):
+    CYCLES = ["(A06-26)_2026_06_11", "(A07-26)_2026_07_09", "(A08-26)_2026_08_06"]
+
+    def test_pick_cycle(self):
+        self.assertEqual(fetch_enav_charts.pick_cycle(self.CYCLES, dt.date(2026, 7, 10)),
+                         "(A07-26)_2026_07_09")
+        self.assertEqual(fetch_enav_charts.pick_cycle(self.CYCLES, dt.date(2026, 9, 1)),
+                         "(A08-26)_2026_08_06")
+        # All future -> earliest, matching the Austrian behaviour.
+        self.assertEqual(fetch_enav_charts.pick_cycle(self.CYCLES, dt.date(2026, 1, 1)),
+                         "(A06-26)_2026_06_11")
+        self.assertEqual(fetch_enav_charts.pick_cycle([], dt.date(2026, 7, 10)), "")
+
+    def test_cycle_date(self):
+        self.assertEqual(fetch_enav_charts.cycle_date("(A07-26)_2026_07_09"), "2026-07-09")
+
+    def test_group_visual_charts(self):
+        base = "https://x/AIP/(A07-26)_2026_07_09/documents/Root/ENAV/Cartografia/AD/AD_2"
+        urls = [
+            f"{base}/AD_2_PRINCIPALI/LIBF/2-1/AERODROME%20CHART%20ICAO.pdf",
+            f"{base}/AD_2_PRINCIPALI/LIBF/5-1/VISUAL%20APPROACH%20CHART.pdf",
+            f"{base}/AD_2_PRINCIPALI/LIBF/6-1/SID%20RWY%2033.pdf",              # instrument
+            f"{base}/AD_2_MINORI/LIDT/2-1/CARTA%20DI%20AVVICINAMENTO%20A%20VISTA%20(VAC).pdf",
+            "https://x/AIP/(A07-26)_2026_07_09/documents/Root/ENAV/ENR/ENR_6/chart.pdf",  # not AD_2
+        ]
+        grouped = fetch_enav_charts.group_visual_charts(urls, None)
+        self.assertEqual(sorted(grouped), ["LIBF", "LIDT"])
+        self.assertEqual(len(grouped["LIBF"]), 2)  # SID excluded
+        self.assertEqual(len(grouped["LIDT"]), 1)
+        only = fetch_enav_charts.group_visual_charts(urls, {"LIDT"})
+        self.assertEqual(sorted(only), ["LIDT"])
 
 
 if __name__ == "__main__":
