@@ -152,6 +152,18 @@ jobs:
           path: .cache/enav-charts
           key: enav-charts-${{ hashFiles('.cache/enav-charts/manifest.json') }}
 
+      # All other source downloads (AT AIP ZIP, OpenAIP, the CUP guide, the DFS crawl, SIA PDFs,
+      # streckenflug details) share one on-disk cache (raw_dir) so a rebuild triggered by ONE
+      # changed source does not re-fetch the rest. Restore the most recent copy; the build reuses
+      # each artifact whose AIRAC cycle still matches and prunes the ones that have rolled.
+      - name: Restore source download cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/_multi/raw
+          key: raw-src-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            raw-src-
+
       - name: Build data pack
         id: build
         env:
@@ -169,7 +181,9 @@ jobs:
           PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/fr/state.json
           FORCE_FULL: ${{ steps.mode.outputs.force_full }}
         run: |
-          rm -rf data/packs .cache/_multi dist/site
+          # Keep .cache/_multi/raw (the restored source-download cache); only the pack output
+          # and the site staging are rebuilt from scratch each run.
+          rm -rf data/packs dist/site
 
           # Multi-pack: one merged, translated build sliced into FR/CH/DE/IT/AT + Alps. Country
           # lists are forced to all build countries by --multi-pack, so they are not passed here.
@@ -186,6 +200,17 @@ jobs:
             --de-vac-root auto \
             --it-vac-dir .cache/enav-charts \
             --include-vac-airfields
+
+      # Keyed on the AIRAC-cycle markers (.source-versions.json), so unchanged cycles reuse the
+      # same key and never re-store the ~450 MB AT ZIP; a cycle roll changes the hash and saves
+      # the refreshed downloads once. Only on build success, so a partial/failed run cannot pin
+      # the key with an incomplete cache.
+      - name: Save source download cache
+        if: success() && hashFiles('.cache/_multi/raw/.source-versions.json') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/_multi/raw
+          key: raw-src-${{ hashFiles('.cache/_multi/raw/.source-versions.json') }}
 
       - name: No source changes (skipped rebuild)
         if: steps.build.outputs.changed == 'false'

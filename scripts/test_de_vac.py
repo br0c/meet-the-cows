@@ -34,7 +34,7 @@ def tiny_png_page() -> bytes:
 
 
 def make_router(pages: dict[str, bytes]):
-    def fake(url):
+    def fake(url, cache_dir=None):
         for key, body in pages.items():
             if url.endswith(key):
                 return body, url

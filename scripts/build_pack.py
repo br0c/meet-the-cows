@@ -319,8 +319,9 @@ def main() -> None:
     at_zip_url, at_zip_date = resolve_at_chart_zip(args.at_vac_root)
     de_vac_root, de_vac_date = resolve_de_vac_root(args.de_vac_root)
     it_vac_dir, it_vac_date, it_vac_fingerprint = resolve_it_vac_dir(args.it_vac_dir)
+    cup_tag = source_version_tag(args.cupx)
     source_state = build_source_state(
-        cupx=source_version_tag(args.cupx),
+        cupx=cup_tag,
         vac=resolved_vac_date or resolved_vac_root,
         vac_at=at_zip_date or at_zip_url,
         vac_de=de_vac_date or de_vac_root,
@@ -331,6 +332,13 @@ def main() -> None:
         ),
         contributions=contributions_fingerprint(root / "contributions"),
     )
+    # Record the cache's AIRAC-cycle identity and drop prior-cycle artifacts (CI keys the source
+    # download cache on this file — see build-data-pack.yml — so it re-saves only on a cycle roll).
+    write_source_versions(raw_dir, {
+        "at": at_zip_date, "de": de_vac_date, "sia": resolved_vac_date,
+        "it": it_vac_fingerprint, "cup": cup_tag,
+    })
+    prune_source_cache(raw_dir, at_zip_date=at_zip_date, de_vac_date=de_vac_date, vac_date=resolved_vac_date)
     if args.state_url and not args.force_full:
         if source_states_match(read_previous_state(args.state_url), source_state):
             print(f"No source changes since last build (schema {PACK_SCHEMA_VERSION}); skipping rebuild.", file=sys.stderr)
@@ -403,7 +411,7 @@ def main() -> None:
             zip_url=at_zip_url, at_vac_date=at_zip_date, raw_dir=raw_dir)))
     if de_vac_root:
         importer_specs.append(("de_vac", import_de_vac_pdfs, dict(
-            root_chapter_url=de_vac_root, de_vac_date=de_vac_date)))
+            root_chapter_url=de_vac_root, de_vac_date=de_vac_date, raw_dir=raw_dir)))
     if it_vac_dir:
         importer_specs.append(("it_charts", import_it_chart_pdfs, dict(
             charts_dir=it_vac_dir, it_vac_date=it_vac_date)))
@@ -411,7 +419,8 @@ def main() -> None:
         importer_specs.append(("vac", import_vac_pdfs, dict(
             vac_root=resolved_vac_root, vac_date=resolved_vac_date,
             airport_index=airport_index, runway_index=runway_index,
-            frequency_index=frequency_index, extra_codes=extra_codes, pack_id=args.pack_id)))
+            frequency_index=frequency_index, extra_codes=extra_codes, pack_id=args.pack_id,
+            raw_dir=raw_dir)))
 
     # VAC imports (FR/AT/DE/IT) and streckenflug are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
@@ -567,31 +576,112 @@ def main() -> None:
     )
 
 
+# All source downloads route through one on-disk cache so a full rebuild triggered by ONE
+# changed source does not re-fetch the others (e.g. a streckenflug edit must not re-pull the
+# 450 MB Austrian AIP ZIP or re-crawl the DFS tree). The cache dir (raw_dir) is persisted across
+# CI runs; see the "Restore/Save source download cache" steps in build-data-pack.yml.
+SOURCE_CACHE_TTL_S = 20 * 3600  # a daily cron always revalidates; intra-day rebuilds reuse.
+
+
+def _cache_meta_path(cache_path: Path) -> Path:
+    return cache_path.with_name(cache_path.name + ".meta.json")
+
+
+def _read_response(response: Any, on_progress=None) -> bytes:
+    content_length = response.headers.get("Content-Length")
+    total = int(content_length) if content_length and content_length.isdigit() else 0
+    chunks: list[bytes] = []
+    downloaded = 0
+    while True:
+        chunk = response.read(1024 * 256)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        downloaded += len(chunk)
+        if on_progress:
+            on_progress(downloaded, total)
+    return b"".join(chunks)
+
+
+def cached_http_get(
+    url: str,
+    cache_path: Path,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: int = 120,
+    versioned: bool = False,
+    ttl_s: float = SOURCE_CACHE_TTL_S,
+    on_progress=None,
+) -> bytes:
+    """GET `url`, reusing the on-disk copy at `cache_path` when it is still valid.
+
+    Sources whose URL (or cache path) already pins the content version pass versioned=True: an
+    existing cache file is then authoritative and NO request is made — correct for the AT ZIP
+    (cycle in the filename), the DFS crawl and ENAV charts (cycle in the URL), and the SIA PDFs
+    (cycle in the cache path). Stable-URL sources (OpenAIP, the CUP guide, the OurAirports CSVs)
+    leave it False: the cache is reused for free within `ttl_s` of the last fetch, and past that
+    a conditional GET (stored ETag/Last-Modified) reuses it on 304. Bytes are always returned; a
+    `.meta.json` sidecar records the validators and fetch time."""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path = _cache_meta_path(cache_path)
+    meta: dict[str, Any] = {}
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text("utf-8"))
+        except Exception:  # noqa: BLE001 - a corrupt sidecar just forces a refetch
+            meta = {}
+
+    if cache_path.is_file():
+        if versioned:
+            return cache_path.read_bytes()
+        if time.time() - float(meta.get("fetched_at", 0)) < ttl_s:
+            return cache_path.read_bytes()
+
+    request_headers = dict(headers or {})
+    request_headers.setdefault("User-Agent", "MeetTheCows/0.7")
+    if cache_path.is_file() and not versioned:  # revalidate cheaply past the TTL
+        if meta.get("etag"):
+            request_headers["If-None-Match"] = meta["etag"]
+        if meta.get("last_modified"):
+            request_headers["If-Modified-Since"] = meta["last_modified"]
+
+    request = urllib.request.Request(url, headers=request_headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = _read_response(response, on_progress)
+            new_meta = {
+                "url": url,
+                "etag": response.headers.get("ETag", ""),
+                "last_modified": response.headers.get("Last-Modified", ""),
+                "fetched_at": time.time(),
+            }
+    except urllib.error.HTTPError as error:
+        if error.code == 304 and cache_path.is_file():
+            meta["fetched_at"] = time.time()
+            meta_path.write_text(json.dumps(meta))
+            return cache_path.read_bytes()
+        raise
+    cache_path.write_bytes(data)
+    meta_path.write_text(json.dumps(new_meta))
+    return data
+
+
 def read_bytes(url_or_path: str, raw_dir: Path) -> bytes:
     if re.match(r"^https?://", url_or_path):
         target = raw_dir / Path(urllib.parse.urlparse(url_or_path).path).name
-        request = urllib.request.Request(url_or_path, headers={"User-Agent": "MeetTheCows/0.4"})
-        print(f"Downloading {url_or_path}", file=sys.stderr)
-        chunks: list[bytes] = []
-        with urllib.request.urlopen(request, timeout=120) as response:
-            content_length = response.headers.get("Content-Length")
-            total = int(content_length) if content_length and content_length.isdigit() else 0
-            progress = Progress(total, f"Download {target.name}") if total else None
-            downloaded = 0
-            while True:
-                chunk = response.read(1024 * 256)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                downloaded += len(chunk)
-                if progress:
-                    progress.update(downloaded, extra=f"{downloaded / 1024 / 1024:.1f} MB")
-            if progress:
-                progress.done(f"{downloaded / 1024 / 1024:.1f} MB")
-        data = b"".join(chunks)
-        target.write_bytes(data)
-        if not total:
-            print(f"Downloaded {target.name}: {len(data) / 1024 / 1024:.1f} MB", file=sys.stderr)
+        print(f"Fetching {url_or_path}", file=sys.stderr)
+        progress_box: list[Progress] = []
+
+        def on_progress(downloaded: int, total: int) -> None:
+            if not progress_box and total:
+                progress_box.append(Progress(total, f"Download {target.name}"))
+            if progress_box:
+                progress_box[0].update(downloaded, extra=f"{downloaded / 1024 / 1024:.1f} MB")
+
+        data = cached_http_get(url_or_path, target, headers={"User-Agent": "MeetTheCows/0.4"},
+                               on_progress=on_progress)
+        if progress_box:
+            progress_box[0].done(f"{len(data) / 1024 / 1024:.1f} MB")
         return data
     return Path(url_or_path).read_bytes()
 
@@ -602,6 +692,38 @@ def read_text(url_or_path: str, raw_dir: Path) -> str:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return data.decode("latin-1")
+
+
+SOURCE_VERSIONS_FILE = ".source-versions.json"
+
+
+def write_source_versions(raw_dir: Path, versions: dict[str, str]) -> None:
+    """Record the AIRAC-cycle markers of the cached sources. CI keys the source-download cache
+    on this file's hash (see build-data-pack.yml), so the cache is re-saved only when a cycle
+    actually rolls — a rebuild triggered by a volatile source (streckenflug, a contribution)
+    reuses the restored downloads and saves nothing."""
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    (raw_dir / SOURCE_VERSIONS_FILE).write_text(
+        json.dumps({k: v for k, v in sorted(versions.items())}, indent=2), encoding="utf-8")
+
+
+def prune_source_cache(raw_dir: Path, *, at_zip_date: str = "", de_vac_date: str = "",
+                       vac_date: str = "") -> None:
+    """Drop versioned download artifacts from earlier AIRAC cycles so the persisted cache stays
+    roughly one cycle in size (one 450 MB AT ZIP, not one per cycle ever seen)."""
+    def digits(value: str) -> str:
+        return re.sub(r"[^0-9]", "", value or "")
+
+    keep_zip = f"at_aip_{digits(at_zip_date) or 'current'}.zip"
+    for path in raw_dir.glob("at_aip_*.zip"):
+        if path.name != keep_zip:
+            path.unlink(missing_ok=True)
+    for parent, keep in ((raw_dir / "vac-fr", digits(vac_date) or "nodate"),
+                         (raw_dir / "de", digits(de_vac_date) or "nocycle")):
+        if parent.is_dir():
+            for child in parent.iterdir():
+                if child.is_dir() and child.name != keep:
+                    shutil.rmtree(child, ignore_errors=True)
 
 
 # --- Incremental build (Level 0): fingerprint the sources to skip unchanged rebuilds ---
@@ -1489,7 +1611,6 @@ def read_json(source: str, raw_dir: Path) -> Any:
 
 
 def read_json_url(url: str, cache_path: Path, *, api_key: str = "") -> Any:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
     api_key = (api_key or "").strip().strip('"').strip("'")
     headers = {"User-Agent": "MeetTheCows/0.5"}
     if api_key:
@@ -1497,10 +1618,10 @@ def read_json_url(url: str, cache_path: Path, *, api_key: str = "") -> Any:
         # x-openaip-client-id, so send both; do not put the key in the URL.
         headers["x-openaip-api-key"] = api_key
         headers["x-openaip-client-id"] = api_key
-    request = urllib.request.Request(url, headers=headers)
+    # OpenAIP is a live DB with stable URLs, so cached_http_get revalidates it (ETag/304) and
+    # reuses within the TTL — an intra-day rebuild no longer re-pulls every airport page.
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            raw = response.read()
+        raw = cached_http_get(url, cache_path, headers=headers)
     except urllib.error.HTTPError as error:
         body = ""
         try:
@@ -1515,7 +1636,6 @@ def read_json_url(url: str, cache_path: Path, *, api_key: str = "") -> Any:
                 f"x-openaip-client-id. HTTP {error.code}. Response: {body}"
             ) from error
         raise
-    cache_path.write_bytes(raw)
     return json.loads(raw.decode("utf-8"))
 
 
@@ -2226,17 +2346,29 @@ DE_MONTHS = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
              "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
 
 
-def _fetch_de_vac(url: str) -> tuple[bytes, str]:
+def _fetch_de_vac(url: str, cache_dir: Path | None = None) -> tuple[bytes, str]:
     """(body, final_url) with a browser UA; separate function so tests can stub it.
 
     Retries transient failures: the full crawl is ~1,250 requests, and a single connection
-    reset should cost one retry, not an aerodrome's charts until the next weekly rebuild."""
+    reset should cost one retry, not an aerodrome's charts until the next weekly rebuild.
+    When `cache_dir` is given (the crawl, never the redirect-following resolve probe), the body
+    is cached by URL — BasicVFR URLs embed the AIRAC cycle (…/2026JUN25/…), so a cached copy is
+    authoritative until the cycle rolls and the URLs change."""
+    cache_path: Path | None = None
+    if cache_dir is not None:
+        cache_path = cache_dir / (re.sub(r"[^A-Za-z0-9]+", "_", url)[-120:] + ".bin")
+        if cache_path.is_file():
+            return cache_path.read_bytes(), url
     last_error: Exception | None = None
     for attempt in range(3):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": DE_VAC_UA})
             with urllib.request.urlopen(request, timeout=60) as response:
-                return response.read(), response.geturl()
+                body, final_url = response.read(), response.geturl()
+            if cache_path is not None:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_bytes(body)
+            return body, final_url
         except Exception as error:  # noqa: BLE001
             last_error = error
             time.sleep(1 + attempt)
@@ -2276,16 +2408,17 @@ def resolve_de_vac_root(spec: str) -> tuple[str, str]:
         return "", ""
 
 
-def crawl_de_chart_pages(root_chapter_url: str, wanted: set[str]) -> dict[str, list[str]]:
+def crawl_de_chart_pages(root_chapter_url: str, wanted: set[str],
+                         cache_dir: Path | None = None) -> dict[str, list[str]]:
     """ICAO -> ordered chart-page URLs for the wanted aerodromes (AD -> letters -> aerodromes)."""
-    root_html, _ = _fetch_de_vac(root_chapter_url)
+    root_html, _ = _fetch_de_vac(root_chapter_url, cache_dir)
     links = parse_de_links(root_html.decode("utf-8", "replace"))
     ad_href = next((h for h, t in links if "AD Flugplätze" in t or ("AD" in t.split() and "Aerodromes" in t)), None)
     if not ad_href:
         print("DE VAC: AD chapter not found on the root page", file=sys.stderr)
         return {}
     ad_url = urllib.parse.urljoin(root_chapter_url, ad_href)
-    ad_html, _ = _fetch_de_vac(ad_url)
+    ad_html, _ = _fetch_de_vac(ad_url, cache_dir)
 
     pages: dict[str, list[str]] = {}
     letter_links = [(h, t) for h, t in parse_de_links(ad_html.decode("utf-8", "replace"))
@@ -2293,7 +2426,7 @@ def crawl_de_chart_pages(root_chapter_url: str, wanted: set[str]) -> dict[str, l
     for letter_href, _letter in letter_links:
         letter_url = urllib.parse.urljoin(ad_url, letter_href)
         try:
-            letter_html, _ = _fetch_de_vac(letter_url)
+            letter_html, _ = _fetch_de_vac(letter_url, cache_dir)
         except Exception as error:  # noqa: BLE001
             print(f"DE VAC: letter page failed ({error}); continuing", file=sys.stderr)
             continue
@@ -2303,7 +2436,7 @@ def crawl_de_chart_pages(root_chapter_url: str, wanted: set[str]) -> dict[str, l
                 continue
             code = code_match.group(1)
             try:
-                airfield_html, _ = _fetch_de_vac(urllib.parse.urljoin(letter_url, airfield_href))
+                airfield_html, _ = _fetch_de_vac(urllib.parse.urljoin(letter_url, airfield_href), cache_dir)
             except Exception as error:  # noqa: BLE001
                 print(f"DE VAC: {code} folder failed ({error}); continuing", file=sys.stderr)
                 continue
@@ -2341,6 +2474,7 @@ def import_de_vac_pdfs(
     de_vac_date: str,
     max_vac: int,
     restrict_codes: set[str] | None = None,
+    raw_dir: Path | None = None,
 ) -> int:
     """Crawl BasicVFR and attach one assembled chart PDF per existing DE airfield. Idempotent:
     fields already carrying a VAC doc are skipped and assembled PDFs on disk are reused.
@@ -2354,8 +2488,11 @@ def import_de_vac_pdfs(
               and any(not has_vac_doc(f) for f in by_code[code])}
     if not wanted:
         return 0
+    # BasicVFR pages/PDFs are cached by URL for the current cycle so a rebuild does not re-crawl
+    # the whole ~1,250-request tree; a new cycle changes the URLs and misses the cache.
+    de_cache = (raw_dir / "de" / (re.sub(r"[^0-9]", "", de_vac_date) or "nocycle")) if raw_dir else None
     already = {code for code in wanted if (docs_dir / f"{code}.pdf").is_file()}
-    chart_pages = crawl_de_chart_pages(root_chapter_url, wanted - already) if wanted - already else {}
+    chart_pages = crawl_de_chart_pages(root_chapter_url, wanted - already, de_cache) if wanted - already else {}
     candidates = sorted(set(chart_pages) | already)
     progress = Progress(len(candidates), "DE VAC PDFs")
     downloaded = 0
@@ -2367,7 +2504,7 @@ def import_de_vac_pdfs(
         newly_written = not (docs_dir / f"{code}.pdf").is_file()
         if newly_written:
             try:
-                page_htmls = [_fetch_de_vac(url)[0] for url in chart_pages[code]]
+                page_htmls = [_fetch_de_vac(url, de_cache)[0] for url in chart_pages[code]]
                 if not de_pages_to_pdf(page_htmls, docs_dir / f"{code}.pdf"):
                     errors += 1
                     progress.update(index, extra=f"{code}: no chart images | ok {downloaded}, err {errors}", force=True)
@@ -2507,11 +2644,16 @@ def import_vac_pdfs(
     extra_codes: set[str],
     pack_id: str,
     restrict_codes: set[str] | None = None,
+    raw_dir: Path | None = None,
 ) -> dict[str, int]:
     downloaded = 0
     created_airfields = 0
     vac_root = vac_root.rstrip("/")
     by_code = index_fields_by_code(fields)
+    # Persistent per-cycle cache of the optimized PDFs (docs_dir is wiped and rebuilt each run,
+    # but the SIA charts for one AIRAC cycle never change) so a rebuild reuses them instead of
+    # re-downloading every French field. The cycle date is in the path, so a new cycle misses.
+    fr_cache_dir = (raw_dir / "vac-fr" / (re.sub(r"[^0-9]", "", vac_date) or "nodate")) if raw_dir else None
 
     candidate_codes = {code for code in (set(by_code.keys()) | extra_codes) if ICAO_FR_RE.match(code)}
     if airport_index:
@@ -2533,36 +2675,42 @@ def import_vac_pdfs(
             progress.update(index - 1, extra=f"downloaded {downloaded}, created {created_airfields}, skipped limit", force=True)
             break
         target = docs_dir / f"{code}.pdf"
-        newly_written = not target.is_file()
-        if newly_written:
-            url = f"{vac_root}/AD-2.{code}.pdf"
-            try:
-                request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.4"})
-                with urllib.request.urlopen(request, timeout=30) as response:
-                    content_type = response.headers.get("Content-Type", "").lower()
-                    if response.status != 200 or ("pdf" not in content_type and not url.lower().endswith(".pdf")):
+        if target.is_file():
+            # Second attach pass within this build: reuse the PDF pass 1 already produced.
+            data = target.read_bytes()
+        else:
+            cache_pdf = (fr_cache_dir / f"{code}.pdf") if fr_cache_dir else None
+            if cache_pdf and cache_pdf.is_file():
+                data = cache_pdf.read_bytes()  # cross-run reuse for this cycle: no network
+            else:
+                url = f"{vac_root}/AD-2.{code}.pdf"
+                try:
+                    request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.4"})
+                    with urllib.request.urlopen(request, timeout=30) as response:
+                        content_type = response.headers.get("Content-Type", "").lower()
+                        if response.status != 200 or ("pdf" not in content_type and not url.lower().endswith(".pdf")):
+                            misses += 1
+                            progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
+                            continue
+                        data = response.read()
+                    data = optimize_pdf_bytes(data, code)
+                except urllib.error.HTTPError as error:
+                    if error.code in {403, 404}:
                         misses += 1
-                        progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
-                        continue
-                    data = response.read()
-                data = optimize_pdf_bytes(data, code)
-            except urllib.error.HTTPError as error:
-                if error.code in {403, 404}:
-                    misses += 1
-                else:
+                    else:
+                        errors += 1
+                        progress.update(index, extra=f"{code}: HTTP {error.code} | ok {downloaded}, miss {misses}, err {errors}", force=True)
+                    progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
+                    continue
+                except Exception as error:
                     errors += 1
-                    progress.update(index, extra=f"{code}: HTTP {error.code} | ok {downloaded}, miss {misses}, err {errors}", force=True)
-                progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
-                continue
-            except Exception as error:
-                errors += 1
-                progress.update(index, extra=f"{code}: {error} | ok {downloaded}, miss {misses}, err {errors}", force=True)
-                continue
+                    progress.update(index, extra=f"{code}: {error} | ok {downloaded}, miss {misses}, err {errors}", force=True)
+                    continue
+                if cache_pdf:
+                    cache_pdf.parent.mkdir(parents=True, exist_ok=True)
+                    cache_pdf.write_bytes(data)
             target.write_bytes(data)
             downloaded += 1
-        else:
-            # Second attach pass: reuse the PDF the first pass already downloaded and optimized.
-            data = target.read_bytes()
         pdf_frequencies = extract_frequencies_from_pdf_bytes(data, source="SIA VAC PDF")
         media = {
             "type": "pdf",
