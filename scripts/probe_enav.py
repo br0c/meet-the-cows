@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""CI probe v3: extract the ENAV eAIP document tree from the frameset TOC.
+"""CI probe v4: extract the ENAV eAIP document tree from eAIP/menu.html.
 
-v2 established the layout: each cycle root is a classic EUROCONTROL eAIP frameset
-(index.html -> menu.js + toc-frameset.html), and default.html lists the published cycles.
-v3 pulls menu.js / toc-frameset.html and summarizes the chart tree — aerodrome codes,
-chart-type names, and sample PDF paths — so the fetcher can enumerate without guessing.
-Runs only in GitHub Actions with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD; prints structure
-and statuses, never credentials.
+v3 narrowed it down: menu.js/commands.js are IDS AIRNAV UI helpers, and toc-frameset.html
+frames point at eAIP/menu.html — that's the actual TOC. v4 pulls it and summarizes the chart
+tree — aerodrome codes, chart-type basenames, sample branches — so the fetcher can enumerate
+without guessing. Runs only in GitHub Actions with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD;
+prints structure and statuses, never credentials.
 """
 from __future__ import annotations
 
@@ -31,7 +30,8 @@ def fetch(ctx, url: str) -> tuple[int, bytes]:
 def summarize_tree(text: str) -> None:
     """Dump the shape of whatever document tree the file encodes: PDF paths grouped by
     aerodrome, distinct chart basenames, and a couple of full sample branches."""
-    pdf_refs = re.findall(r"['\"]([^'\"]{4,220}?\.pdf)['\"]", text, re.I)
+    pdf_refs = [re.sub(r"\?.*$", "", p)
+                for p in re.findall(r"['\"]([^'\"]{4,260}?\.pdf(?:\?[^'\"]{0,120})?)['\"]", text, re.I)]
     print(f"  {len(pdf_refs)} .pdf refs, {len(set(pdf_refs))} unique")
     decoded = [urllib.parse.unquote(p.replace("\\\\", "/").replace("\\", "/")) for p in set(pdf_refs)]
     ad_refs = [p for p in decoded if "/AD_2" in p or "AD_2" in p]
@@ -84,7 +84,7 @@ def main() -> int:
             pass
         print("logged in")
 
-        for name in ("menu.js", "toc-frameset.html", "commands.js", "amendments.js"):
+        for name in ("eAIP/menu.html", "commands.html"):
             url = f"{BASE}/{name}"
             print(f"== {name} ==")
             try:
@@ -93,16 +93,13 @@ def main() -> int:
                 if status != 200:
                     continue
                 text = body.decode("utf-8", "replace")
-                if name.endswith(".html"):
-                    for m in re.findall(r'(?:src|href)="([^"]{2,160})"', text):
-                        print("   ->", m)
-                    # frames may point at further TOC pages worth pulling next round
-                    continue
                 if ".pdf" in text.lower():
                     summarize_tree(text)
-                else:
-                    # No PDFs: show the first identifiers so we learn the file's role.
-                    print("  no .pdf refs; head:", " ".join(text[:400].split())[:380])
+                hrefs = re.findall(r'href="([^"]{2,200})"', text)
+                non_pdf = [h for h in hrefs if ".pdf" not in h.lower()]
+                print(f"  {len(hrefs)} hrefs total, {len(non_pdf)} non-pdf; sample non-pdf:")
+                for h in non_pdf[:25]:
+                    print("   ->", h)
             except Exception as error:
                 print(f"  ERR {error}")
 
