@@ -607,6 +607,34 @@ def test_extract_streckenflug_list_versions():
     assert bp.extract_streckenflug_list_versions(changed) != pairs
 
 
+def test_prune_translation_cache_to_used():
+    # Simulate a build that used two keys; a third (say, a dropped source's note) is unused.
+    bp._TRANSLATION_CACHE = {
+        "en\x1fGrass runway": "Grass runway",
+        "de\x1fGrass runway": "Graspiste",
+        "en\x1fCow pasture, soft after rain": "Cow pasture, soft after rain",  # streckenflug-only
+    }
+    bp._TRANSLATION_KEYS_USED = {"en\x1fGrass runway", "de\x1fGrass runway"}
+    removed = bp.prune_translation_cache_to_used()
+    assert removed == 1
+    assert set(bp._TRANSLATION_CACHE) == {"en\x1fGrass runway", "de\x1fGrass runway"}
+    assert "en\x1fGrass runway" in bp._TRANSLATION_CACHE  # survivors keep their translation
+
+    # Guard: an empty used-set (short-circuit / no translation) must NEVER wipe the cache.
+    bp._TRANSLATION_CACHE = {"en\x1fx": "x", "de\x1fy": "y"}
+    bp._TRANSLATION_KEYS_USED = set()
+    assert bp.prune_translation_cache_to_used() == 0
+    assert len(bp._TRANSLATION_CACHE) == 2
+
+
+def test_localize_records_used_keys():
+    bp._TRANSLATION_KEYS_USED = set()
+    bp._TRANSLATION_CACHE = {"en\x1fGrass": "Grass"}  # pre-cached -> no DeepL call
+    out, _ = bp.localize_note_cached("Grass", "en")
+    assert out == "Grass"
+    assert "en\x1fGrass" in bp._TRANSLATION_KEYS_USED  # lookup was recorded
+
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

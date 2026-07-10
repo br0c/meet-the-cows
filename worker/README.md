@@ -52,6 +52,24 @@ The bucket stays **private**. Photo originals are served by this Worker's
 pack build and reviewers fetch it like any https URL, credential-free). Repo backups under
 `repo-backups/` are not reachable from outside at all. No S3 API keys exist anywhere.
 
+### Translation-cache archive (`GET`/`PUT /translation-cache-archive`)
+
+A single private R2 object (`archive/translation-cache.json`) that parks the DeepL translation
+cache off-repo — used when a data source is temporarily de-licensed and its cached translations
+must leave the public tree but shouldn't be re-paid for later. Bearer-token gated with the
+`ARCHIVE_TOKEN` secret; stored under `archive/`, which the public `GET /originals/` route never
+exposes. Generate a token (`openssl rand -hex 32`), set it as the secret, then:
+
+```bash
+# Store the current cache (run once before pruning it out of the build):
+curl -fsS -X PUT "$WORKER_URL/translation-cache-archive" \
+  -H "Authorization: Bearer $ARCHIVE_TOKEN" \
+  --data-binary @data/translation-cache.json
+# Restore it later (when the source is re-licensed):
+curl -fsS "$WORKER_URL/translation-cache-archive" \
+  -H "Authorization: Bearer $ARCHIVE_TOKEN" -o data/translation-cache.json
+```
+
 ### Bug reports (`POST /bug`)
 
 The app's Settings → "Report a bug" form posts here (Turnstile-gated like contributions);
@@ -64,6 +82,7 @@ account. This requires one extra permission on the `GITHUB_TOKEN` fine-grained P
 ```bash
 npx wrangler secret put GITHUB_TOKEN      # fine-grained PAT, see scopes below
 npx wrangler secret put TURNSTILE_SECRET  # Cloudflare Turnstile secret (optional while prototyping)
+npx wrangler secret put ARCHIVE_TOKEN     # random bearer token for /translation-cache-archive
 ```
 
 **`GITHUB_TOKEN`** — a *fine-grained* personal access token (or a GitHub App installation token)

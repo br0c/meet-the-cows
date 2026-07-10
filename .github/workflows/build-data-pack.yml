@@ -180,6 +180,11 @@ jobs:
           # (stable id — the Alps pack was split into alps-west/alps-east in schema 14).
           PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/fr/state.json
           FORCE_FULL: ${{ steps.mode.outputs.force_full }}
+          # streckenflug.at is dropped pending redistribution permission, so reduce the persisted
+          # translation cache to the entries the remaining sources use — their landout notes leave
+          # every published + committed copy, with no re-translation of what stays. Remove this
+          # once --include-streckenflug returns.
+          PRUNE_TRANSLATION_CACHE: "1"
         run: |
           # Keep .cache/_multi/raw (the restored source-download cache); only the pack output
           # and the site staging are rebuilt from scratch each run.
@@ -187,13 +192,13 @@ jobs:
 
           # Multi-pack: one merged, translated build sliced into FR/CH/DE/IT/AT + Alps. Country
           # lists are forced to all build countries by --multi-pack, so they are not passed here.
+          # NOTE: --include-streckenflug intentionally removed — streckenflug.at data must not be
+          # redistributed until they grant permission. Restore the flag when that happens.
           python scripts/build_pack.py \
             --multi-pack \
             --out data/packs \
             --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
             --airfield-source openaip \
-            --include-streckenflug \
-            --streckenflug-workers 8 \
             --vac-root auto \
             --vac-date auto \
             --at-vac-root auto \

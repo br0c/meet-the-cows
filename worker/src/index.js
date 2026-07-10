@@ -16,6 +16,11 @@ export default {
   async fetch(request, env) {
     const origin = resolveOrigin(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors(origin) });
+    // Private, token-gated stash for the DeepL translation cache (GET to restore, PUT to store),
+    // so it can live off-repo while a data source is de-licensed and be pulled back later.
+    if (new URL(request.url).pathname === '/translation-cache-archive') {
+      return await handleArchive(request, env, origin);
+    }
     if (request.method === 'GET') return serveOriginal(request, env);
     if (request.method !== 'POST') return json(origin, 405, { error: 'Use POST.' });
     try {
@@ -347,6 +352,44 @@ async function serveOriginal(request, env) {
       'Access-Control-Allow-Origin': '*',
     },
   });
+}
+
+// Constant-time string compare so the archive token check does not leak via timing.
+function timingSafeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// GET/PUT /translation-cache-archive: a single private R2 object holding the DeepL translation
+// cache. Bearer-token gated (ARCHIVE_TOKEN secret) and stored under archive/, which serveOriginal
+// never exposes — so the cache can be parked off-repo while a source is de-licensed and pulled
+// back verbatim once it is re-licensed, without re-spending the capped DeepL quota.
+const ARCHIVE_KEY = 'archive/translation-cache.json';
+
+async function handleArchive(request, env, origin) {
+  if (!env.ORIGINALS) return json(origin, 503, { error: 'Storage not configured.' });
+  const token = env.ARCHIVE_TOKEN || '';
+  const auth = request.headers.get('Authorization') || '';
+  const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!token || !timingSafeEqual(presented, token)) {
+    return json(origin, 401, { error: 'Unauthorized.' });
+  }
+  if (request.method === 'GET') {
+    const object = await env.ORIGINALS.get(ARCHIVE_KEY);
+    if (!object) return json(origin, 404, { error: 'No archive stored yet.' });
+    return new Response(object.body, {
+      headers: { ...cors(origin), 'Content-Type': 'application/json' },
+    });
+  }
+  if (request.method === 'PUT') {
+    const body = await request.arrayBuffer();
+    if (!body.byteLength) return json(origin, 400, { error: 'Empty body.' });
+    await env.ORIGINALS.put(ARCHIVE_KEY, body, { httpMetadata: { contentType: 'application/json' } });
+    return json(origin, 200, { ok: true, key: ARCHIVE_KEY, bytes: body.byteLength });
+  }
+  return json(origin, 405, { error: 'Use GET or PUT.' });
 }
 
 const BACKUP_PREFIX = 'repo-backups/';

@@ -137,6 +137,11 @@ _DEEPL_CHARS_SPENT = 0
 # once tripped, deepl_translate returns None so callers fall back to the offline dictionary.
 _DEEPL_BUDGET_CHARS: int | None = None
 _TRANSLATION_CACHE: dict[str, str] = {}
+# Every cache key a build actually looks up. When PRUNE_TRANSLATION_CACHE is set, the saved cache
+# is reduced to exactly this set, so entries only a now-dropped source needed (e.g. streckenflug
+# landout notes) fall out — no re-translation, and the persisted cache carries no dropped-source
+# text — while never re-spending DeepL on the entries that survive.
+_TRANSLATION_KEYS_USED: set[str] = set()
 _TRANSLATION_CACHE_PATH: Path | None = None
 _TRANSLATION_STATS: dict[str, int] = {"deepl": 0, "cache": 0, "fallback": 0}
 # Serialises DeepL access: streckenflug scraping runs on many worker threads, and concurrent
@@ -153,7 +158,8 @@ _DEEPL_LOCK = threading.Lock()
 # v13: Austrian AD 2 chart PDFs (Austro Control eAIP) attached to AT airfields.
 # v14: Italian ENAV charts attached to IT airfields; Alps pack split into West/East halves.
 # v15: second chart-attach pass so streckenflug-only airfields get their AT/DE/IT charts.
-PACK_SCHEMA_VERSION = 15
+# v16: streckenflug.at data dropped pending redistribution permission (fields + notes/photos).
+PACK_SCHEMA_VERSION = 16
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -500,6 +506,12 @@ def main() -> None:
     # field ids line up with the published pack.
     contrib_notes, contrib_photos = merge_contributions(fields, root / "contributions", media_dir)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
+
+    # All localization is done. When enabled (e.g. after dropping a source), reduce the cache to
+    # the entries this build actually used, so a de-licensed source's cached translations leave
+    # every published + committed copy without re-spending DeepL on the ones that remain.
+    if os.environ.get("PRUNE_TRANSLATION_CACHE", "").strip() not in ("", "0", "false", "False"):
+        prune_translation_cache_to_used()
 
     generated_at = dt.datetime.now(dt.UTC).isoformat()
     version = source_state_version(source_state)
@@ -3525,6 +3537,7 @@ def localize_note_cached(text: str, lang: str) -> tuple[str, str]:
     DeepL key degrades gracefully instead of dropping notes.
     """
     key = f"{lang}\x1f{normalize_space(text)}"
+    _TRANSLATION_KEYS_USED.add(key)
     with _DEEPL_LOCK:
         cached = _TRANSLATION_CACHE.get(key)
         if cached is not None:
@@ -3583,6 +3596,7 @@ def localize_note_reusing_segments(text: str, lang: str) -> str:
     reassembled in order; a single-line note falls straight through to the line translator.
     """
     whole_key = f"{lang}\x1f{normalize_space(text)}"
+    _TRANSLATION_KEYS_USED.add(whole_key)
     with _DEEPL_LOCK:
         hit = _TRANSLATION_CACHE.get(whole_key)
     if hit is not None:
@@ -3964,6 +3978,24 @@ def load_translation_cache(path: Path) -> None:
                 _TRANSLATION_CACHE = {str(k): str(v) for k, v in loaded.items()}
     except Exception as error:  # noqa: BLE001
         print(f"translation cache load failed: {error}", file=sys.stderr)
+
+
+def prune_translation_cache_to_used() -> int:
+    """Drop every cache entry this build did not look up, keeping only the surviving sources'
+    translations (no re-translation). Guarded: with an empty used-set — a short-circuited or
+    non-translating run — it does nothing, so it can never wipe the cache. Returns entries removed.
+    """
+    global _TRANSLATION_CACHE
+    if not _TRANSLATION_KEYS_USED:
+        print("cache prune skipped: no translations were used this run (nothing to prune against)",
+              file=sys.stderr)
+        return 0
+    before = len(_TRANSLATION_CACHE)
+    _TRANSLATION_CACHE = {k: v for k, v in _TRANSLATION_CACHE.items() if k in _TRANSLATION_KEYS_USED}
+    removed = before - len(_TRANSLATION_CACHE)
+    print(f"cache pruned to used keys: kept {len(_TRANSLATION_CACHE):,}, removed {removed:,}",
+          file=sys.stderr)
+    return removed
 
 
 def save_translation_cache() -> None:
