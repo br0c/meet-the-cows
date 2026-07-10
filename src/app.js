@@ -1,4 +1,4 @@
-const APP_VERSION = '0.7.4-beta';
+const APP_VERSION = '0.7.5-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -148,7 +148,7 @@ const STRINGS = {
     hideC: 'Hide C fields', hideD: 'Hide D fields',
     cdNote: 'C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.',
     colName: 'Name', colDist: 'Dist', colGlide: 'Glide', colDiff: 'Diff',
-    shown: 'Shown', noFields: 'No fields loaded.',
+    fieldsLoaded: 'Fields', noFields: 'No fields loaded.',
     waitingGps: 'Waiting for GPS. Enable location permission.',
     airfield: 'Airfield', field: 'Field', outlanding: 'Outlanding',
     footerNote: 'Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.',
@@ -208,7 +208,6 @@ const STRINGS = {
     cJpegOnly: 'Please choose a JPEG photo.',
     cNeedContent: 'Add a note or a photo.', cNeedTurnstile: 'Please complete the anti-spam check.',
     suggestField: 'Suggest a new field',
-    nfTitle: 'Suggest a new field',
     nfIntro: 'Propose a field missing from the packs — a maintainer reviews every proposal before it is published.',
     nfName: 'Field name', nfKind: 'Type', nfCountry: 'Country',
     nfCoords: 'Coordinates (decimal degrees)', nfLat: 'Latitude', nfLon: 'Longitude',
@@ -249,7 +248,7 @@ const STRINGS = {
     hideC: 'Masquer les terrains C', hideD: 'Masquer les terrains D',
     cdNote: "Les terrains C et D sont masqués par défaut. Ils sont difficiles et potentiellement dangereux — recommandés uniquement en dernier recours d'urgence.",
     colName: 'Nom', colDist: 'Dist', colGlide: 'Finesse', colDiff: 'Diff',
-    shown: 'Affichés', noFields: 'Aucun terrain chargé.',
+    fieldsLoaded: 'Terrains', noFields: 'Aucun terrain chargé.',
     waitingGps: 'En attente du GPS. Autorisez la localisation.',
     airfield: 'Aérodrome', field: 'Terrain', outlanding: 'Vache',
     footerNote: "Pas pour la navigation principale. Distance/finesse à vol d'oiseau uniquement : ni vent, ni descendance, ni relief, ni espace aérien.",
@@ -309,7 +308,6 @@ const STRINGS = {
     cJpegOnly: 'Veuillez choisir une photo JPEG.',
     cNeedContent: 'Ajoutez une note ou une photo.', cNeedTurnstile: 'Veuillez compléter la vérification anti-spam.',
     suggestField: 'Proposer un nouveau terrain',
-    nfTitle: 'Proposer un nouveau terrain',
     nfIntro: 'Proposez un terrain absent des packs — chaque proposition est relue par un mainteneur avant publication.',
     nfName: 'Nom du terrain', nfKind: 'Type', nfCountry: 'Pays',
     nfCoords: 'Coordonnées (degrés décimaux)', nfLat: 'Latitude', nfLon: 'Longitude',
@@ -350,7 +348,7 @@ const STRINGS = {
     hideC: 'C-Felder ausblenden', hideD: 'D-Felder ausblenden',
     cdNote: 'C- und D-Felder sind standardmäßig ausgeblendet. Sie sind schwierig und möglicherweise gefährlich — nur als letzte Notfalloption empfohlen.',
     colName: 'Name', colDist: 'Dist', colGlide: 'Gleit', colDiff: 'Diff',
-    shown: 'Angezeigt', noFields: 'Keine Felder geladen.',
+    fieldsLoaded: 'Felder', noFields: 'Keine Felder geladen.',
     waitingGps: 'Warte auf GPS. Standortzugriff erlauben.',
     airfield: 'Flugplatz', field: 'Feld', outlanding: 'Außenlandung',
     footerNote: 'Nicht zur primären Navigation. Nur Luftlinie/Gleitzahl: kein Wind, kein Sinken, keine Geländefreiheit, kein Luftraum.',
@@ -410,7 +408,6 @@ const STRINGS = {
     cJpegOnly: 'Bitte ein JPEG-Foto wählen.',
     cNeedContent: 'Notiz oder Foto hinzufügen.', cNeedTurnstile: 'Bitte die Anti-Spam-Prüfung abschließen.',
     suggestField: 'Neues Feld vorschlagen',
-    nfTitle: 'Neues Feld vorschlagen',
     nfIntro: 'Schlage ein Feld vor, das in den Paketen fehlt — jeder Vorschlag wird vor der Veröffentlichung geprüft.',
     nfName: 'Feldname', nfKind: 'Typ', nfCountry: 'Land',
     nfCoords: 'Koordinaten (Dezimalgrad)', nfLat: 'Breitengrad', nfLon: 'Längengrad',
@@ -595,14 +592,15 @@ function activePackIds() {
   // An explicitly empty selection is honoured (the app works GPS-only, no offline data). The
   // first-pack fallback only kicks in when the stored ids no longer exist in packs.json.
   if (Array.isArray(stored) && stored.length === 0) return [];
+  const isAlps = id => id === 'alps' || String(id).startsWith('alps-');
   const available = id => state.packs.some(p => p.id === id);
   let chosen = (stored || []).filter(available);
-  if (!chosen.length && (stored || []).some(id => id === 'alps' || String(id).startsWith('alps-'))) {
+  if ((stored || []).some(id => isAlps(id) && !available(id)) && !chosen.some(isAlps)) {
     // Alps split transition: the app shell and the pack index deploy minutes apart, so the
     // stored Alps ids may not exist in the published packs.json yet (new app, old index) or
-    // anymore (old app, new index). Fall back to whichever Alps flavour is published rather
-    // than silently switching the pilot to the first pack in the list.
-    chosen = ['alps-west', 'alps-east', 'alps'].filter(available);
+    // anymore (old app, new index). Substitute whichever Alps flavour is published — for
+    // mixed selections too — rather than silently dropping the pilot's Alps coverage.
+    chosen = [...chosen, ...['alps-west', 'alps-east', 'alps'].filter(available)];
   }
   return chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
 }
@@ -624,7 +622,11 @@ function manifestUrlForPack(pack) {
 // pack it came from so its media/docs resolve against the right pack directory.
 async function loadSelectedPacks({ cacheMode = 'no-cache' } = {}) {
   const ids = activePackIds();
-  state.settings.packIds = ids;
+  // Persist the resolved selection but KEEP stored ids that merely aren't in the currently
+  // published index — during a deploy window (or after a rollback) overwriting them would
+  // permanently destroy the pilot's selection; kept ids resolve again once the index updates.
+  const unavailable = (state.settings.packIds || []).filter(id => !state.packs.some(p => p.id === id));
+  state.settings.packIds = [...new Set([...ids, ...unavailable])];
   saveSettings();
 
   if (!ids.length) {
@@ -820,9 +822,15 @@ function scheduleRender() {
   if (renderTimer !== null) return;
   renderTimer = window.setTimeout(() => {
     renderTimer = null;
-    // A GPS tick must not rebuild the search input mid-typing — replacing the focused input
-    // makes the phone keyboard flicker. Refresh the status strip and result list in place
-    // instead (same pattern as the download bar); everything else waits for the next render.
+    // A GPS tick must not rebuild an open form — a full render would wipe everything the
+    // pilot typed into the contribute/new-field/bug dialog and orphan its Turnstile widget.
+    // Refresh the status strip in place and leave the rest for the next real render.
+    if (state.contribFor || state.showNewField || state.showBugReport) {
+      updateStatusStrip();
+      return;
+    }
+    // Same idea mid-typing in the search box — replacing the focused input makes the phone
+    // keyboard flicker. Refresh the status strip and result list in place instead.
     const search = document.querySelector('#fieldSearch');
     if (search && document.activeElement === search) {
       updateStatusStrip();
@@ -917,15 +925,16 @@ function render() {
 }
 
 function renderStatus() {
-  const pos = state.position;
-  const altitude = activeAltitudeM();
-  const age = pos ? `${Math.round((Date.now() - pos.timestamp) / 1000)} s` : '—';
+  // Deliberately minimal: a green/red dot instead of live accuracy/fix-age text. The old
+  // per-second readouts forced constant re-renders that twice broke open forms and the
+  // search keyboard; the detail (accuracy, error) lives in the dot's tooltip/aria-label.
+  const ok = state.gpsStatus === 'ok';
+  const label = escapeHtml(gpsLabel());
   return `
     <div class="gps-strip">
-      <span><strong>GPS</strong> ${escapeHtml(gpsLabel())}</span>
+      <span title="${label}"><strong>GPS</strong> <span class="gps-dot ${ok ? 'ok' : 'bad'}" role="img" aria-label="${label}"></span></span>
       <span><strong>Alt</strong> ${altitudeLabel()}</span>
-      <span><strong>Fix</strong> ${age}</span>
-      <span><strong>${t('shown')}</strong> ${state.computedRows.length}/${state.fields.length}</span>
+      <span><strong>${t('fieldsLoaded')}</strong> ${state.fields.length}</span>
     </div>
   `;
 }
@@ -1002,7 +1011,9 @@ function renderUpdateBanner() {
 
 function renderSettingsPage() {
   const activeIds = new Set(activePackIds());
-  const packList = state.packs.map(p => {
+  // Hidden packs (e.g. the transitional whole-Alps alias kept for old cached shells) stay
+  // resolvable but are not offered in the picker.
+  const packList = state.packs.filter(p => !p.hidden).map(p => {
     const count = typeof p.fieldsCount === 'number' ? `${p.fieldsCount} ${t('fieldsWord')}` : '';
     return `<label class="pack-option">
         <input type="checkbox" class="packCheck" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
@@ -1409,10 +1420,44 @@ async function stageContribPhotos(form, files, coordsProvider) {
     if (!isLive()) return;
     if (longEdge != null && longEdge < CONTRIB_MIN_LONG_EDGE) { contribShowError(t('cTooSmall', CONTRIB_MIN_LONG_EDGE)); continue; }
     const target = coordsProvider();
-    form.photos.push({ blob, name, geo: contribGeoHint(target?.lat, target?.lon, exifGps) });
+    // exifGps is kept so the new-field form can re-verdict photos when the coordinates change.
+    form.photos.push({ blob, name, exifGps, geo: contribGeoHint(target?.lat, target?.lon, exifGps) });
   }
   const input = document.querySelector('#cPhoto');
   if (input) input.value = ''; // re-picking the same file must fire `change` again
+  renderContribPhotoList(form);
+}
+
+// Forms live in module state (contribForm/newFieldForm) precisely so a re-render cannot lose
+// them; these two helpers close the DOM half of that promise. Every input/change lands in
+// form.values, and after any full render the wire functions put the values, the staged photo
+// list, and a fresh Turnstile widget back — so nothing the pilot entered silently disappears
+// (or worse, gets submitted invisibly).
+function trackFormValues(form) {
+  const body = document.querySelector('#contribBody');
+  if (!body) return;
+  const save = e => {
+    const el = e.target;
+    if (!form || !el || !el.id) return;
+    if (!form.values) form.values = {};
+    form.values[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+  };
+  body.addEventListener('input', save);
+  body.addEventListener('change', save);
+}
+
+function restoreFormState(form) {
+  for (const [id, value] of Object.entries(form.values || {})) {
+    const el = document.querySelector(`#${id}`);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!value;
+    else el.value = value;
+  }
+  // A re-render destroys the widget's DOM while the stale widget id survives; reset it so
+  // ensureTurnstile mounts a fresh one (tokens are single-use anyway).
+  if (form.turnstileWidget != null && !document.querySelector('#cTurnstile')?.childElementCount) {
+    form.turnstileWidget = null;
+  }
   renderContribPhotoList(form);
 }
 
@@ -1594,9 +1639,9 @@ function renderNewField() {
   const countries = ['FR', 'CH', 'DE', 'IT', 'AT'];
   return `
     <div class="detail-backdrop contrib-backdrop" id="newFieldBackdrop">
-      <article class="detail contrib" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('nfTitle'))}">
+      <article class="detail contrib" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('suggestField'))}">
         <button id="closeNewField">${t('close')}</button>
-        <div class="detail-title-row"><h2>${escapeHtml(t('nfTitle'))}</h2></div>
+        <div class="detail-title-row"><h2>${escapeHtml(t('suggestField'))}</h2></div>
         <div class="detail-meta">${escapeHtml(t('nfIntro'))}</div>
         <div id="contribBody" class="contrib-form">
           <label for="nfName">${t('nfName')}</label>
@@ -1663,8 +1708,13 @@ function closeNewField() {
 }
 
 function newFieldCoords() {
-  const lat = Number(document.querySelector('#nfLat')?.value);
-  const lon = Number(document.querySelector('#nfLon')?.value);
+  // A blank number input reads '' and Number('') is 0 — a half-filled pair must not validate
+  // as a field on the equator/prime meridian, so each axis is required to be non-blank.
+  const latRaw = (document.querySelector('#nfLat')?.value ?? '').trim();
+  const lonRaw = (document.querySelector('#nfLon')?.value ?? '').trim();
+  if (latRaw === '' || lonRaw === '') return null;
+  const lat = Number(latRaw);
+  const lon = Number(lonRaw);
   const plausible = Number.isFinite(lat) && Number.isFinite(lon)
     && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && (lat !== 0 || lon !== 0);
   return plausible ? { lat, lon } : null;
@@ -1741,16 +1791,33 @@ function wireNewFieldForm() {
     const lonInput = document.querySelector('#nfLon');
     if (latInput) latInput.value = state.position.latitude.toFixed(5);
     if (lonInput) lonInput.value = state.position.longitude.toFixed(5);
+    // Programmatic .value changes fire no input event: persist + re-verdict explicitly.
+    if (!newFieldForm.values) newFieldForm.values = {};
+    newFieldForm.values.nfLat = latInput?.value ?? '';
+    newFieldForm.values.nfLon = lonInput?.value ?? '';
     contribShowError('');
     updateNewFieldValidity();
+    refreshPhotoGeo();
   });
   document.querySelector('#cPhotoBtn')?.addEventListener('click', () => document.querySelector('#cPhoto')?.click());
   document.querySelector('#cPhoto')?.addEventListener('change', e => stageContribPhotos(newFieldForm, e.target.files, newFieldCoords));
+  // Coordinate edits also refresh each staged photo's advisory geo verdict — a photo added
+  // before the coordinates were typed must not keep its 'no location' marker forever.
+  const refreshPhotoGeo = () => {
+    if (!newFieldForm) return;
+    const target = newFieldCoords();
+    for (const p of newFieldForm.photos) p.geo = contribGeoHint(target?.lat, target?.lon, p.exifGps || null);
+    renderContribPhotoList(newFieldForm);
+  };
   for (const id of ['nfName', 'nfLat', 'nfLon']) {
-    document.querySelector(`#${id}`)?.addEventListener('input', updateNewFieldValidity);
+    document.querySelector(`#${id}`)?.addEventListener('input', () => {
+      updateNewFieldValidity();
+      if (id !== 'nfName') refreshPhotoGeo();
+    });
   }
   document.querySelector('#cLicense')?.addEventListener('change', updateNewFieldValidity);
   document.querySelector('#cSubmit')?.addEventListener('click', submitNewField);
+  if (newFieldForm) { trackFormValues(newFieldForm); restoreFormState(newFieldForm); }
   if (newFieldForm && newFieldForm.turnstileWidget == null) {
     ensureTurnstile(() => {
       const holder = document.querySelector('#cTurnstile');
@@ -1886,6 +1953,7 @@ function wireContribForm(field) {
   document.querySelector('#cDesc')?.addEventListener('input', updateContribValidity);
   document.querySelector('#cLicense')?.addEventListener('change', updateContribValidity);
   document.querySelector('#cSubmit')?.addEventListener('click', () => submitContribution(field));
+  if (contribForm) { trackFormValues(contribForm); restoreFormState(contribForm); }
   if (contribForm && contribForm.turnstileWidget == null) {
     ensureTurnstile(() => {
       const holder = document.querySelector('#cTurnstile');

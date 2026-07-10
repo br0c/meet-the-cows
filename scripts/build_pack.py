@@ -475,21 +475,27 @@ def main() -> None:
         fields.extend(streckenflug_fields)
         # Streckenflug introduces ICAO-coded airfields (e.g. LIPB Bolzano, LIDA Asiago) that did
         # not exist when the concurrent chart imports indexed the field list — a second,
-        # incremental attach pass gives those late fields their charts too. The importers are
-        # idempotent (fields already carrying a VAC doc are skipped, chart files on disk are
-        # reused), so this pass only pays for the genuinely new codes.
-        if at_zip_url:
-            at_chart_count += import_at_chart_pdfs(
-                fields=fields, zip_url=at_zip_url, docs_dir=docs_dir,
-                at_vac_date=at_zip_date, raw_dir=raw_dir, max_vac=args.max_vac)
-        if de_vac_root:
-            de_vac_count += import_de_vac_pdfs(
-                fields=fields, root_chapter_url=de_vac_root, docs_dir=docs_dir,
-                de_vac_date=de_vac_date, max_vac=args.max_vac)
-        if it_vac_dir:
-            it_chart_count += import_it_chart_pdfs(
-                fields=fields, charts_dir=it_vac_dir, docs_dir=docs_dir,
-                it_vac_date=it_vac_date, max_vac=args.max_vac)
+        # incremental attach pass gives those late fields their charts too. It is scoped to the
+        # codes streckenflug actually added (otherwise the DE importer would re-crawl the whole
+        # BasicVFR portal for the permanently chartless codes on every build), and the importers
+        # are idempotent: chart files on disk are reused and only NEW PDFs count.
+        late_codes = {clean(f.get("code")).upper() for f in streckenflug_fields if clean(f.get("code"))}
+        if late_codes:
+            if at_zip_url:
+                at_chart_count += import_at_chart_pdfs(
+                    fields=fields, zip_url=at_zip_url, docs_dir=docs_dir,
+                    at_vac_date=at_zip_date, raw_dir=raw_dir, max_vac=args.max_vac,
+                    restrict_codes=late_codes)
+            if de_vac_root:
+                de_vac_count += import_de_vac_pdfs(
+                    fields=fields, root_chapter_url=de_vac_root, docs_dir=docs_dir,
+                    de_vac_date=de_vac_date, max_vac=args.max_vac,
+                    restrict_codes=late_codes)
+            if it_vac_dir:
+                it_chart_count += import_it_chart_pdfs(
+                    fields=fields, charts_dir=it_vac_dir, docs_dir=docs_dir,
+                    it_vac_date=it_vac_date, max_vac=args.max_vac,
+                    restrict_codes=late_codes)
 
     # Drop major airports / military bases (any source) before translating or merging: a glider
     # must not land there, and they otherwise dominate the pinned "best options" list.
@@ -869,6 +875,7 @@ def write_pack(
         "id": pack_def["id"],
         "name": display_name,
         "names": names,
+        "hidden": bool(pack_def.get("hidden")),
         "version": version,
         "generatedAt": generated_at,
         "isSample": False,
@@ -904,6 +911,7 @@ def write_packs_index(manifests: list[dict[str, Any]], out_root: Path) -> None:
                 "id": m["id"],
                 "name": m["name"],
                 "names": m.get("names"),
+                "hidden": bool(m.get("hidden")),
                 "manifestUrl": f"packs/{m['id']}/manifest.json",
                 "sizeBytes": m["sizeBytes"],
                 "fieldsCount": m["fieldsCount"],
@@ -2126,21 +2134,29 @@ def import_at_chart_pdfs(
     at_vac_date: str,
     raw_dir: Path,
     max_vac: int,
+    restrict_codes: set[str] | None = None,
 ) -> int:
     """Attach real Austrian charts (aerodrome chart + visual/VFR charts, merged per aerodrome)
     from the complete-AIP ZIP. Only ~16 of our airfields have published charts; the rest keep
     just their AD 2 data sheet. Idempotent: fields already carrying a VAC doc are skipped and
-    chart files already on disk are reused, so a second attach pass is cheap."""
+    chart files already on disk are reused. `restrict_codes` scopes a second attach pass to the
+    codes a late field source introduced. Returns the number of NEW chart PDFs written (attach
+    rounds that only reuse an existing PDF for a late twin are not counted)."""
     import io
     from pypdf import PdfReader, PdfWriter
+
+    by_code = index_fields_by_code(fields)
+    pending = {code for code, group in by_code.items()
+               if (restrict_codes is None or code in restrict_codes)
+               and any(not has_vac_doc(f) for f in group)}
+    if not pending:
+        return 0
 
     zip_path = raw_dir / f"at_aip_{re.sub(r'[^0-9]', '', at_vac_date) or 'current'}.zip"
     if not zip_path.exists() or zip_path.stat().st_size == 0:
         print(f"AT charts: downloading complete AIP ZIP ({zip_url})", file=sys.stderr)
         _download_at_zip(zip_url, zip_path)
 
-    by_code = index_fields_by_code(fields)
-    pending = {code for code, group in by_code.items() if any(not has_vac_doc(f) for f in group)}
     selected: dict[str, list[tuple[str, str, str]]] = {}
     with zipfile.ZipFile(zip_path) as archive:
         for name in archive.namelist():
@@ -2159,7 +2175,8 @@ def import_at_chart_pdfs(
                 progress.update(index - 1, extra=f"attached {downloaded}, skipped limit", force=True)
                 break
             out_path = docs_dir / f"{code}.pdf"
-            if not out_path.is_file():
+            newly_written = not out_path.is_file()
+            if newly_written:
                 try:
                     # English edition preferred per chart type; numeric order (1-1 first, then 14-x).
                     per_type: dict[str, str] = {}
@@ -2190,7 +2207,8 @@ def import_at_chart_pdfs(
                     continue
                 field["media"].append(dict(media))
                 field.setdefault("docs", {})["vac"] = media["url"]
-            downloaded += 1
+            if newly_written:
+                downloaded += 1
             progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
         progress.done(f"attached {downloaded}, err {errors}")
     return downloaded
@@ -2324,12 +2342,16 @@ def import_de_vac_pdfs(
     docs_dir: Path,
     de_vac_date: str,
     max_vac: int,
+    restrict_codes: set[str] | None = None,
 ) -> int:
     """Crawl BasicVFR and attach one assembled chart PDF per existing DE airfield. Idempotent:
-    fields already carrying a VAC doc are skipped and assembled PDFs on disk are reused, so a
-    second attach pass only crawls the genuinely new codes."""
+    fields already carrying a VAC doc are skipped and assembled PDFs on disk are reused.
+    `restrict_codes` scopes a second attach pass to the codes a late field source introduced —
+    without it the pass would re-crawl the whole portal for the permanently chartless codes.
+    Returns the number of NEW chart PDFs assembled (reuse-only attach rounds are not counted)."""
     by_code = index_fields_by_code(fields)
     wanted = {code for code in by_code if ICAO_DE_RE.match(code)
+              and (restrict_codes is None or code in restrict_codes)
               and not any(is_major_airport(f) for f in by_code[code])
               and any(not has_vac_doc(f) for f in by_code[code])}
     if not wanted:
@@ -2344,7 +2366,8 @@ def import_de_vac_pdfs(
         if max_vac and downloaded >= max_vac:
             progress.update(index - 1, extra=f"downloaded {downloaded}, skipped limit", force=True)
             break
-        if not (docs_dir / f"{code}.pdf").is_file():
+        newly_written = not (docs_dir / f"{code}.pdf").is_file()
+        if newly_written:
             try:
                 page_htmls = [_fetch_de_vac(url)[0] for url in chart_pages[code]]
                 if not de_pages_to_pdf(page_htmls, docs_dir / f"{code}.pdf"):
@@ -2368,7 +2391,8 @@ def import_de_vac_pdfs(
                 continue
             field["media"].append(dict(media))
             field.setdefault("docs", {})["vac"] = media["url"]
-        downloaded += 1
+        if newly_written:
+            downloaded += 1
         progress.update(index, extra=f"{code}: attached | ok {downloaded}, err {errors}")
     progress.done(f"downloaded {downloaded}, err {errors}")
     return downloaded
@@ -2420,15 +2444,18 @@ def import_it_chart_pdfs(
     docs_dir: Path,
     it_vac_date: str,
     max_vac: int,
+    restrict_codes: set[str] | None = None,
 ) -> int:
     """Attach one pre-fetched ENAV chart PDF per existing (non-major) Italian airfield.
 
     Only charts for wanted codes are copied into docs_dir, so aerodromes the packs don't carry —
     and majors that drop_major_airports would remove anyway — never bloat the deployed tree.
     Idempotent: fields already carrying a VAC doc are skipped and optimized PDFs on disk are
-    reused, so a second attach pass only pays for the genuinely new codes."""
+    reused. `restrict_codes` scopes a second attach pass to the codes a late field source
+    introduced. Returns the number of NEW chart PDFs written (reuse-only rounds not counted)."""
     by_code = index_fields_by_code(fields)
     wanted = {code for code in by_code if ICAO_IT_RE.match(code)
+              and (restrict_codes is None or code in restrict_codes)
               and not any(is_major_airport(f) for f in by_code[code])
               and any(not has_vac_doc(f) for f in by_code[code])}
     source_dir = Path(charts_dir)
@@ -2440,7 +2467,8 @@ def import_it_chart_pdfs(
         if max_vac and attached >= max_vac:
             progress.update(index - 1, extra=f"attached {attached}, skipped limit", force=True)
             break
-        if not (docs_dir / f"{code}.pdf").is_file():
+        newly_written = not (docs_dir / f"{code}.pdf").is_file()
+        if newly_written:
             try:
                 data = optimize_pdf_bytes((source_dir / f"{code}.pdf").read_bytes(), label=f"IT {code}")
                 (docs_dir / f"{code}.pdf").write_bytes(data)
@@ -2461,7 +2489,8 @@ def import_it_chart_pdfs(
                 continue
             field["media"].append(dict(media))
             field.setdefault("docs", {})["vac"] = media["url"]
-        attached += 1
+        if newly_written:
+            attached += 1
         progress.update(index, extra=f"{code}: attached | ok {attached}, err {errors}")
     progress.done(f"attached {attached}, err {errors}")
     return attached
@@ -3595,6 +3624,32 @@ def sanitize_id(value: Any) -> str:
     return slug[:48] or "field"
 
 
+def proposal_note(proposed: dict[str, Any]) -> str:
+    """One-line summary of a proposal's structured values — used when the proposal folds into
+    an existing nearby field, so the reviewer-approved data survives in the note."""
+    parts: list[str] = []
+    lat, lon = parse_float(proposed.get("latitude")), parse_float(proposed.get("longitude"))
+    if lat is not None and lon is not None:
+        parts.append(f"@{lat:.5f}, {lon:.5f}")
+    if clean(proposed.get("kind")):
+        parts.append(clean(proposed.get("kind")))
+    if clean(proposed.get("difficulty")):
+        parts.append(f"difficulty {clean(proposed.get('difficulty')).upper()}")
+    if clean(proposed.get("runway")):
+        parts.append(f"Direction: {clean(proposed.get('runway'))}")
+    length, width = parse_float(proposed.get("lengthM")), parse_float(proposed.get("widthM"))
+    if length:
+        parts.append(f"{length:.0f}×{width:.0f} m" if width else f"{length:.0f} m")
+    if clean(proposed.get("surface")):
+        parts.append(f"Surface: {clean(proposed.get('surface'))}")
+    if clean(proposed.get("frequency")):
+        parts.append(clean(proposed.get("frequency")))
+    elevation = parse_float(proposed.get("elevationM"))
+    if elevation is not None:
+        parts.append(f"elev {elevation:.0f} m")
+    return " · ".join(parts)
+
+
 def merge_contributions(fields: list[dict[str, Any]], contrib_dir: Path, media_dir: Path) -> tuple[int, int]:
     """Fold merged community contributions into the pack fields.
 
@@ -3626,6 +3681,12 @@ def merge_contributions(fields: list[dict[str, Any]], contrib_dir: Path, media_d
             if created:
                 notes_added += 1
                 description = ""  # already folded into the new field's base notes
+            else:
+                # Folded into an existing nearby field: the reviewer approved the proposal's
+                # structured data, so it must not vanish — carry it in the note fragment.
+                summary = proposal_note(meta.get("proposed") or {})
+                if summary:
+                    description = "\n".join(filter(None, [description, f"Proposed field data: {summary}"]))
         else:
             field = find_contribution_field(fields, meta)
         if field is None:

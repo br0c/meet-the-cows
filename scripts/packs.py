@@ -111,6 +111,12 @@ PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {"id": "at", "names": {"en": "Austria", "fr": "Autriche", "de": "Österreich"}, "countries": ("AT",)},
     {"id": "alps-west", "names": {"en": "Western Alps", "fr": "Alpes occidentales", "de": "Westalpen"}, "geofence": "alps-west"},
     {"id": "alps-east", "names": {"en": "Eastern Alps", "fr": "Alpes orientales", "de": "Ostalpen"}, "geofence": "alps-east"},
+    # Transitional alias for app shells cached from before the West/East split: those shells
+    # resolve a stored 'alps' selection against packs.json and would otherwise fall back to the
+    # France pack AND persist that, permanently destroying the pilot's Alps selection. Hidden
+    # from the new picker; media is shared, so publishing it costs only the pack's JSON files.
+    # Retire once pre-split shells have died out.
+    {"id": "alps", "names": {"en": "Alps", "fr": "Alpes", "de": "Alpen"}, "geofence": "alps", "hidden": True},
 )
 
 # Every country a build must pull so the packs above can be sliced from one merged field set.

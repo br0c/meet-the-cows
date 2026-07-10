@@ -1,5 +1,30 @@
 [
   {
+    "version": "0.7.5-beta",
+    "date": "2026-07-10",
+    "en": [
+      "New: A simpler status bar — GPS as a green/red dot (details on tap), altitude, and the number of loaded fields",
+      "Fix: A GPS update no longer wipes what you typed into an open contribution, new-field or bug-report form",
+      "Fix: Attached photos and form entries now survive app refreshes while the form stays open",
+      "Fix: The new-field form rejects submissions with a missing latitude or longitude instead of placing the field at 0°",
+      "Fix: If you had the old Alps pack selected, the Western + Eastern Alps packs are now restored reliably — even alongside other packs"
+    ],
+    "fr": [
+      "Nouveau : Une barre d'état simplifiée — GPS en point vert/rouge (détails au toucher), altitude et nombre de terrains chargés",
+      "Correctif : Une mise à jour GPS n'efface plus ce que vous avez saisi dans un formulaire de contribution, de nouveau terrain ou de signalement ouvert",
+      "Correctif : Les photos jointes et les champs saisis survivent désormais aux rafraîchissements de l'app tant que le formulaire est ouvert",
+      "Correctif : Le formulaire de nouveau terrain refuse un envoi sans latitude ou longitude au lieu de placer le terrain à 0°",
+      "Correctif : Si l'ancien pack Alpes était sélectionné, les packs Alpes occidentales + orientales sont maintenant restaurés de façon fiable — même combinés à d'autres packs"
+    ],
+    "de": [
+      "Neu: Eine einfachere Statusleiste — GPS als grüner/roter Punkt (Details beim Antippen), Höhe und Anzahl der geladenen Felder",
+      "Fix: Ein GPS-Update löscht nicht mehr, was du in ein offenes Beitrags-, Neues-Feld- oder Fehlerformular getippt hast",
+      "Fix: Angehängte Fotos und Eingaben überstehen jetzt App-Aktualisierungen, solange das Formular offen ist",
+      "Fix: Das Neues-Feld-Formular lehnt Einsendungen ohne Breiten- oder Längengrad ab, statt das Feld auf 0° zu setzen",
+      "Fix: War das alte Alpen-Paket gewählt, werden die Pakete West- + Ostalpen jetzt zuverlässig wiederhergestellt — auch neben anderen Paketen"
+    ]
+  },
+  {
     "version": "0.7.4-beta",
     "date": "2026-07-10",
     "en": [

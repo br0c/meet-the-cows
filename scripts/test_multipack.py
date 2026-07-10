@@ -159,10 +159,13 @@ class AlpsSplitTests(unittest.TestCase):
             self.assertTrue(field_in_pack(f, self.WEST) or field_in_pack(f, self.EAST), (lat, lon))
 
     def test_registry_replaced_whole_alps(self):
-        ids = {p["id"] for p in PACK_DEFINITIONS}
-        self.assertIn("alps-west", ids)
-        self.assertIn("alps-east", ids)
-        self.assertNotIn("alps", ids)
+        by_id = {p["id"]: p for p in PACK_DEFINITIONS}
+        self.assertIn("alps-west", by_id)
+        self.assertIn("alps-east", by_id)
+        # The whole-Alps pack survives only as a hidden transitional alias for pre-split
+        # cached app shells; the halves are the real offering.
+        self.assertTrue(by_id["alps"].get("hidden"))
+        self.assertFalse(by_id["alps-west"].get("hidden"))
 
 
 if __name__ == "__main__":

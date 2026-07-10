@@ -2,9 +2,10 @@ name: Fetch ENAV charts (QA)
 
 # Manual QA run of scripts/fetch_enav_charts.py: logs in with the repo's ENAV secrets,
 # downloads the selected visual charts and uploads them as a short-lived CI artifact for
-# quality review. This does NOT deploy anything — Italian charts must not ship publicly
-# until ENAV grants redistribution permission. Once it does, the fetch becomes a step of
-# build-data-pack.yml feeding build_pack.py --it-vac-dir.
+# quality review. This does NOT deploy anything — the production fetch lives in
+# build-data-pack.yml, which feeds the same directory to build_pack.py --it-vac-dir.
+# Use this workflow to spot-check portal changes (new AIRAC layout, filter misses) on a
+# handful of aerodromes without paying for a full build.
 on:
   workflow_dispatch:
     inputs:

@@ -95,21 +95,30 @@ class TestImport(unittest.TestCase):
         self.assertEqual(fields[2]["media"], [])  # no chart -> untouched
 
     def test_second_pass_attaches_late_fields_only(self):
-        # Streckenflug fields join the set after the concurrent chart imports ran — the second
-        # pass must attach charts to those late fields without duplicating earlier attaches.
+        # Streckenflug fields join the set after the concurrent chart imports ran — main()
+        # re-runs the importer restricted to the late codes. The return value counts unique
+        # NEW PDFs written: a late twin of an already-imported code reuses the existing file
+        # (still gets media attached) without inflating the count.
         fields = [make_field("LIPB")]
         with tempfile.TemporaryDirectory() as tmp:
             charts = Path(tmp) / "enav"; charts.mkdir()
-            (charts / "LIPB.pdf").write_bytes(make_pdf())
-            (charts / "LIDA.pdf").write_bytes(make_pdf())
+            for code in ("LIPB", "LIDA", "LILH"):
+                (charts / f"{code}.pdf").write_bytes(make_pdf())
             docs = Path(tmp) / "docs" / "vac"; docs.mkdir(parents=True)
             kwargs = dict(charts_dir=str(charts), docs_dir=docs, it_vac_date="", max_vac=0)
             self.assertEqual(build_pack.import_it_chart_pdfs(fields=fields, **kwargs), 1)
             fields.append(make_field("LIPB"))  # late twin of an already-attached code
             fields.append(make_field("LIDA"))  # genuinely new code
-            self.assertEqual(build_pack.import_it_chart_pdfs(fields=fields, **kwargs), 2)
-            for f in fields:
+            fields.append(make_field("LILH"))  # NOT late: the restricted pass must skip it
+            count = build_pack.import_it_chart_pdfs(
+                fields=fields, restrict_codes={"LIPB", "LIDA"}, **kwargs)
+            self.assertEqual(count, 1)  # only LIDA.pdf is new; the LIPB twin reused its file
+            for f in fields[:3]:
                 self.assertEqual(len(f["media"]), 1, f["code"])  # attached exactly once each
+            self.assertEqual(fields[3]["media"], [])  # outside restrict_codes -> untouched
+            # An unrestricted rerun picks up the remaining field and nothing else.
+            self.assertEqual(build_pack.import_it_chart_pdfs(fields=fields, **kwargs), 1)
+            self.assertEqual(len(fields[3]["media"]), 1)
             self.assertEqual(build_pack.import_it_chart_pdfs(fields=fields, **kwargs), 0)
 
     def test_state_includes_it_fingerprint(self):
@@ -166,6 +175,36 @@ class TestFetchHelpers(unittest.TestCase):
         self.assertNotIn(urls[2], selected)
         self.assertNotIn(urls[4], selected)
         self.assertIn(urls[3], selected)
+
+    def test_charts_current_without_browser(self):
+        # The --check-only CI gate: a browserless probe of the public cycle chooser. Anything
+        # short of "cached charts match the portal's cycle" must return False so CI falls back
+        # to the real browser fetch.
+        from unittest import mock
+
+        class FakeResponse:
+            def __init__(self, body): self.body = body
+            def read(self): return self.body
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+
+        cycle = "(A07-26)_2026_07_09"
+        page = f"<a href='eAIP/{cycle}/index.html'>current</a>".encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "LILB.pdf").write_bytes(make_pdf())
+            (out / "manifest.json").write_text(json.dumps(
+                {"cycle": cycle, "fetcherVersion": fetch_enav_charts.FETCHER_VERSION,
+                 "charts": {"LILB": ["AERODROME LANDING CHART.pdf"]}}))
+            with mock.patch("urllib.request.urlopen", return_value=FakeResponse(page)):
+                self.assertTrue(fetch_enav_charts.charts_current_without_browser(out))
+            newer = page.replace(b"(A07-26)_2026_07_09", b"(A08-26)_2026_08_06")
+            with mock.patch("urllib.request.urlopen", return_value=FakeResponse(newer)):
+                self.assertFalse(fetch_enav_charts.charts_current_without_browser(out))
+            with mock.patch("urllib.request.urlopen", return_value=FakeResponse(b"<html>gated</html>")):
+                self.assertFalse(fetch_enav_charts.charts_current_without_browser(out))
+            with mock.patch("urllib.request.urlopen", side_effect=OSError("offline")):
+                self.assertFalse(fetch_enav_charts.charts_current_without_browser(out))
 
     def test_charts_up_to_date_requires_fetcher_version(self):
         cycle = "(A07-26)_2026_07_09"

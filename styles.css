@@ -55,7 +55,7 @@ a { color: var(--accent); }
 .meta-list dd.download-total { font-weight: 650; font-variant-numeric: tabular-nums; }
 .gps-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
   margin-top: 6px;
   color: var(--muted);
@@ -71,6 +71,9 @@ a { color: var(--accent); }
   text-overflow: ellipsis;
 }
 .gps-strip strong { color: var(--text); font-weight: 800; }
+.gps-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: baseline; }
+.gps-dot.ok { background: #22c55e; }
+.gps-dot.bad { background: #ef4444; }
 .main { flex: 1; padding: 8px 8px 80px; }
 .warning { background: #3f2e04; color: #fde68a; border: 1px solid #92400e; border-radius: 12px; padding: 10px; margin: 8px 0; }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #052e2b; color: #99f6e4; border: 1px solid #0f766e; border-radius: 12px; padding: 10px; margin: 8px 0; }
@@ -246,7 +249,6 @@ body.modal-open { overflow: hidden; }
 }
 .contrib-form textarea { resize: vertical; min-height: 76px; }
 .contrib-photo-btn { justify-self: start; }
-.contrib-photo-info { color: var(--muted); font-size: 12px; }
 .contrib-photo-list { display: grid; gap: 6px; }
 .contrib-photo-list:empty { display: none; }
 .contrib-photo-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; font-size: 12px; }
@@ -272,7 +274,6 @@ body.modal-open { overflow: hidden; }
 .contrib-pr { font-weight: 700; }
 
 @media (max-width: 390px) {
-  .gps-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .field-list-head,
   .field-row { grid-template-columns: minmax(0, 1fr) 62px 46px 38px; }
   .field-name { font-size: 13px; }

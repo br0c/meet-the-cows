@@ -115,15 +115,16 @@ jobs:
 
       # Italian charts sit behind ENAV's login, so they are fetched by a Playwright step and
       # handed to the build as a local directory (--it-vac-dir). The directory is cached across
-      # runs: the fetcher checks the portal's current AIRAC cycle and skips the ~250 downloads
-      # when the cache already holds it. An ENAV outage must not sink the nightly build — the
-      # fetch soft-fails and the build then runs without Italian charts (they return with the
-      # next successful fetch).
+      # runs: a browserless --check-only probe compares the portal's current AIRAC cycle against
+      # the cached manifest, and when it matches, the Chromium install AND the ~250 downloads are
+      # both skipped (the common nightly case). An ENAV outage must not sink the nightly build —
+      # the fetch soft-fails and the build then runs without Italian charts (they return with
+      # the next successful fetch).
       - name: Restore ENAV charts cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: .cache/enav-charts
-          key: enav-charts-${{ github.run_id }}-${{ github.run_attempt }}
+          key: enav-charts-${{ hashFiles('.cache/enav-charts/manifest.json') }}
           restore-keys: |
             enav-charts-
 
@@ -133,9 +134,23 @@ jobs:
           ENAV_ACCOUNT_PASSWORD: ${{ secrets.ENAV_ACCOUNT_PASSWORD }}
         run: |
           python -m pip install --quiet playwright
-          python -m playwright install --with-deps chromium
-          python scripts/fetch_enav_charts.py --out .cache/enav-charts \
-            || echo "::warning::ENAV fetch failed; building without Italian charts"
+          if python scripts/fetch_enav_charts.py --check-only --out .cache/enav-charts; then
+            echo "ENAV cache is current for the portal's AIRAC cycle; skipping browser fetch."
+          else
+            python -m playwright install --with-deps chromium
+            python scripts/fetch_enav_charts.py --out .cache/enav-charts \
+              || echo "::warning::ENAV fetch failed; building without Italian charts"
+          fi
+
+      # Save keyed on the manifest hash: unchanged cycle -> same key -> no redundant multi-hundred-
+      # megabyte cache entry each run (the old run_id key saved a new copy every night, evicting
+      # the DeepL translation cache). A fresh fetch changes the manifest, producing a new key.
+      - name: Save ENAV charts cache
+        if: hashFiles('.cache/enav-charts/manifest.json') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/enav-charts
+          key: enav-charts-${{ hashFiles('.cache/enav-charts/manifest.json') }}
 
       - name: Build data pack
         id: build
@@ -176,9 +191,11 @@ jobs:
         if: steps.build.outputs.changed == 'false'
         run: echo "No source changes since the last build; kept the existing deployed pack."
 
-      - name: Smoke test pack
+      - name: Smoke test packs
         if: steps.build.outputs.changed != 'false'
-        run: python scripts/smoke_test_pack.py data/packs/alps-west
+        run: |
+          python scripts/smoke_test_pack.py data/packs/alps-west
+          python scripts/smoke_test_pack.py data/packs/alps-east
 
       # Durable layer 2: commit the updated cache to the repo. Only fires when the build added
       # translations (git diff check), and the commit touches only data/translation-cache.json,

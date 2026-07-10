@@ -29,6 +29,7 @@ import os
 import re
 import sys
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -111,6 +112,27 @@ def charts_up_to_date(out_dir: Path, cycle: str) -> bool:
     return bool(charts) and all((out_dir / f"{code}.pdf").is_file() for code in charts)
 
 
+def charts_current_without_browser(out_dir: Path) -> bool:
+    """Browserless freshness probe for CI: default.html (the cycle chooser, served before the
+    IDCS gate — 'everything past default.html needs the login') is fetched with plain urllib
+    and compared against the cached manifest. Any doubt returns False so the browser path runs."""
+    try:
+        request = urllib.request.Request(f"{PORTAL}/default.html", headers={"User-Agent": "MeetTheCows/0.7"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            text = response.read().decode("utf-8", "replace")
+        cycles = sorted({m.group(0) for m in CYCLE_RE.finditer(text)})
+        cycle = pick_cycle(cycles, dt.date.today())
+        if not cycle:
+            print("check-only: no cycle links found (page gated or changed); fetch needed")
+            return False
+        current = charts_up_to_date(out_dir, cycle)
+        print(f"check-only: cycle {cycle}; charts {'current' if current else 'stale or missing'}")
+        return current
+    except Exception as error:  # noqa: BLE001 - inconclusive probe must fall back to fetching
+        print(f"check-only inconclusive ({error}); fetch needed", file=sys.stderr)
+        return False
+
+
 def login_if_prompted(page, user: str, password: str, wait_ms: int = 8000) -> bool:
     """Complete the Oracle IDCS form if the current navigation landed on it. True when a
     login was performed. Gated URLs redirect to the IDCS domain, so this may need a moment
@@ -149,16 +171,21 @@ def main() -> int:
     parser.add_argument("--codes", default="", help="Optional comma-separated ICAO whitelist; default: every AD_2 aerodrome with visual charts")
     parser.add_argument("--max", type=int, default=0, help="Debug limit on aerodromes; 0 means no limit")
     parser.add_argument("--force", action="store_true", help="Refetch even when the output directory already holds the current cycle")
+    parser.add_argument("--check-only", action="store_true", help="Browserless freshness probe: exit 0 when the cached charts already match the portal's current cycle (CI uses this to skip the Chromium install), 1 when a fetch is needed or the probe is inconclusive")
     args = parser.parse_args()
+
+    codes = {c.strip().upper() for c in args.codes.split(",") if c.strip()} or None
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.check_only:
+        return 0 if charts_current_without_browser(out_dir) else 1
 
     user = os.environ.get("ENAV_ACCOUNT_ID", "")
     password = os.environ.get("ENAV_ACCOUNT_PASSWORD", "")
     if not user or not password:
         print("ERROR: ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD not set", file=sys.stderr)
         return 1
-    codes = {c.strip().upper() for c in args.codes.split(",") if c.strip()} or None
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -244,6 +271,16 @@ def main() -> int:
             print(f"[{index}/{len(targets)}] {code}: {len(chunks)} chart(s)")
 
         browser.close()
+
+    # Degraded-run guard: writing a manifest legitimises the directory for the whole AIRAC
+    # cycle (charts_up_to_date trusts it), so a run where most aerodromes failed — transient
+    # portal errors, or an expired IDCS session serving login pages with zero chart links —
+    # must NOT record itself as complete. Exiting non-zero leaves no manifest, and the next
+    # nightly run refetches everything. ~96 of 97 aerodromes have charts on a healthy run.
+    if not codes and not args.max and len(charts) < 0.8 * max(1, len(targets)):
+        print(f"ERROR: charts for only {len(charts)}/{len(targets)} aerodromes ({errors} hard errors) — "
+              f"refusing to write a truncated manifest; the next run will refetch.", file=sys.stderr)
+        return 1
 
     manifest = {
         "cycle": cycle,
