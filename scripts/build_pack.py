@@ -1992,6 +1992,47 @@ def make_open_airfield_entry(
     }
 
 
+
+def parse_page_spec(spec: str) -> list[int]:
+    """'22-26,49-52' -> [22, 23, 24, 25, 26, 49, 50, 51, 52] (1-based, ordered, deduped)."""
+    pages: list[int] = []
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            pages.extend(range(int(lo), int(hi) + 1))
+        else:
+            pages.append(int(part))
+    seen: set[int] = set()
+    return [p for p in pages if p > 0 and not (p in seen or seen.add(p))]
+
+
+def extract_pdf_pages(data: bytes, spec: str, label: str = "") -> bytes:
+    """A slim PDF with only the listed 1-based pages. Falls back to the original on any error
+    (a bad page spec must not lose the document)."""
+    try:
+        import io
+        from pypdf import PdfReader, PdfWriter
+        reader = PdfReader(io.BytesIO(data))
+        wanted = [p for p in parse_page_spec(spec) if p <= len(reader.pages)]
+        if not wanted:
+            return data
+        writer = PdfWriter()
+        for page_no in wanted:
+            writer.add_page(reader.pages[page_no - 1])
+        out = io.BytesIO()
+        writer.write(out)
+        result = out.getvalue()
+        print(f"pdf pages extracted ({label}): {spec} -> {len(wanted)} pages, "
+              f"{len(data):,} -> {len(result):,} bytes", file=sys.stderr)
+        return result
+    except Exception as error:  # noqa: BLE001
+        print(f"pdf page extraction skipped ({label}): {error}", file=sys.stderr)
+        return data
+
+
 # PDFs above this size get a Ghostscript recompression pass; the result is kept only when it
 # saves at least PDF_OPTIMIZE_MIN_SAVING (already-lean charts pass through untouched, and a
 # missing gs binary just skips the optimization).
@@ -2360,6 +2401,8 @@ def import_airfield_docs(
             data = _fetch_airfield_doc(str(entry["url"]))
             if not data.startswith(b"%PDF"):
                 raise ValueError("not a PDF")
+            if entry.get("pages"):
+                data = extract_pdf_pages(data, str(entry["pages"]), code)
             data = optimize_pdf_bytes(data, code)
         except Exception as error:  # noqa: BLE001 - one dead link must not fail the build
             errors += 1

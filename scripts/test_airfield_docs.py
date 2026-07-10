@@ -108,5 +108,48 @@ class TestImport(unittest.TestCase):
         self.assertNotIn("ivao", json.dumps(entries).lower())  # simulator charts are banned
 
 
+
+
+class TestPageExtraction(unittest.TestCase):
+    def _pdf(self, pages: int) -> bytes:
+        import io
+        from PIL import Image
+        imgs = [Image.new("RGB", (60, 80), (i * 20 % 255, 100, 150)) for i in range(pages)]
+        buf = io.BytesIO()
+        imgs[0].save(buf, "PDF", save_all=True, append_images=imgs[1:])
+        return buf.getvalue()
+
+    def test_parse_page_spec(self):
+        self.assertEqual(build_pack.parse_page_spec("22-24,49"), [22, 23, 24, 49])
+        self.assertEqual(build_pack.parse_page_spec("3,1-2,3"), [3, 1, 2])
+        self.assertEqual(build_pack.parse_page_spec(""), [])
+
+    def test_extract_subset(self):
+        from pypdf import PdfReader
+        import io
+        data = self._pdf(10)
+        out = build_pack.extract_pdf_pages(data, "1-2,7", "T")
+        self.assertEqual(len(PdfReader(io.BytesIO(out)).pages), 3)
+        self.assertLess(len(out), len(data))
+
+    def test_out_of_range_and_garbage_are_soft(self):
+        data = self._pdf(3)
+        self.assertEqual(build_pack.extract_pdf_pages(data, "99", "T"), data)   # nothing valid -> original
+        self.assertEqual(build_pack.extract_pdf_pages(b"not a pdf", "1", "T"), b"not a pdf")
+
+    def test_import_applies_pages(self):
+        fields = [make_field("LSZS")]
+        data = self._pdf(12)
+        build_pack._fetch_airfield_doc = lambda url: data
+        entries = [{"code": "LSZS", "url": "https://op/x.pdf", "pages": "2-4"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir = Path(tmp) / "docs" / "vac"; docs_dir.mkdir(parents=True)
+            count = build_pack.import_airfield_docs(fields=fields, entries=entries, docs_dir=docs_dir, max_vac=0)
+            self.assertEqual(count, 1)
+            from pypdf import PdfReader
+            saved = next((Path(tmp) / "docs" / "briefing").glob("*.pdf"))
+            self.assertEqual(len(PdfReader(str(saved)).pages), 3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
