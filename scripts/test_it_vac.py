@@ -121,21 +121,27 @@ class TestFetchHelpers(unittest.TestCase):
     def test_cycle_date(self):
         self.assertEqual(fetch_enav_charts.cycle_date("(A07-26)_2026_07_09"), "2026-07-09")
 
-    def test_group_visual_charts(self):
+    def test_extract_ad2_pages_prefers_english(self):
+        menu = ("<a href='LI-AD 2 LIPB - BOLZANO 1-it-IT.html#AD-2-LIPB---BOLZANO-1'>x</a>"
+                "<a href='LI-AD 2 LIPB - BOLZANO 1-en-GB.html#AD-2-LIPB---BOLZANO-1'>x</a>"
+                "<a href='LI-AD 2 LIDT - TRENTO Mattarello 1-it-IT.html#AD-2-LIDT'>x</a>"
+                "<a href='LI-AD 1.5 Status-en-GB.html#AD-15'>not an aerodrome</a>")
+        pages = fetch_enav_charts.extract_ad2_pages(menu)
+        self.assertEqual(sorted(pages), ["LIDT", "LIPB"])
+        self.assertEqual(pages["LIPB"], "LI-AD 2 LIPB - BOLZANO 1-en-GB.html")
+        self.assertEqual(pages["LIDT"], "LI-AD 2 LIDT - TRENTO Mattarello 1-it-IT.html")
+
+    def test_select_visual_charts(self):
         base = "https://x/AIP/(A07-26)_2026_07_09/documents/Root/ENAV/Cartografia/AD/AD_2"
         urls = [
             f"{base}/AD_2_PRINCIPALI/LIBF/2-1/AERODROME%20CHART%20ICAO.pdf",
             f"{base}/AD_2_PRINCIPALI/LIBF/5-1/VISUAL%20APPROACH%20CHART.pdf",
             f"{base}/AD_2_PRINCIPALI/LIBF/6-1/SID%20RWY%2033.pdf",              # instrument
             f"{base}/AD_2_MINORI/LIDT/2-1/CARTA%20DI%20AVVICINAMENTO%20A%20VISTA%20(VAC).pdf",
-            "https://x/AIP/(A07-26)_2026_07_09/documents/Root/ENAV/ENR/ENR_6/chart.pdf",  # not AD_2
         ]
-        grouped = fetch_enav_charts.group_visual_charts(urls, None)
-        self.assertEqual(sorted(grouped), ["LIBF", "LIDT"])
-        self.assertEqual(len(grouped["LIBF"]), 2)  # SID excluded
-        self.assertEqual(len(grouped["LIDT"]), 1)
-        only = fetch_enav_charts.group_visual_charts(urls, {"LIDT"})
-        self.assertEqual(sorted(only), ["LIDT"])
+        selected = fetch_enav_charts.select_visual_charts(urls)
+        self.assertEqual(len(selected), 3)  # SID excluded
+        self.assertNotIn(urls[2], selected)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CI probe v6: dump the chart-PDF links of sample AD 2 aerodrome pages.
+"""CI probe v7: locate the minor aerodromes in the eAIP menu.
 
 v5 decoded eAIP/menu.html (11.8MB XHTML, single-quoted hrefs): 107 aerodromes, one AD 2 page
 each ("LI-AD 2 LIPB - BOLZANO 1-it-IT.html"), no PDF links in the menu itself. v6 fetches a
@@ -84,35 +84,33 @@ def main() -> int:
             pass
         print("logged in")
 
-        # v5 decoded the menu: single-quoted hrefs, one AD 2 page per aerodrome, e.g.
-        # href='LI-AD 2 LIPB - BOLZANO 1-it-IT.html#AD-2-LIPB---BOLZANO-1'. The PDFs must be
-        # linked from those pages — fetch a major and a minor one and dump their PDF links.
+        # v6 proved the AD 2 pages carry the chart links, but only 45 certified airports have
+        # such pages while the menu mentions 107 LIxx codes. Find where the rest live.
         print("== menu.html: AD 2 aerodrome pages ==")
         status, body = fetch(ctx, f"{BASE}/eAIP/menu.html")
         menu = body.decode("utf-8", "replace")
         pages: dict[str, str] = {}
         for href, code in re.findall(r"href='(LI-AD 2 (LI[A-Z]{2})[^']*?\.html)#", menu):
             pages.setdefault(code, href)
-        print(f"  {status}: {len(pages)} aerodrome pages; sample: {list(pages.values())[:3]}")
+        print(f"  {status}: {len(pages)} AD 2 pages: {' '.join(sorted(pages))}")
 
-        for code in ("LIPB", "LIDT", "LILH"):
-            href = pages.get(code)
-            print(f"== AD 2 page {code}: {href} ==")
-            if not href:
-                print("  (not in menu)")
+        print("== distinct href section prefixes ==")
+        prefixes = sorted({m.split(" ")[0] + " " + (m.split(" ") + [""])[1]
+                           for m in re.findall(r"href='LI-([^']{2,60}?)(?: \d)?-(?:it-IT|en-GB)\.html", menu)})
+        for p in prefixes[:60]:
+            print("   ", p)
+
+        print("== token census ==")
+        for token in ("Minori", "minori", "Aviosuperfici", "AVIOSUPERFICI", "AD 3", "Eliporti", "AD 1.5"):
+            print(f"  count {token!r}: {menu.count(token)}")
+
+        for code in ("LIDT", "LILH", "LIDA"):
+            pos = menu.find(code)
+            print(f"== menu context around first {code!r} ==")
+            if pos < 0:
+                print("  (absent)")
                 continue
-            try:
-                page_url = f"{BASE}/eAIP/{urllib.parse.quote(href)}"
-                status, body = fetch(ctx, page_url)
-                text = body.decode("utf-8", "replace")
-                print(f"  {status}, {len(body):,}B")
-                pdfs = sorted({re.sub(r"\?.*$", "", m)
-                               for m in re.findall(r"href=['\"]([^'\"]{4,260}?\.pdf(?:\?[^'\"]{0,160})?)['\"]", text, re.I)})
-                print(f"  {len(pdfs)} PDF links:")
-                for p in pdfs[:30]:
-                    print("   ->", urllib.parse.unquote(p))
-            except Exception as error:
-                print(f"  ERR {error}")
+            print("  ", " ".join(menu[max(0, pos - 400):pos + 400].split())[:760])
 
         browser.close()
     return 0

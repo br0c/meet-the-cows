@@ -5,11 +5,14 @@ Runs as its own CI step (Playwright + ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD) a
 the local directory consumed by build_pack.py --it-vac-dir: one merged <ICAO>.pdf per
 aerodrome plus manifest.json {"cycle", "cycleDate", "generatedAt", "charts"}.
 
-How the portal is laid out (mapped by scripts/probe_enav.py v1-v4):
+How the portal is laid out (mapped by scripts/probe_enav.py v1-v6):
  - default.html lists the published AIRAC cycles as anchors "(A07-26)_2026_07_09\\index.html".
- - Each cycle root is an IDS AIRNAV eAIP frameset; the document tree is eAIP/menu.html.
- - Chart PDFs live under documents/Root/ENAV/Cartografia/AD/AD_2/<GROUP>/<ICAO>/<chart-id>/
-   <CHART NAME>.pdf and are only reachable after the Oracle IDCS login.
+ - Each cycle root is an IDS AIRNAV eAIP frameset; the tree is eAIP/menu.html (11.8MB XHTML,
+   single-quoted hrefs) with one AD 2 page per aerodrome: "LI-AD 2 LIPB - BOLZANO 1-it-IT.html"
+   (en-GB variants exist and are preferred for stable English chart names).
+ - The AD 2 pages link the chart PDFs, which live under documents/Root/ENAV/Cartografia/AD/
+   AD_2/<GROUP>/<ICAO>/<chart-id>/<CHART NAME>.pdf; everything past default.html needs the
+   Oracle IDCS login.
 
 Only visual, France-VAC-like charts are kept (aerodrome chart + visual approach); instrument
 procedures are skipped to keep the packs flyable-size. NOTE: ENAV redistribution permission is
@@ -31,7 +34,6 @@ from playwright.sync_api import sync_playwright
 
 PORTAL = "https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP"
 CYCLE_RE = re.compile(r"\((A\d{2}-\d{2})\)_(\d{4})_(\d{2})_(\d{2})")
-ICAO_IT_RE = re.compile(r"/(LI[A-Z]{2})/")
 # France-VAC-like content only: the ICAO aerodrome chart and visual approach/landing charts.
 # Instrument procedures (SID/STAR/IAC), parking and obstacle charts are deliberately excluded.
 WANTED_CHART_RE = re.compile(
@@ -57,33 +59,29 @@ def cycle_date(cycle: str) -> str:
     return f"{match.group(2)}-{match.group(3)}-{match.group(4)}" if match else ""
 
 
-def extract_pdf_links(menu_html: str, menu_url: str) -> list[str]:
-    """Absolute chart-PDF URLs from the eAIP menu, query strings stripped."""
+def extract_ad2_pages(menu_html: str) -> dict[str, str]:
+    """ICAO -> AD 2 page href from the eAIP menu; the en-GB edition wins over it-IT."""
+    pages: dict[str, str] = {}
+    for href, code in re.findall(r"href='(LI-AD 2 (LI[A-Z]{2})[^']*?\.html)#", menu_html):
+        current = pages.get(code)
+        if current is None or ("-en-GB" in href and "-en-GB" not in current):
+            pages[code] = href
+    return pages
+
+
+def extract_pdf_links(page_html: str, page_url: str) -> list[str]:
+    """Absolute chart-PDF URLs from an AD 2 page, query strings stripped."""
     links = []
-    for href in re.findall(r"['\"]([^'\"]{4,300}?\.pdf(?:\?[^'\"]{0,160})?)['\"]", menu_html, re.I):
+    for href in re.findall(r"['\"]([^'\"]{4,300}?\.pdf(?:\?[^'\"]{0,160})?)['\"]", page_html, re.I):
         href = re.sub(r"\?.*$", "", href).replace("\\", "/")
-        links.append(urllib.parse.urljoin(menu_url, href))
+        links.append(urllib.parse.urljoin(page_url, href))
     return sorted(set(links))
 
 
-def group_visual_charts(pdf_urls: list[str], codes: set[str] | None) -> dict[str, list[str]]:
-    """ICAO -> ordered wanted-chart URLs under the AD_2 tree."""
-    by_code: dict[str, list[str]] = {}
-    for url in pdf_urls:
-        decoded = urllib.parse.unquote(url)
-        if "/AD_2" not in decoded:
-            continue
-        code_match = ICAO_IT_RE.search(decoded)
-        if not code_match:
-            continue
-        code = code_match.group(1)
-        if codes and code not in codes:
-            continue
-        name = decoded.rsplit("/", 1)[-1]
-        if not WANTED_CHART_RE.search(name):
-            continue
-        by_code.setdefault(code, []).append(url)
-    return by_code
+def select_visual_charts(pdf_urls: list[str]) -> list[str]:
+    """Keep only the France-VAC-like chart PDFs of one aerodrome page, in stable order."""
+    return [url for url in pdf_urls
+            if WANTED_CHART_RE.search(urllib.parse.unquote(url).rsplit("/", 1)[-1])]
 
 
 def merge_pdfs(chunks: list[bytes]) -> bytes:
@@ -143,22 +141,33 @@ def main() -> int:
                 pass
             print("logged in")
 
-        response = ctx.request.get(menu_url, timeout=60000)
+        response = ctx.request.get(menu_url, timeout=90000)
         if response.status != 200:
             print(f"ERROR: menu.html -> {response.status}", file=sys.stderr)
             return 1
-        pdf_urls = extract_pdf_links(response.body().decode("utf-8", "replace"), menu_url)
-        by_code = group_visual_charts(pdf_urls, codes)
-        print(f"{len(pdf_urls)} PDFs in the menu; {len(by_code)} aerodromes with visual charts")
+        pages = extract_ad2_pages(response.body().decode("utf-8", "replace"))
+        targets = sorted(code for code in pages if not codes or code in codes)
+        print(f"{len(pages)} AD 2 aerodrome pages in the menu; fetching {len(targets)}")
 
         charts: dict[str, list[str]] = {}
         errors = 0
-        for index, code in enumerate(sorted(by_code), start=1):
+        for index, code in enumerate(targets, start=1):
             if args.max and len(charts) >= args.max:
                 break
+            page_url = f"{PORTAL}/{cycle}/eAIP/{urllib.parse.quote(pages[code])}"
+            try:
+                page_res = ctx.request.get(page_url, timeout=90000)
+                if page_res.status != 200:
+                    raise RuntimeError(f"HTTP {page_res.status}")
+                page_html = page_res.body().decode("utf-8", "replace")
+            except Exception as error:  # noqa: BLE001 - one aerodrome must not sink the fetch
+                errors += 1
+                print(f"  {code}: AD 2 page: {error}", file=sys.stderr)
+                continue
+            chart_urls = select_visual_charts(extract_pdf_links(page_html, page_url))
             chunks = []
             names = []
-            for url in by_code[code]:
+            for url in chart_urls:
                 try:
                     res = ctx.request.get(url, timeout=90000)
                     if res.status != 200:
@@ -177,7 +186,7 @@ def main() -> int:
                 print(f"  {code}: merge failed: {error}", file=sys.stderr)
                 continue
             charts[code] = names
-            print(f"[{index}/{len(by_code)}] {code}: {len(chunks)} chart(s)")
+            print(f"[{index}/{len(targets)}] {code}: {len(chunks)} chart(s)")
 
         browser.close()
 
