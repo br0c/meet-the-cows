@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""CI probe v10: find where ENAV publishes the VAC for minor aerodromes.
+"""CI probe v11: full census of chart selection across every AD 2 aerodrome page.
 
-The production fetch attached charts to 28 of 63 eligible Italian fields; aerodromes like
-LILB (Alzate) and LILC (Calcinate del Pesce) have AD 2 pages but no chart matched the visual
-filter, while ENAV does publish a VAC for them in a different tree (owner's report). v10:
- 1. dumps EVERY PDF link on those AD 2 pages (was the name just missed by the filter?);
- 2. maps the portal's other product trees from the public self-briefing page and the portal
-    root, looking for a VFR/VAC product alongside AIP/AIP.
-Runs only in GitHub Actions with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD; prints structure
-and statuses, never credentials.
+v10 found the gap: AD_2_SECONDARI aerodromes name their whole VAC "AERODROME LANDING CHART",
+which the filter missed. With the widened filter, walk ALL AD 2 pages and aggregate (a) how
+many charts each aerodrome would now get and (b) every PDF basename the filter still skips —
+proving the selection is complete before the production refetch. Runs only in GitHub Actions
+with ENAV_ACCOUNT_ID / ENAV_ACCOUNT_PASSWORD; prints structure and statuses, never credentials.
 """
 from __future__ import annotations
 
+import collections
 import datetime as dt
 import os
 import re
@@ -23,19 +21,6 @@ from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).parent))
 import fetch_enav_charts as fec  # noqa: E402
-
-SAMPLE_CODES = ("LILB", "LILC", "LILH")
-SELF_BRIEFING = "https://www.enav.it/en/what-we-do/we-manage-italian-airspace/self-briefing"
-STATIC_ROOT = "https://onlineservices.enav.it/enavWebPortalStatic"
-# Likely product roots next to AIP/AIP (the cycle chooser lives at <product>/default.html).
-ROOT_GUESSES = [
-    f"{STATIC_ROOT}/AIP/VFR/default.html",
-    f"{STATIC_ROOT}/VFR/VFR/default.html",
-    f"{STATIC_ROOT}/VFR/default.html",
-    f"{STATIC_ROOT}/GUIDAVFR/default.html",
-    f"{STATIC_ROOT}/AIP/default.html",
-    f"{STATIC_ROOT}/default.html",
-]
 
 
 def main() -> int:
@@ -50,7 +35,6 @@ def main() -> int:
         ctx = browser.new_context()
         page = ctx.new_page()
 
-        print("== portal entry + login ==")
         page.goto(f"{fec.PORTAL}/default.html", wait_until="domcontentloaded", timeout=60000)
         if fec.login_if_prompted(page, user, password):
             print("logged in (portal entry)")
@@ -63,49 +47,43 @@ def main() -> int:
         if fec.login_if_prompted(page, user, password):
             print("logged in (eAIP)")
 
-        print("== 1. full PDF lists of the sample AD 2 pages ==")
         res = ctx.request.get(menu_url, timeout=90000)
         pages = fec.extract_ad2_pages(res.body().decode("utf-8", "replace"))
-        for code in SAMPLE_CODES:
-            href = pages.get(code)
-            print(f"-- {code}: {href}")
-            if not href:
-                continue
-            page_url = f"{fec.PORTAL}/{cycle}/eAIP/{urllib.parse.quote(href)}"
-            page_res = ctx.request.get(page_url, timeout=90000)
-            if page_res.status != 200:
-                print(f"   page -> HTTP {page_res.status}")
+        print(f"{len(pages)} AD 2 aerodrome pages")
+
+        selected_counts: dict[str, int] = {}
+        skipped: collections.Counter[str] = collections.Counter()
+        subtree: collections.Counter[str] = collections.Counter()
+        errors = 0
+        for code in sorted(pages):
+            page_url = f"{fec.PORTAL}/{cycle}/eAIP/{urllib.parse.quote(pages[code])}"
+            try:
+                page_res = ctx.request.get(page_url, timeout=90000)
+                if page_res.status != 200:
+                    raise RuntimeError(f"HTTP {page_res.status}")
+            except Exception as error:  # noqa: BLE001
+                errors += 1
+                print(f"  {code}: page error {error}")
                 continue
             links = fec.extract_pdf_links(page_res.body().decode("utf-8", "replace"), page_url)
-            print(f"   {len(links)} PDF links (ALL, unfiltered):")
+            charts = set(fec.select_visual_charts(links))
+            selected_counts[code] = len(charts)
             for url in links:
-                print("    ->", urllib.parse.unquote(url))
+                decoded = urllib.parse.unquote(url)
+                m = re.search(r"AD_2/([^/]+)/", decoded)
+                if m:
+                    subtree[m.group(1)] += 1
+                if url not in charts:
+                    skipped[decoded.rsplit("/", 1)[-1]] += 1
 
-        print("== 2. self-briefing product links (public page) ==")
-        try:
-            sb = ctx.request.get(SELF_BRIEFING, timeout=60000)
-            text = sb.body().decode("utf-8", "replace")
-            print(f"   {sb.status}, {len(text):,}B")
-            hrefs = sorted({h for h in re.findall(r'href="([^"]{8,200})"', text)
-                            if "onlineservices" in h or "Static" in h or "vfr" in h.lower()
-                            or "briefing" in h.lower() or "aip" in h.lower()})
-            for h in hrefs[:40]:
-                print("    ->", h)
-        except Exception as error:
-            print(f"   ERR {error}")
-
-        print("== 3. product root guesses ==")
-        for url in ROOT_GUESSES:
-            try:
-                res = ctx.request.get(url, timeout=45000)
-                body = res.body()
-                print(f"   {res.status} {len(body):>9,}B  {url}")
-                if res.status == 200:
-                    text = body.decode("utf-8", "replace")
-                    for h in re.findall(r"href=['\"]([^'\"]{2,160})['\"]", text)[:15]:
-                        print("        ->", h)
-            except Exception as error:
-                print(f"   ERR  {url}: {error}")
+        zero = sorted(c for c, n in selected_counts.items() if n == 0)
+        print(f"\naerodromes with charts: {sum(1 for n in selected_counts.values() if n)}"
+              f" / {len(selected_counts)} (errors {errors})")
+        print(f"zero-chart aerodromes: {' '.join(zero) or '(none)'}")
+        print("AD_2 subtrees seen:", dict(subtree))
+        print(f"\ntop skipped basenames ({len(skipped)} distinct):")
+        for name, count in skipped.most_common(45):
+            print(f"  {count:4d}  {name[:120]}")
 
         browser.close()
     return 0

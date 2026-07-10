@@ -139,11 +139,29 @@ class TestFetchHelpers(unittest.TestCase):
             f"{base}/AD_2_PRINCIPALI/LIBF/2-1/AERODROME%20CHART%20ICAO.pdf",
             f"{base}/AD_2_PRINCIPALI/LIBF/5-1/VISUAL%20APPROACH%20CHART.pdf",
             f"{base}/AD_2_PRINCIPALI/LIBF/6-1/SID%20RWY%2033.pdf",              # instrument
+            f"{base}/AD_2_SECONDARI/LILB/2-1/AERODROME%20LANDING%20CHART.pdf",  # secondari VAC
+            f"{base}/AD_2_PRINCIPALI/LIPB/3-1/AERODROME%20OBSTACLE%20CHART%20-%20TYPE%20B%20ICAO.pdf",
             f"{base}/AD_2_MINORI/LIDT/2-1/CARTA%20DI%20AVVICINAMENTO%20A%20VISTA%20(VAC).pdf",
         ]
         selected = fetch_enav_charts.select_visual_charts(urls)
-        self.assertEqual(len(selected), 3)  # SID excluded
+        self.assertEqual(len(selected), 4)  # SID + obstacle excluded
         self.assertNotIn(urls[2], selected)
+        self.assertNotIn(urls[4], selected)
+        self.assertIn(urls[3], selected)
+
+    def test_charts_up_to_date_requires_fetcher_version(self):
+        cycle = "(A07-26)_2026_07_09"
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "LILB.pdf").write_bytes(make_pdf())
+            manifest = {"cycle": cycle, "fetcherVersion": fetch_enav_charts.FETCHER_VERSION,
+                        "charts": {"LILB": ["AERODROME LANDING CHART.pdf"]}}
+            (out / "manifest.json").write_text(json.dumps(manifest))
+            self.assertTrue(fetch_enav_charts.charts_up_to_date(out, cycle))
+            self.assertFalse(fetch_enav_charts.charts_up_to_date(out, "(A08-26)_2026_08_06"))
+            manifest["fetcherVersion"] = fetch_enav_charts.FETCHER_VERSION - 1
+            (out / "manifest.json").write_text(json.dumps(manifest))
+            self.assertFalse(fetch_enav_charts.charts_up_to_date(out, cycle))
 
 
 if __name__ == "__main__":

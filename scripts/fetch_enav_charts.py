@@ -35,10 +35,15 @@ from playwright.sync_api import sync_playwright
 
 PORTAL = "https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP"
 CYCLE_RE = re.compile(r"\((A\d{2}-\d{2})\)_(\d{4})_(\d{2})_(\d{2})")
-# France-VAC-like content only: the ICAO aerodrome chart and visual approach/landing charts.
-# Instrument procedures (SID/STAR/IAC), parking and obstacle charts are deliberately excluded.
+# Bumped whenever the chart selection changes so a cached charts directory from a previous
+# fetcher revision is refetched even within the same AIRAC cycle.
+FETCHER_VERSION = 2
+# France-VAC-like content only: the ICAO aerodrome chart, the AD_2_SECONDARI aerodromes'
+# "AERODROME LANDING CHART" (their whole VAC), and visual approach charts. Instrument
+# procedures (SID/STAR/IAC), parking and obstacle charts are deliberately excluded
+# ("AERODROME OBSTACLE CHART" does not match: OBSTACLE is not LANDING).
 WANTED_CHART_RE = re.compile(
-    r"(AERODROME\s+CHART|VISUAL\s+APPROACH|AVVICINAMENTO\s+A\s+VISTA|\bVAC\b)", re.I)
+    r"(AERODROME\s+(?:LANDING\s+)?CHART|VISUAL\s+APPROACH|AVVICINAMENTO\s+A\s+VISTA|\bVAC\b)", re.I)
 
 
 def pick_cycle(cycles: list[str], today: dt.date) -> str:
@@ -90,8 +95,9 @@ def select_visual_charts(pdf_urls: list[str]) -> list[str]:
 
 
 def charts_up_to_date(out_dir: Path, cycle: str) -> bool:
-    """True when the output directory already holds this cycle's charts (manifest cycle matches
-    and every chart file exists) — the nightly build can then skip ~250 downloads."""
+    """True when the output directory already holds this cycle's charts fetched by this fetcher
+    revision (manifest cycle + fetcherVersion match and every chart file exists) — the nightly
+    build can then skip ~250 downloads."""
     manifest_path = out_dir / "manifest.json"
     if not manifest_path.is_file():
         return False
@@ -99,7 +105,7 @@ def charts_up_to_date(out_dir: Path, cycle: str) -> bool:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - broken manifest -> refetch
         return False
-    if manifest.get("cycle") != cycle:
+    if manifest.get("cycle") != cycle or manifest.get("fetcherVersion") != FETCHER_VERSION:
         return False
     charts = manifest.get("charts") or {}
     return bool(charts) and all((out_dir / f"{code}.pdf").is_file() for code in charts)
@@ -190,6 +196,14 @@ def main() -> int:
         targets = sorted(code for code in pages if not codes or code in codes)
         print(f"{len(pages)} AD 2 aerodrome pages in the menu; fetching {len(targets)}")
 
+        # A full fetch replaces the directory wholesale so charts withdrawn upstream (or ones a
+        # previous fetcher revision selected differently) cannot linger in the build's cache.
+        # Partial QA runs (--codes/--max) leave existing files alone.
+        if not codes and not args.max:
+            for stale in out_dir.glob("*.pdf"):
+                stale.unlink()
+            (out_dir / "manifest.json").unlink(missing_ok=True)
+
         charts: dict[str, list[str]] = {}
         errors = 0
         for index, code in enumerate(targets, start=1):
@@ -234,6 +248,7 @@ def main() -> int:
     manifest = {
         "cycle": cycle,
         "cycleDate": cycle_date(cycle),
+        "fetcherVersion": FETCHER_VERSION,
         "generatedAt": dt.datetime.now(dt.UTC).isoformat(),
         "charts": charts,
     }
