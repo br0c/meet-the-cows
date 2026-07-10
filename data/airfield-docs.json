@@ -7,6 +7,13 @@
       "caption": "Briefing Segelflug LSZS",
       "source": "Engadin Airport St. Moritz–Samedan (operator briefing)",
       "updatedAt": "2025-07"
+    },
+    {
+      "code": "LSTZ",
+      "url": "https://zweisimmen.aero/wp-content/uploads/2019/07/Einweisungskonzept.pdf",
+      "caption": "Einweisungskonzept LSTZ",
+      "source": "Flugplatz Zweisimmen (operator briefing)",
+      "updatedAt": "2019-07"
     }
   ]
 }

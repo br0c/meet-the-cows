@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.7.2-beta",
+    "date": "2026-07-10",
+    "en": [
+      "New: Official approach charts for Austria — every Austrian airfield now carries its AIP AD chart, updated automatically each AIRAC cycle",
+      "New: Official aerodrome charts for Germany from the free DFS AIP VFR, attached to every German airfield"
+    ],
+    "fr": [
+      "Nouveau : Cartes d'approche officielles pour l'Autriche — chaque terrain autrichien embarque sa carte AD de l'AIP, mise à jour automatiquement à chaque cycle AIRAC",
+      "Nouveau : Cartes d'aérodrome officielles pour l'Allemagne issues de l'AIP VFR gratuite de la DFS, attachées à chaque terrain allemand"
+    ],
+    "de": [
+      "Neu: Offizielle Anflugkarten für Österreich — jeder österreichische Flugplatz trägt jetzt seine AIP-AD-Karte, automatisch aktualisiert mit jedem AIRAC-Zyklus",
+      "Neu: Offizielle Flugplatzkarten für Deutschland aus der kostenlosen DFS AIP VFR, an jedem deutschen Flugplatz hinterlegt"
+    ]
+  },
+  {
     "version": "0.7.1-beta",
     "date": "2026-07-09",
     "en": [

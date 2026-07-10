@@ -41,6 +41,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import subprocess
+import tempfile
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1989,6 +1991,38 @@ def make_open_airfield_entry(
         "media": [],
     }
 
+
+# PDFs above this size get a Ghostscript recompression pass; the result is kept only when it
+# saves at least PDF_OPTIMIZE_MIN_SAVING (already-lean charts pass through untouched, and a
+# missing gs binary just skips the optimization).
+PDF_OPTIMIZE_THRESHOLD = 1_500_000
+PDF_OPTIMIZE_MIN_SAVING = 0.20
+
+
+def optimize_pdf_bytes(data: bytes, label: str = "") -> bytes:
+    if len(data) <= PDF_OPTIMIZE_THRESHOLD or not shutil.which("gs"):
+        return data
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "in.pdf"
+        dst = Path(tmp) / "out.pdf"
+        src.write_bytes(data)
+        try:
+            subprocess.run(
+                ["gs", "-q", "-dNOPAUSE", "-dBATCH", "-dSAFER", "-sDEVICE=pdfwrite",
+                 "-dPDFSETTINGS=/ebook", "-dPassThroughJPEGImages=false",
+                 "-dColorImageResolution=130", "-dGrayImageResolution=130",
+                 "-o", str(dst), str(src)],
+                check=True, timeout=180, capture_output=True)
+            out = dst.read_bytes()
+        except Exception as error:  # noqa: BLE001 - optimization is best-effort
+            print(f"pdf optimize skipped ({label}): {error}", file=sys.stderr)
+            return data
+        if out.startswith(b"%PDF") and len(out) <= len(data) * (1 - PDF_OPTIMIZE_MIN_SAVING):
+            print(f"pdf optimized ({label}): {len(data):,} -> {len(out):,} bytes", file=sys.stderr)
+            return out
+    return data
+
+
 # --- Austria: Austro Control eAIP AD 2 charts -------------------------------------------------
 # The Austrian eAIP publishes one English PDF per aerodrome at a stable, anonymous URL:
 #   {cycle_base}PART_3/AD_2/{PRI|SRY|MIL}/AD_2_<ICAO>/LO_AD_2_<ICAO>_{en|de}.pdf
@@ -2081,7 +2115,7 @@ def import_at_vac_pdfs(
             progress.update(index - 1, extra=f"downloaded {downloaded}, skipped limit", force=True)
             break
         try:
-            data = _fetch_at_vac(ad2_index[code])
+            data = optimize_pdf_bytes(_fetch_at_vac(ad2_index[code]), code)
         except Exception as error:  # noqa: BLE001 - one missing chart must not fail the build
             errors += 1
             progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
@@ -2326,6 +2360,7 @@ def import_airfield_docs(
             data = _fetch_airfield_doc(str(entry["url"]))
             if not data.startswith(b"%PDF"):
                 raise ValueError("not a PDF")
+            data = optimize_pdf_bytes(data, code)
         except Exception as error:  # noqa: BLE001 - one dead link must not fail the build
             errors += 1
             progress.update(index, extra=f"{code}: {error} | ok {downloaded}, err {errors}", force=True)
@@ -2395,6 +2430,7 @@ def import_vac_pdfs(
                     progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
                     continue
                 data = response.read()
+            data = optimize_pdf_bytes(data, code)
         except urllib.error.HTTPError as error:
             if error.code in {403, 404}:
                 misses += 1
