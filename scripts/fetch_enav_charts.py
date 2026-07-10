@@ -34,6 +34,9 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import airac  # noqa: E402 - shared AIRAC cycle policy (scripts/airac.py)
+
 PORTAL = "https://onlineservices.enav.it/enavWebPortalStatic/AIP/AIP"
 CYCLE_RE = re.compile(r"\((A\d{2}-\d{2})\)_(\d{4})_(\d{2})_(\d{2})")
 # Bumped whenever the chart selection changes so a cached charts directory from a previous
@@ -48,17 +51,13 @@ WANTED_CHART_RE = re.compile(
 
 
 def pick_cycle(cycles: list[str], today: dt.date) -> str:
-    """Latest cycle already effective; the earliest future one when none is (mirrors AT)."""
+    """ENAV's '(Axx-yy)_YYYY_MM_DD' names fed through the shared effective-cycle policy."""
     dated = []
     for cycle in cycles:
         match = CYCLE_RE.search(cycle)
         if match:
             dated.append((dt.date(int(match.group(2)), int(match.group(3)), int(match.group(4))), cycle))
-    if not dated:
-        return ""
-    dated.sort()
-    effective = [c for d, c in dated if d <= today]
-    return effective[-1] if effective else dated[0][1]
+    return airac.pick_effective(dated, today)
 
 
 def cycle_date(cycle: str) -> str:

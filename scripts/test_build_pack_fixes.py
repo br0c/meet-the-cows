@@ -514,7 +514,8 @@ def test_merge_new_field_proposal_and_multi_photo():
             assert created["name"] == "Les Crots" and created["kind"] == "outlanding"
             assert created["country"] == "FR" and created["difficulty"] == "B"
             assert created["runwayDirectionDeg"] == 70.0 and created["lengthM"] == 420
-            assert created["id"].startswith("new-les-crots-")
+            # slugify id: underscores, accents folded, deterministic coordinate-hash suffix.
+            assert created["id"].startswith("new_les_crots-")
             assert "Long meadow" in created["notes"]["en"]
             assert "Surface: grass" in created["notes"]["en"]
             assert "Direction: 07/25" in created["notes"]["en"]
@@ -535,6 +536,60 @@ def test_parse_runway_direction():
     assert bp.parse_runway_direction_deg("361") is None
     assert bp.parse_runway_direction_deg("grass") is None
     assert bp.parse_runway_direction_deg("") is None
+    # Streckenflug free-text 'richtung' goes through the same parser since the dedupe.
+    assert bp.parse_runway_direction_deg("Grasbahn 07/25") == 70.0
+    assert bp.parse_runway_direction_deg("N-S") is None
+
+
+def test_import_vac_second_pass_restricted():
+    """The FR (SIA) importer joins the late-fields second pass: restrict_codes scopes the
+    probes, PDFs from pass 1 are reused from disk, and already-attached fields are skipped."""
+    import io
+    import tempfile
+    import urllib.request
+    from unittest import mock
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 60), (5, 10, 15)).save(buf, "PDF")
+    pdf = buf.getvalue()
+
+    class FakeResponse:
+        status = 200
+        headers = {"Content-Type": "application/pdf"}
+        def read(self): return pdf
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+
+    probed = []
+    def fake_urlopen(request, timeout=0):
+        probed.append(request.full_url)
+        return FakeResponse()
+
+    def mk(code):
+        return {"id": f"fr_{code.lower()}", "code": code, "kind": "airfield",
+                "country": "FR", "media": []}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        docs = Path(tmp) / "vac"
+        docs.mkdir()
+        fields = [mk("LFXA")]
+        kwargs = dict(vac_root="https://sia.example/vac", docs_dir=docs, vac_date="2026-07-10",
+                      max_vac=0, airport_index={}, runway_index={}, frequency_index={},
+                      extra_codes=set(), pack_id="fr")
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen):
+            result = bp.import_vac_pdfs(fields=fields, **kwargs)
+            assert result["downloaded"] == 1 and len(fields[0]["media"]) == 1
+            fields.append(mk("LFXA"))  # late twin of an already-attached code
+            fields.append(mk("LFHM"))  # genuinely new late code
+            fields.append(mk("LFNX"))  # not late: the restricted pass must not probe it
+            probed.clear()
+            result = bp.import_vac_pdfs(fields=fields, restrict_codes={"LFXA", "LFHM"}, **kwargs)
+        assert result["downloaded"] == 1, "only the new code's PDF counts as downloaded"
+        assert probed == ["https://sia.example/vac/AD-2.LFHM.pdf"], probed
+        assert [len(f["media"]) for f in fields] == [1, 1, 1, 0]
+        assert fields[1]["docs"]["vac"] == "docs/vac/LFXA.pdf"
 
 
 def test_extract_streckenflug_list_versions():

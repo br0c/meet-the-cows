@@ -52,6 +52,7 @@ from typing import Any, Iterable, Sequence
 # Pack registry + geofence (scripts/packs.py). Ensure this file's directory is importable
 # whether build_pack is run as a script or loaded by path in tests.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import airac  # noqa: E402
 import packs  # noqa: E402
 
 DEFAULT_CUPX_URL = "https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx"
@@ -393,54 +394,35 @@ def main() -> None:
     de_vac_count = 0
     it_chart_count = 0
 
-    # VAC imports (FR + AT) and streckenflug are independent network-heavy tasks after
+    # Chart/VAC importers share one spec list so the parallel first pass and the late-fields
+    # second pass can never drift apart: a chart source added here is automatically part of
+    # both. Per-call kwargs (fields/docs_dir/max_vac/restrict_codes) are applied at call time.
+    importer_specs: list[tuple[str, Any, dict[str, Any]]] = []
+    if at_zip_url:
+        importer_specs.append(("at_charts", import_at_chart_pdfs, dict(
+            zip_url=at_zip_url, at_vac_date=at_zip_date, raw_dir=raw_dir)))
+    if de_vac_root:
+        importer_specs.append(("de_vac", import_de_vac_pdfs, dict(
+            root_chapter_url=de_vac_root, de_vac_date=de_vac_date)))
+    if it_vac_dir:
+        importer_specs.append(("it_charts", import_it_chart_pdfs, dict(
+            charts_dir=it_vac_dir, it_vac_date=it_vac_date)))
+    if resolved_vac_root:
+        importer_specs.append(("vac", import_vac_pdfs, dict(
+            vac_root=resolved_vac_root, vac_date=resolved_vac_date,
+            airport_index=airport_index, runway_index=runway_index,
+            frequency_index=frequency_index, extra_codes=extra_codes, pack_id=args.pack_id)))
+
+    # VAC imports (FR/AT/DE/IT) and streckenflug are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
     # remote source while the others could already be downloading. The importers mutate
-    # disjoint fields (LF vs LO codes), so concurrent attachment is safe.
+    # disjoint fields (LF vs LO/ED/LI codes), so concurrent attachment is safe.
     futures: dict[Any, str] = {}
     with ThreadPoolExecutor(max_workers=4) as executor:
-        if at_zip_url:
+        for importer_name, importer, importer_kwargs in importer_specs:
             futures[executor.submit(
-                import_at_chart_pdfs,
-                fields=fields,
-                zip_url=at_zip_url,
-                docs_dir=docs_dir,
-                at_vac_date=at_zip_date,
-                raw_dir=raw_dir,
-                max_vac=args.max_vac,
-            )] = "at_charts"
-        if de_vac_root:
-            futures[executor.submit(
-                import_de_vac_pdfs,
-                fields=fields,
-                root_chapter_url=de_vac_root,
-                docs_dir=docs_dir,
-                de_vac_date=de_vac_date,
-                max_vac=args.max_vac,
-            )] = "de_vac"
-        if it_vac_dir:
-            futures[executor.submit(
-                import_it_chart_pdfs,
-                fields=fields,
-                charts_dir=it_vac_dir,
-                docs_dir=docs_dir,
-                it_vac_date=it_vac_date,
-                max_vac=args.max_vac,
-            )] = "it_charts"
-        if resolved_vac_root:
-            futures[executor.submit(
-                import_vac_pdfs,
-                fields=fields,
-                vac_root=resolved_vac_root,
-                docs_dir=docs_dir,
-                vac_date=resolved_vac_date,
-                max_vac=args.max_vac,
-                airport_index=airport_index,
-                runway_index=runway_index,
-                frequency_index=frequency_index,
-                extra_codes=extra_codes,
-                pack_id=args.pack_id,
-            )] = "vac"
+                importer, fields=fields, docs_dir=docs_dir, max_vac=args.max_vac,
+                **importer_kwargs)] = importer_name
         if args.include_streckenflug:
             futures[executor.submit(
                 load_streckenflug_fields,
@@ -481,21 +463,19 @@ def main() -> None:
         # are idempotent: chart files on disk are reused and only NEW PDFs count.
         late_codes = {clean(f.get("code")).upper() for f in streckenflug_fields if clean(f.get("code"))}
         if late_codes:
-            if at_zip_url:
-                at_chart_count += import_at_chart_pdfs(
-                    fields=fields, zip_url=at_zip_url, docs_dir=docs_dir,
-                    at_vac_date=at_zip_date, raw_dir=raw_dir, max_vac=args.max_vac,
-                    restrict_codes=late_codes)
-            if de_vac_root:
-                de_vac_count += import_de_vac_pdfs(
-                    fields=fields, root_chapter_url=de_vac_root, docs_dir=docs_dir,
-                    de_vac_date=de_vac_date, max_vac=args.max_vac,
-                    restrict_codes=late_codes)
-            if it_vac_dir:
-                it_chart_count += import_it_chart_pdfs(
-                    fields=fields, charts_dir=it_vac_dir, docs_dir=docs_dir,
-                    it_vac_date=it_vac_date, max_vac=args.max_vac,
-                    restrict_codes=late_codes)
+            for importer_name, importer, importer_kwargs in importer_specs:
+                result = importer(
+                    fields=fields, docs_dir=docs_dir, max_vac=args.max_vac,
+                    restrict_codes=late_codes, **importer_kwargs)
+                if importer_name == "at_charts":
+                    at_chart_count += result
+                elif importer_name == "de_vac":
+                    de_vac_count += result
+                elif importer_name == "it_charts":
+                    it_chart_count += result
+                elif importer_name == "vac":
+                    vac_count += result["downloaded"]
+                    vac_created_airfields += result["createdAirfields"]
 
     # Drop major airports / military bases (any source) before translating or merging: a glider
     # must not land there, and they otherwise dominate the pinned "best options" list.
@@ -2070,12 +2050,9 @@ def at_cycle_date(cycle: str) -> str:
 
 
 def pick_at_cycle(cycles: list[str], today: dt.date | None = None) -> str:
-    """The effective cycle: latest not in the future (upcoming AIRAC cycles are pre-published)."""
-    today = today or dt.date.today()
-    effective = [c for c in sorted(set(cycles)) if dt.date.fromisoformat(at_cycle_date(c)) <= today]
-    if effective:
-        return effective[-1]
-    return sorted(set(cycles))[0] if cycles else ""
+    """Austro Control's YYMMDD cycle names fed through the shared effective-cycle policy."""
+    return airac.pick_effective(
+        [(dt.date.fromisoformat(at_cycle_date(c)), c) for c in cycles], today)
 
 
 AT_AIM_AIP_PAGE = "https://www.austrocontrol.at/en/pilots/pre-flight_preparation/aim_products/aip"
@@ -2508,6 +2485,7 @@ def import_vac_pdfs(
     frequency_index: dict[str, list[dict[str, Any]]],
     extra_codes: set[str],
     pack_id: str,
+    restrict_codes: set[str] | None = None,
 ) -> dict[str, int]:
     downloaded = 0
     created_airfields = 0
@@ -2518,6 +2496,9 @@ def import_vac_pdfs(
     if airport_index:
         # SIA VAC is France-only here. Only probe OpenAIP airfields explicitly marked as VAC candidates.
         candidate_codes |= {code for code, airport in airport_index.items() if ICAO_FR_RE.match(code) and airport.get("vacCandidate", True)}
+    if restrict_codes is not None:
+        # Second attach pass for codes a late field source introduced: probe only those.
+        candidate_codes &= {clean(code).upper() for code in restrict_codes}
     candidate_codes = sorted(candidate_codes)
     if max_vac:
         print(f"VAC import limited to {max_vac} successful downloads", file=sys.stderr)
@@ -2530,34 +2511,38 @@ def import_vac_pdfs(
         if max_vac and downloaded >= max_vac:
             progress.update(index - 1, extra=f"downloaded {downloaded}, created {created_airfields}, skipped limit", force=True)
             break
-        url = f"{vac_root}/AD-2.{code}.pdf"
-        try:
-            request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.4"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                content_type = response.headers.get("Content-Type", "").lower()
-                if response.status != 200 or ("pdf" not in content_type and not url.lower().endswith(".pdf")):
-                    misses += 1
-                    progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
-                    continue
-                data = response.read()
-            data = optimize_pdf_bytes(data, code)
-        except urllib.error.HTTPError as error:
-            if error.code in {403, 404}:
-                misses += 1
-            else:
-                errors += 1
-                progress.update(index, extra=f"{code}: HTTP {error.code} | ok {downloaded}, miss {misses}, err {errors}", force=True)
-            progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
-            continue
-        except Exception as error:
-            errors += 1
-            progress.update(index, extra=f"{code}: {error} | ok {downloaded}, miss {misses}, err {errors}", force=True)
-            continue
-
         target = docs_dir / f"{code}.pdf"
-        target.write_bytes(data)
+        newly_written = not target.is_file()
+        if newly_written:
+            url = f"{vac_root}/AD-2.{code}.pdf"
+            try:
+                request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.4"})
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    content_type = response.headers.get("Content-Type", "").lower()
+                    if response.status != 200 or ("pdf" not in content_type and not url.lower().endswith(".pdf")):
+                        misses += 1
+                        progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
+                        continue
+                    data = response.read()
+                data = optimize_pdf_bytes(data, code)
+            except urllib.error.HTTPError as error:
+                if error.code in {403, 404}:
+                    misses += 1
+                else:
+                    errors += 1
+                    progress.update(index, extra=f"{code}: HTTP {error.code} | ok {downloaded}, miss {misses}, err {errors}", force=True)
+                progress.update(index, extra=f"{code}: no PDF | ok {downloaded}, miss {misses}, err {errors}")
+                continue
+            except Exception as error:
+                errors += 1
+                progress.update(index, extra=f"{code}: {error} | ok {downloaded}, miss {misses}, err {errors}", force=True)
+                continue
+            target.write_bytes(data)
+            downloaded += 1
+        else:
+            # Second attach pass: reuse the PDF the first pass already downloaded and optimized.
+            data = target.read_bytes()
         pdf_frequencies = extract_frequencies_from_pdf_bytes(data, source="SIA VAC PDF")
-        downloaded += 1
         media = {
             "type": "pdf",
             "url": f"docs/vac/{code}.pdf",
@@ -2570,6 +2555,8 @@ def import_vac_pdfs(
         if code in by_code:
             merged_freqs = merge_frequency_lists(pdf_frequencies, frequency_index.get(code, []))
             for field in by_code[code]:
+                if has_vac_doc(field):
+                    continue  # already attached by an earlier pass
                 field["media"].append(dict(media))
                 field.setdefault("docs", {})["vac"] = media["url"]
                 if merged_freqs:
@@ -2876,7 +2863,7 @@ def parse_streckenflug_detail(
     elevation_m = parse_first_metric_length(data.get("hoehe"))
     length_m = parse_first_metric_length(data.get("laenge"))
     width_m = parse_first_metric_length(data.get("breite"))
-    runway_direction = parse_runway_direction(data.get("richtung"))
+    runway_direction = parse_runway_direction_deg(data.get("richtung"))
     source_url = item.get("url") or f"https://landout.streckenflug.at/index.php?inc=map&iID={data.get('id') or item.get('streckenflugId', '')}"
     notes = build_streckenflug_notes_from_json(data)
     freqs = extract_frequencies_from_text(notes, source="streckenflug.at detail")
@@ -3513,6 +3500,18 @@ def drop_major_airports(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
+def nearest_field_within(
+    fields: list[dict[str, Any]], lat: float, lon: float, radius_m: float,
+) -> tuple[dict[str, Any] | None, float]:
+    """(nearest field, its distance) within radius_m of (lat, lon); (None, radius_m) when none."""
+    best, best_d = None, radius_m
+    for field in fields:
+        d = distance_m(lat, lon, field.get("latitude"), field.get("longitude"))
+        if d is not None and d <= best_d:
+            best, best_d = field, d
+    return best, best_d
+
+
 def find_contribution_field(fields: list[dict[str, Any]], meta: dict[str, Any]) -> dict[str, Any] | None:
     """Resolve which pack field a contribution belongs to.
 
@@ -3532,11 +3531,7 @@ def find_contribution_field(fields: list[dict[str, Any]], meta: dict[str, Any]) 
             return matches[0]
     lat, lon = parse_float(meta.get("fieldLat")), parse_float(meta.get("fieldLon"))
     if lat is not None and lon is not None:
-        best, best_d = None, CONTRIB_MATCH_RADIUS_M
-        for field in fields:
-            d = distance_m(lat, lon, field.get("latitude"), field.get("longitude"))
-            if d is not None and d <= best_d:
-                best, best_d = field, d
+        best, _ = nearest_field_within(fields, lat, lon, CONTRIB_MATCH_RADIUS_M)
         return best
     return None
 
@@ -3551,17 +3546,6 @@ def _fetch_contribution_asset(url: str) -> bytes:
 # A proposed field this close to an existing one is almost certainly the same place: fold the
 # submission into the existing field instead of creating a duplicate next to it.
 NEW_FIELD_DEDUPE_M = 300.0
-
-
-def parse_runway_direction_deg(runway: str) -> float | None:
-    """'07/25' -> 70, '070' -> 70, '25' -> 250; None when nothing parseable."""
-    match = re.match(r"\s*(\d{1,3})", str(runway or ""))
-    if not match:
-        return None
-    value = int(match.group(1))
-    if len(match.group(1)) <= 2 and value <= 36:
-        return float(value * 10)
-    return float(value) if 0 <= value <= 360 else None
 
 
 def create_proposed_field(fields: list[dict[str, Any]], meta: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
@@ -3581,11 +3565,7 @@ def create_proposed_field(fields: list[dict[str, Any]], meta: dict[str, Any]) ->
     if lat is None or lon is None or not name:
         return None, False
 
-    nearest, nearest_d = None, NEW_FIELD_DEDUPE_M
-    for field in fields:
-        d = distance_m(lat, lon, field.get("latitude"), field.get("longitude"))
-        if d is not None and d <= nearest_d:
-            nearest, nearest_d = field, d
+    nearest, nearest_d = nearest_field_within(fields, lat, lon, NEW_FIELD_DEDUPE_M)
     if nearest is not None:
         print(f"new-field proposal '{name}' is {nearest_d:.0f} m from {nearest.get('name')!r}; "
               f"merging as an update instead of creating a duplicate", file=sys.stderr)
@@ -3599,7 +3579,7 @@ def create_proposed_field(fields: list[dict[str, Any]], meta: dict[str, Any]) ->
     date = clean(meta.get("date")) or clean(meta.get("submittedAt"))[:10]
     difficulty = clean(proposed.get("difficulty")).upper()
     field = {
-        "id": f"{sanitize_id(meta.get('fieldId') or name)}-{hashlib.sha1(f'{lat:.4f},{lon:.4f}'.encode()).hexdigest()[:6]}",
+        "id": f"{slugify(clean(meta.get('fieldId')) or name)[:48]}-{hashlib.sha1(f'{lat:.4f},{lon:.4f}'.encode()).hexdigest()[:6]}",
         "kind": "airfield" if clean(proposed.get("kind")) == "airfield" else "outlanding",
         "name": name,
         "country": clean(proposed.get("country")).upper(),
@@ -3617,11 +3597,6 @@ def create_proposed_field(fields: list[dict[str, Any]], meta: dict[str, Any]) ->
     }
     fields.append(field)
     return field, True
-
-
-def sanitize_id(value: Any) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
-    return slug[:48] or "field"
 
 
 def proposal_note(proposed: dict[str, Any]) -> str:
@@ -3967,16 +3942,17 @@ def parse_float(value: object) -> float | None:
         return None
 
 
-def parse_runway_direction(value: object) -> float | None:
-    text = clean(value)
-    if not text:
+def parse_runway_direction_deg(value: object) -> float | None:
+    """First runway designator in free text or a form value, as an approximate bearing for
+    display only: '07/25' -> 70, '070' -> 70, 'Grasbahn 25' -> 250; None when unparseable."""
+    match = re.search(r"\b(\d{1,3})\b", clean(value))
+    if not match:
         return None
-    numbers = [int(n) for n in re.findall(r"\b(\d{1,2})\b", text)]
-    if not numbers:
-        return None
-    # Convert runway designator to approximate magnetic/true-ish bearing for display only.
-    deg = numbers[0] * 10
-    return float(deg) if 0 <= deg <= 360 else None
+    token = match.group(1)
+    number = int(token)
+    if len(token) <= 2 and number <= 36:
+        return float(number * 10)
+    return float(number) if 0 <= number <= 360 else None
 
 
 def parse_streckenflug_date(value: str) -> str:

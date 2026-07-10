@@ -83,6 +83,13 @@ npx wrangler deploy   # publish; note the *.workers.dev URL (or bind a custom ro
 
 Put the resulting URL in the app's `CONTRIB_ENDPOINT` constant (Phase 2).
 
+> **Deploy order: Worker first, app shell second.** When a release changes the request shape,
+> an already-cached app shell keeps POSTing the old shape — which the new Worker accepts
+> (legacy keys stay supported). The reverse is not safe: a new shell posting to an old Worker
+> gets its unknown keys silently ignored (e.g. a Worker predating multi-photo reads only
+> `photo` and would drop every `photos` entry while still reporting success). The same applies
+> to rollbacks: rolling back the Worker without rolling back Pages reintroduces that window.
+
 ### Continuous deployment (GitHub Actions)
 
 `.github/workflows/deploy-worker.yml` runs `wrangler deploy` for you, so the live
@@ -110,20 +117,22 @@ across deploys. So the GitHub PAT never enters GitHub Actions.
 
 | field | required | notes |
 |-------|----------|-------|
-| `fieldId`, `fieldLat`, `fieldLon` | yes | from the loaded pack |
+| `type` | no | `new-field` for a proposal; anything else is an update to an existing field |
+| `fieldId`, `fieldLat`, `fieldLon` | update only | from the loaded pack |
 | `fieldCode`, `fieldName` | no | for the PR title / re-matching |
+| `name`, `lat`, `lon`, `country` | new-field only | plus optional `kind`, `elevationM`, `difficulty`, `runway`, `lengthM`, `widthM`, `surface`, `frequency` |
 | `date` | no | defaults to today |
 | `description` | note **or** photo required | free text |
-| `photo` | note **or** photo required | JPEG, ≤ 15 MB, long edge ≥ 2560 px |
-| `deviceLat`, `deviceLon` | no | live GPS fallback when the photo has no EXIF |
+| `photos` (repeated) | note **or** photo required | up to 5 JPEGs, each ≤ 15 MB, long edge ≥ 2560 px (legacy single `photo` still accepted) |
+| `deviceLat`, `deviceLon` | no | live GPS fallback when a photo has no EXIF |
 | `submitter` | no | optional handle for attribution |
 | `turnstileToken` | when Turnstile is on | from the widget |
 
-Response: `{ ok: true, prUrl, prNumber, geo: { verified, source, distanceM } }`.
+Response: `{ ok: true, prUrl, prNumber, geo: { verified, source, distanceM } }` (`geo` aggregates
+the per-photo verdicts; each photo's own verdict is in the contribution JSON and the PR body).
 
 ## Still to do
 
-- App side: JPEG normalization (HEIC→JPEG) for photos coming off iOS.
 - Add unit tests for `readGps` / `stripExif` / `jpegLongEdge` (exercised in production, not yet
   covered by tests).
 - Rate limiting (KV or Turnstile-only for now).

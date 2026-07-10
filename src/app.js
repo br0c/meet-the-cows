@@ -1302,6 +1302,22 @@ function renderMediaItem(item, base) {
 
 // --- Community contribution form (Phase 2) ---
 
+// Shared tail of the contribute and new-field forms: photo staging, geo line, submitter,
+// licence, anti-spam widget, error area and submit. Identical ids on purpose — the shared
+// staging/restore/submit helpers work on whichever of the two forms is open.
+function renderContribFormTail() {
+  return `
+          <input id="cPhoto" type="file" accept="image/jpeg" multiple hidden />
+          <button type="button" id="cPhotoBtn" class="contrib-photo-btn">🖼️ ${t('cAddPhoto')}</button>
+          <div id="cPhotoList" class="contrib-photo-list"></div>
+          <div id="cGeo" class="contrib-geo" hidden></div>
+          <input id="cSubmitter" type="text" autocomplete="off" placeholder="${escapeHtml(t('cSubmitter'))}" />
+          <label class="checkbox-row contrib-license"><input id="cLicense" type="checkbox" /><span>${escapeHtml(t('cLicense'))}</span></label>
+          <div id="cTurnstile" class="contrib-turnstile"></div>
+          <div id="cError" class="contrib-error" hidden></div>
+          <button id="cSubmit" class="primary contrib-submit" disabled>${t('cSubmit')}</button>`;
+}
+
 function renderContribute(field) {
   if (!field) return '';
   const today = new Date().toISOString().slice(0, 10);
@@ -1316,15 +1332,7 @@ function renderContribute(field) {
           <input id="cDate" type="date" value="${today}" />
           <label for="cDesc">${t('cDesc')}</label>
           <textarea id="cDesc" rows="4" placeholder="${escapeHtml(t('cDescPlaceholder'))}"></textarea>
-          <input id="cPhoto" type="file" accept="image/jpeg" multiple hidden />
-          <button type="button" id="cPhotoBtn" class="contrib-photo-btn">🖼️ ${t('cAddPhoto')}</button>
-          <div id="cPhotoList" class="contrib-photo-list"></div>
-          <div id="cGeo" class="contrib-geo" hidden></div>
-          <input id="cSubmitter" type="text" autocomplete="off" placeholder="${escapeHtml(t('cSubmitter'))}" />
-          <label class="checkbox-row contrib-license"><input id="cLicense" type="checkbox" /><span>${escapeHtml(t('cLicense'))}</span></label>
-          <div id="cTurnstile" class="contrib-turnstile"></div>
-          <div id="cError" class="contrib-error" hidden></div>
-          <button id="cSubmit" class="primary contrib-submit" disabled>${t('cSubmit')}</button>
+          ${renderContribFormTail()}
         </div>
       </article>
     </div>
@@ -1568,21 +1576,59 @@ function ensureTurnstile(callback) {
   setTimeout(() => clearInterval(timer), 8000);
 }
 
-async function submitContribution(field) {
-  const form = contribForm;
-  if (!form || form.busy) return;
-  contribShowError('');
+// Mount a Turnstile widget for a form (contribute / new-field / bug). getForm re-reads the
+// module global so a form closed (or closed-and-reopened) while the script was still loading
+// never gets a widget mounted into a dead overlay.
+function mountTurnstile(getForm, selector) {
+  const form = getForm();
+  if (!form || form.turnstileWidget != null) return;
+  ensureTurnstile(() => {
+    const holder = document.querySelector(selector);
+    const live = getForm();
+    if (holder && window.turnstile && live === form && live.turnstileWidget == null) {
+      try { live.turnstileWidget = window.turnstile.render(holder, { sitekey: TURNSTILE_SITEKEY }); } catch { /* already rendered */ }
+    }
+  });
+}
+
+// Shared submit pipeline of the contribute and new-field forms: anti-spam token check, busy
+// toggle, photo payload, POST, stale-form guards, error display and the single-use token
+// reset (without it every retry re-sends a token the Worker already redeemed and the spam
+// check fails forever). Callers pre-validate and provide the form-specific payload.
+async function submitContribForm({ form, fd, stillOpen, onClose, updateValidity }) {
   let token = '';
   if (window.turnstile && form.turnstileWidget != null) {
     token = window.turnstile.getResponse(form.turnstileWidget) || '';
     if (!token) { contribShowError(t('cNeedTurnstile')); return; }
   }
-  const description = (document.querySelector('#cDesc')?.value || '').trim();
-  const submit = document.querySelector('#cSubmit');
+  if (token) fd.set('turnstileToken', token);
+  if (state.position) { fd.set('deviceLat', String(state.position.latitude)); fd.set('deviceLon', String(state.position.longitude)); }
+  for (const p of form.photos) fd.append('photos', p.blob, p.name || 'photo.jpg');
 
+  const submit = document.querySelector('#cSubmit');
   form.busy = true;
   if (submit) { submit.disabled = true; submit.textContent = t('cSubmitting'); }
 
+  try {
+    const res = await fetch(CONTRIB_ENDPOINT, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!stillOpen()) return; // form closed while the request was in flight
+    if (res.ok && data.ok) { showContribSuccess(data, onClose); return; }
+    contribShowError(`${t('cErr')}: ${String(data.error || res.status)}`);
+  } catch (err) {
+    if (!stillOpen()) return;
+    contribShowError(`${t('cErr')}: ${String(err && err.message || err)}`);
+  }
+  try { if (window.turnstile && form.turnstileWidget != null) window.turnstile.reset(form.turnstileWidget); } catch { /* widget gone */ }
+  form.busy = false;
+  if (submit) { submit.textContent = t('cSubmit'); }
+  updateValidity();
+}
+
+async function submitContribution(field) {
+  const form = contribForm;
+  if (!form || form.busy) return;
+  contribShowError('');
   const fd = new FormData();
   fd.set('fieldId', field.id);
   fd.set('fieldCode', field.code || '');
@@ -1590,28 +1636,14 @@ async function submitContribution(field) {
   fd.set('fieldLat', String(field.latitude));
   fd.set('fieldLon', String(field.longitude));
   fd.set('date', document.querySelector('#cDate')?.value || new Date().toISOString().slice(0, 10));
-  fd.set('description', description);
+  fd.set('description', (document.querySelector('#cDesc')?.value || '').trim());
   fd.set('submitter', (document.querySelector('#cSubmitter')?.value || '').trim());
-  if (state.position) { fd.set('deviceLat', String(state.position.latitude)); fd.set('deviceLon', String(state.position.longitude)); }
-  if (token) fd.set('turnstileToken', token);
-  for (const p of form.photos) fd.append('photos', p.blob, p.name || 'photo.jpg');
-
-  try {
-    const res = await fetch(CONTRIB_ENDPOINT, { method: 'POST', body: fd });
-    const data = await res.json().catch(() => ({}));
-    if (contribForm !== form) return; // form closed while the request was in flight
-    if (res.ok && data.ok) { showContribSuccess(data, closeContribute); return; }
-    contribShowError(`${t('cErr')}: ${String(data.error || res.status)}`);
-  } catch (err) {
-    if (contribForm !== form) return;
-    contribShowError(`${t('cErr')}: ${String(err && err.message || err)}`);
-  }
-  // Turnstile tokens are single-use: without a reset every retry re-sends the token the
-  // Worker already redeemed and the spam check fails forever.
-  try { if (window.turnstile && form.turnstileWidget != null) window.turnstile.reset(form.turnstileWidget); } catch { /* widget gone */ }
-  form.busy = false;
-  if (submit) { submit.textContent = t('cSubmit'); }
-  updateContribValidity();
+  await submitContribForm({
+    form, fd,
+    stillOpen: () => contribForm === form,
+    onClose: closeContribute,
+    updateValidity: updateContribValidity,
+  });
 }
 
 function showContribSuccess(data, onDone) {
@@ -1680,15 +1712,7 @@ function renderNewField() {
           </div>
           <label for="cDesc">${t('nfDesc')}</label>
           <textarea id="cDesc" rows="4" placeholder="${escapeHtml(t('nfDescPlaceholder'))}"></textarea>
-          <input id="cPhoto" type="file" accept="image/jpeg" multiple hidden />
-          <button type="button" id="cPhotoBtn" class="contrib-photo-btn">🖼️ ${t('cAddPhoto')}</button>
-          <div id="cPhotoList" class="contrib-photo-list"></div>
-          <div id="cGeo" class="contrib-geo" hidden></div>
-          <input id="cSubmitter" type="text" autocomplete="off" placeholder="${escapeHtml(t('cSubmitter'))}" />
-          <label class="checkbox-row contrib-license"><input id="cLicense" type="checkbox" /><span>${escapeHtml(t('cLicense'))}</span></label>
-          <div id="cTurnstile" class="contrib-turnstile"></div>
-          <div id="cError" class="contrib-error" hidden></div>
-          <button id="cSubmit" class="primary contrib-submit" disabled>${t('cSubmit')}</button>
+          ${renderContribFormTail()}
         </div>
       </article>
     </div>
@@ -1735,15 +1759,6 @@ async function submitNewField() {
   const coords = newFieldCoords();
   const name = (document.querySelector('#nfName')?.value || '').trim();
   if (!name || !coords) { contribShowError(t('nfNeedBasics')); return; }
-  let token = '';
-  if (window.turnstile && form.turnstileWidget != null) {
-    token = window.turnstile.getResponse(form.turnstileWidget) || '';
-    if (!token) { contribShowError(t('cNeedTurnstile')); return; }
-  }
-  const submit = document.querySelector('#cSubmit');
-  form.busy = true;
-  if (submit) { submit.disabled = true; submit.textContent = t('cSubmitting'); }
-
   const val = id => (document.querySelector(`#${id}`)?.value || '').trim();
   const fd = new FormData();
   fd.set('type', 'new-field');
@@ -1761,25 +1776,12 @@ async function submitNewField() {
   fd.set('frequency', val('nfFrequency'));
   fd.set('description', val('cDesc'));
   fd.set('submitter', val('cSubmitter'));
-  if (state.position) { fd.set('deviceLat', String(state.position.latitude)); fd.set('deviceLon', String(state.position.longitude)); }
-  if (token) fd.set('turnstileToken', token);
-  for (const p of form.photos) fd.append('photos', p.blob, p.name || 'photo.jpg');
-
-  try {
-    const res = await fetch(CONTRIB_ENDPOINT, { method: 'POST', body: fd });
-    const data = await res.json().catch(() => ({}));
-    if (newFieldForm !== form) return; // form closed while the request was in flight
-    if (res.ok && data.ok) { showContribSuccess(data, closeNewField); return; }
-    contribShowError(`${t('cErr')}: ${String(data.error || res.status)}`);
-  } catch (err) {
-    if (newFieldForm !== form) return;
-    contribShowError(`${t('cErr')}: ${String(err && err.message || err)}`);
-  }
-  // Turnstile tokens are single-use: reset so a retry gets a fresh token (see submitContribution).
-  try { if (window.turnstile && form.turnstileWidget != null) window.turnstile.reset(form.turnstileWidget); } catch { /* widget gone */ }
-  form.busy = false;
-  if (submit) { submit.textContent = t('cSubmit'); }
-  updateNewFieldValidity();
+  await submitContribForm({
+    form, fd,
+    stillOpen: () => newFieldForm === form,
+    onClose: closeNewField,
+    updateValidity: updateNewFieldValidity,
+  });
 }
 
 function wireNewFieldForm() {
@@ -1818,14 +1820,7 @@ function wireNewFieldForm() {
   document.querySelector('#cLicense')?.addEventListener('change', updateNewFieldValidity);
   document.querySelector('#cSubmit')?.addEventListener('click', submitNewField);
   if (newFieldForm) { trackFormValues(newFieldForm); restoreFormState(newFieldForm); }
-  if (newFieldForm && newFieldForm.turnstileWidget == null) {
-    ensureTurnstile(() => {
-      const holder = document.querySelector('#cTurnstile');
-      if (holder && window.turnstile && newFieldForm && newFieldForm.turnstileWidget == null) {
-        try { newFieldForm.turnstileWidget = window.turnstile.render(holder, { sitekey: TURNSTILE_SITEKEY }); } catch { /* already rendered */ }
-      }
-    });
-  }
+  mountTurnstile(() => newFieldForm, '#cTurnstile');
   updateNewFieldValidity();
 }
 
@@ -1870,14 +1865,7 @@ function wireBugForm() {
   document.querySelector('#bugBackdrop')?.addEventListener('click', e => { if (e.target.id === 'bugBackdrop') closeBugReport(); });
   document.querySelector('#bugDesc')?.addEventListener('input', updateBugValidity);
   document.querySelector('#bugSubmit')?.addEventListener('click', submitBugReport);
-  if (bugForm && bugForm.turnstileWidget == null) {
-    ensureTurnstile(() => {
-      const holder = document.querySelector('#bugTurnstile');
-      if (holder && window.turnstile && bugForm && bugForm.turnstileWidget == null) {
-        try { bugForm.turnstileWidget = window.turnstile.render(holder, { sitekey: TURNSTILE_SITEKEY }); } catch { /* already rendered */ }
-      }
-    });
-  }
+  mountTurnstile(() => bugForm, '#bugTurnstile');
   updateBugValidity();
 }
 
@@ -1954,14 +1942,7 @@ function wireContribForm(field) {
   document.querySelector('#cLicense')?.addEventListener('change', updateContribValidity);
   document.querySelector('#cSubmit')?.addEventListener('click', () => submitContribution(field));
   if (contribForm) { trackFormValues(contribForm); restoreFormState(contribForm); }
-  if (contribForm && contribForm.turnstileWidget == null) {
-    ensureTurnstile(() => {
-      const holder = document.querySelector('#cTurnstile');
-      if (holder && window.turnstile && contribForm && contribForm.turnstileWidget == null) {
-        try { contribForm.turnstileWidget = window.turnstile.render(holder, { sitekey: TURNSTILE_SITEKEY }); } catch { /* already rendered */ }
-      }
-    });
-  }
+  mountTurnstile(() => contribForm, '#cTurnstile');
   updateContribValidity();
 }
 
