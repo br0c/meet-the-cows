@@ -95,10 +95,10 @@ class TestImport(unittest.TestCase):
         self.assertEqual(fields[2]["media"], [])  # no chart -> untouched
 
     def test_second_pass_attaches_late_fields_only(self):
-        # Streckenflug fields join the set after the concurrent chart imports ran — main()
-        # re-runs the importer restricted to the late codes. The return value counts unique
-        # NEW PDFs written: a late twin of an already-imported code reuses the existing file
-        # (still gets media attached) without inflating the count.
+        # The importer accepts restrict_codes to attach charts to only a subset of fields
+        # without duplicating earlier attaches. The return value counts unique NEW PDFs
+        # written: a twin of an already-imported code reuses the existing file (still gets
+        # media attached) without inflating the count.
         fields = [make_field("LIPB")]
         with tempfile.TemporaryDirectory() as tmp:
             charts = Path(tmp) / "enav"; charts.mkdir()
@@ -123,7 +123,7 @@ class TestImport(unittest.TestCase):
 
     def test_state_includes_it_fingerprint(self):
         state = build_pack.build_source_state(
-            cupx="c", vac="2026-07-09", vac_it="2026-07-09:abcd", streckenflug="s")
+            cupx="c", vac="2026-07-09", vac_it="2026-07-09:abcd")
         self.assertEqual(state["vacIt"], "2026-07-09:abcd")
         self.assertTrue(build_pack.source_states_match(state, dict(state)))
         self.assertFalse(build_pack.source_states_match(state, dict(state, vacIt="2026-08-06:ffff")))

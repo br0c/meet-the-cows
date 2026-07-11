@@ -132,7 +132,7 @@ class TestCrawlAndImport(unittest.TestCase):
         self.assertEqual(munich["media"], [])
 
     def test_state_includes_de_cycle(self):
-        state = build_pack.build_source_state(cupx="c", vac="v", vac_at="a", vac_de="2026-06-25", streckenflug="s")
+        state = build_pack.build_source_state(cupx="c", vac="v", vac_at="a", vac_de="2026-06-25")
         self.assertEqual(state["vacDe"], "2026-06-25")
         self.assertFalse(build_pack.source_states_match(state, dict(state, vacDe="2026-07-23")))
         self.assertTrue(build_pack.source_states_match(state, dict(state)))

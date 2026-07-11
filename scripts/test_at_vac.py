@@ -165,7 +165,7 @@ class TestChartZip(unittest.TestCase):
             self.assertEqual(fields[0]["media"], [])  # no charts, but the build goes on
 
     def test_state_includes_at_cycle(self):
-        state = build_pack.build_source_state(cupx="c", vac="2026-07-09", vac_at="2026-07-01", streckenflug="s")
+        state = build_pack.build_source_state(cupx="c", vac="2026-07-09", vac_at="2026-07-01")
         self.assertEqual(state["vacAt"], "2026-07-01")
         self.assertTrue(build_pack.source_states_match(state, dict(state)))
         self.assertFalse(build_pack.source_states_match(state, dict(state, vacAt="2026-08-06")))

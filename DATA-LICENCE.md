@@ -35,7 +35,6 @@ project builds on. In particular:
 | SIA — Service de l'Information Aéronautique (VAC documents) | [Licence Ouverte](https://www.etalab.gouv.fr/licence-ouverte-open-licence/) — freely reusable with attribution; cycle-specific documents |
 | OpenAIP (airfield records) | [OpenAIP terms](https://www.openaip.net) apply to their records |
 | planeur-net / Guide des Aires de Sécurité (outlanding data & photos) | Used with reference to the upstream project; their permissions govern their content |
-| streckenflug.at Landout Database | Their permissions govern their content |
 | OurAirports (airport/runway coordinates) | Public domain |
 | Community contributions (pilot notes & photos) | © their authors, licensed to this project for publication with the field data via the in-app consent |
 

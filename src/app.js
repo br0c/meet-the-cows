@@ -2285,8 +2285,8 @@ const CUP_LABELS = {
 };
 const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Pull a labelled value ("Surface: grass", "Direction: 07/25") out of the notes block. The
-// streckenflug import writes these as their own lines; returns '' when no variant is present.
+// Pull a labelled value ("Surface: grass", "Direction: 07/25") out of the notes block. Field
+// imports write these as their own lines; returns '' when no variant is present.
 function cupNoteValue(notes, labels) {
   const alt = (Array.isArray(labels) ? labels : [labels]).map(escapeRegExp).join('|');
   const match = new RegExp(`^\\s*(?:${alt})\\s*:\\s*(.+)$`, 'im').exec(String(notes || ''));

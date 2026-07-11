@@ -75,7 +75,7 @@ jobs:
       # Incremental by default: the build short-circuits when the source fingerprint AND
       # PACK_SCHEMA_VERSION match the published state.json, so pushes/crons that change nothing
       # in the pack skip the rebuild+deploy. Full rebuild only on the Sunday weekly refresh
-      # (also catches same-year streckenflug edits) and on manual dispatch with force_full.
+      # and on manual dispatch with force_full.
       # IMPORTANT: bump PACK_SCHEMA_VERSION in build_pack.py when a code change alters pack
       # output, otherwise a push may short-circuit and not deploy your change.
       - name: Decide build mode
@@ -152,8 +152,8 @@ jobs:
           path: .cache/enav-charts
           key: enav-charts-${{ hashFiles('.cache/enav-charts/manifest.json') }}
 
-      # All other source downloads (AT AIP ZIP, OpenAIP, the CUP guide, the DFS crawl, SIA PDFs,
-      # streckenflug details) share one on-disk cache (raw_dir) so a rebuild triggered by ONE
+      # All other source downloads (AT AIP ZIP, OpenAIP, the CUP guide, the DFS crawl, SIA PDFs)
+      # share one on-disk cache (raw_dir) so a rebuild triggered by ONE
       # changed source does not re-fetch the rest. Restore the most recent copy; the build reuses
       # each artifact whose AIRAC cycle still matches and prunes the ones that have rolled.
       - name: Restore source download cache
@@ -192,8 +192,6 @@ jobs:
             --out data/packs \
             --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
             --airfield-source openaip \
-            --include-streckenflug \
-            --streckenflug-workers 8 \
             --vac-root auto \
             --vac-date auto \
             --at-vac-root auto \

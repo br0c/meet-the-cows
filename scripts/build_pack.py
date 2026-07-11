@@ -60,8 +60,6 @@ OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/ai
 OURAIRPORTS_RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv"
 OURAIRPORTS_FREQUENCIES_URL = "https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv"
 OPENAIP_API_BASE_URL = "https://api.core.openaip.net/api"
-STRECKENFLUG_LIST_URL = "https://landout.streckenflug.at/index.php?id=&inc=landeplatz&task=list&side_buch=&side_kontinent=EU&side_region=&side_land=&side_art=&side_oberflaeche=&side_kategorie=&side_checked="
-STRECKENFLUG_JSON_URL = "https://landout.streckenflug.at/json.php"
 BASE_AIRAC_DATE = dt.date(2024, 1, 25)
 
 DIFFICULTY_MAP = {
@@ -108,7 +106,7 @@ PACK_IMAGE_MAX_LONG_EDGE = 2560
 PACK_IMAGE_JPEG_QUALITY = 85
 
 # Major airports where a glider must not land are dropped from the pack. OpenAIP's type filter
-# does not catch them all — most leak in from the streckenflug landout list — so this is a
+# does not catch them all — some leak in from the landout data — so this is a
 # source-agnostic rule on the assembled fields. Real gliding aerodromes in this dataset top out
 # around 1300 m of runway, and every field at/above this paved length is a major commercial or
 # controlled airport or an active military base, so the length rule is a clean discriminator.
@@ -126,8 +124,8 @@ MAJOR_AIRFIELD_ICAO = {
     "LFTF",  # Cuers-Pierrefeu (naval air station)
 }
 
-# DeepL translation of German streckenflug notes. Configured in main(); when no key is
-# available the code falls back to the offline STRECKENFLUG_GERMAN_PHRASES dictionary.
+# DeepL translation of German notes. Configured in main(); when no key is
+# available the code falls back to the offline GERMAN_PHRASES dictionary.
 DEEPL_API_KEY = ""
 DEEPL_API_URL = ""
 _DEEPL_DISABLED = False
@@ -139,8 +137,8 @@ _DEEPL_BUDGET_CHARS: int | None = None
 _TRANSLATION_CACHE: dict[str, str] = {}
 _TRANSLATION_CACHE_PATH: Path | None = None
 _TRANSLATION_STATS: dict[str, int] = {"deepl": 0, "cache": 0, "fallback": 0}
-# Serialises DeepL access: streckenflug scraping runs on many worker threads, and concurrent
-# calls get rate-limited (HTTP 429). One request at a time + backoff keeps us under the limit.
+# Serialises DeepL access so concurrent calls do not get rate-limited (HTTP 429). One request
+# at a time + backoff keeps us under the limit.
 _DEEPL_LOCK = threading.Lock()
 
 # Bump whenever the build LOGIC changes the pack output (parsing, merging, translation,
@@ -152,8 +150,9 @@ _DEEPL_LOCK = threading.Lock()
 # v11: merged community contributions (contributions/) are folded into notes and media.
 # v13: Austrian AD 2 chart PDFs (Austro Control eAIP) attached to AT airfields.
 # v14: Italian ENAV charts attached to IT airfields; Alps pack split into West/East halves.
-# v15: second chart-attach pass so streckenflug-only airfields get their AT/DE/IT charts.
-PACK_SCHEMA_VERSION = 15
+# v15: second chart-attach pass so late-added airfields get their AT/DE/IT charts.
+# v16: dropped the third-party landout source; packs rebuild without its fields/photos.
+PACK_SCHEMA_VERSION = 16
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -165,7 +164,6 @@ CONTRIB_MATCH_RADIUS_M = 1000.0
 # language; the map converts our short codes to the DeepL target-language codes.
 APP_LANGUAGES = ("en", "fr", "de")
 LANG_TO_DEEPL = {"en": "EN-GB", "fr": "FR", "de": "DE"}
-
 
 
 class Progress:
@@ -227,15 +225,9 @@ def main() -> None:
     parser.add_argument("--openaip-airports", default="", help="Optional local JSON/GeoJSON export or URL to use instead of the API. May be repeated as comma-separated paths.")
     parser.add_argument("--openaip-include-types", default=os.environ.get("OPENAIP_INCLUDE_TYPES", "1,2,6,11,13"), help="Comma-separated OpenAIP airport type numbers to include as glider-relevant. Default: 1 Glider Site, 2 Airfield Civil, 6 Ultra Light Flying Site, 11 Landing Strip, 13 Altiport. Use '1' for strict glider-site-only imports.")
     parser.add_argument("--dedupe-distance-m", type=float, default=float(os.environ.get("DEDUPE_DISTANCE_M", "350")), help="Merge fields with matching/similar codes or names inside this radius. Default 350 m.")
-    parser.add_argument("--include-streckenflug", action="store_true", help="Scrape the public streckenflug.at landout list/detail pages and merge additional fields. Does not require the logged-in CUPX download.")
-    parser.add_argument("--streckenflug-url", default=os.environ.get("STRECKENFLUG_URL", STRECKENFLUG_LIST_URL), help="Public streckenflug.at list URL to scrape")
-    parser.add_argument("--streckenflug-countries", nargs="+", default=os.environ.get("STRECKENFLUG_COUNTRIES", "FR CH IT").split(), help="Countries to keep from streckenflug.at, default FR CH IT")
-    parser.add_argument("--streckenflug-max-detail", type=int, default=int(os.environ.get("STRECKENFLUG_MAX_DETAIL", "0")), help="Debug limit for streckenflug detail pages; 0 means no limit")
-    parser.add_argument("--streckenflug-workers", type=int, default=int(os.environ.get("STRECKENFLUG_WORKERS", "1")), help="Number of concurrent streckenflug detail/image workers. Default 1; use 4-8 for full builds.")
-    parser.add_argument("--no-streckenflug-images", action="store_true", help="Import streckenflug.at fields but skip downloading their public full-resolution images")
     parser.add_argument("--vac-candidate-mode", choices=["glider", "pack", "all"], default="glider", help="Which official VAC candidates to try: glider OpenAIP/pack airfields, existing pack only, or every airport from the coordinate source")
     parser.add_argument("--out", default="data/packs/fr-alps", help="Output pack directory (single-pack), or the packs root directory when --multi-pack is set")
-    parser.add_argument("--multi-pack", action="store_true", help="Build every pack in scripts/packs.py (FR/CH/DE/IT/AT country packs + Alps) from one merged, translated field set. --out is treated as the packs root; --countries/--streckenflug-countries are forced to all build countries.")
+    parser.add_argument("--multi-pack", action="store_true", help="Build every pack in scripts/packs.py (FR/CH/DE/IT/AT country packs + Alps) from one merged, translated field set. --out is treated as the packs root; --countries is forced to all build countries.")
     parser.add_argument("--vac-root", default=os.environ.get("SIA_VAC_ROOT", "auto"), help="SIA VAC AD PDF directory URL ending in /AD, or auto to detect the current eAIP cycle")
     parser.add_argument("--vac-date", default=os.environ.get("SIA_VAC_DATE", "auto"), help="SIA VAC update/AIRAC date to show in attribution, or auto when --vac-root auto succeeds")
     parser.add_argument("--at-vac-root", default=os.environ.get("AT_VAC_ROOT", "auto"), help="Austrian charts: auto (resolve the effective complete-AIP ZIP), an explicit AIP_AUSTRIA ZIP URL, or none to disable")
@@ -248,7 +240,7 @@ def main() -> None:
     parser.add_argument("--frequencies-csv", default=os.environ.get("FREQUENCIES_CSV", ""), help="Optional legacy frequency CSV URL/path. Disabled by default; OpenAIP/SIA/CUP notes are preferred.")
     parser.add_argument("--vac-codes", default="", help="Optional comma-separated ICAO codes or path/URL to a text file of ICAO codes to try. Use to limit/extend VAC candidates.")
     parser.add_argument("--keep-raw", action="store_true", help="Keep downloaded raw files in .cache")
-    parser.add_argument("--deepl-api-key", default=os.environ.get("DEEPL_API_KEY", ""), help="DeepL API key for translating German streckenflug notes to English; prefer the DEEPL_API_KEY env var. Without it, an offline dictionary is used.")
+    parser.add_argument("--deepl-api-key", default=os.environ.get("DEEPL_API_KEY", ""), help="DeepL API key for translating German notes to English; prefer the DEEPL_API_KEY env var. Without it, an offline dictionary is used.")
     parser.add_argument("--deepl-api-url", default=os.environ.get("DEEPL_API_URL", ""), help="Override the DeepL endpoint. Auto-selected from the key (free keys end in ':fx') when unset.")
     parser.add_argument("--deepl-max-chars", type=int, default=int(os.environ.get("DEEPL_MAX_CHARS", "300000")), help="Safety cap on DeepL characters spent in a single build (also bounded by remaining lifetime quota). 0 disables the per-build cap. Protects the finite free-tier budget if the translation cache is ever missed.")
     parser.add_argument("--state-url", default=os.environ.get("PACK_STATE_URL", ""), help="URL of the previously published state.json. When set and the source fingerprint is unchanged, the build short-circuits (skips the rebuild and deploy).")
@@ -279,7 +271,6 @@ def main() -> None:
         # One merged build feeds every pack, so pull every build country and stage the media in
         # a shared tree that each pack later copies just the files it references from.
         args.countries = list(packs.BUILD_COUNTRIES)
-        args.streckenflug_countries = list(packs.BUILD_COUNTRIES)
         out_root = root / args.out
         # Media is written once into a shared tree that every pack references (so a field shared
         # by, e.g., France and Alps is downloaded once), not copied per pack. This tree deploys.
@@ -326,10 +317,6 @@ def main() -> None:
         vac_at=at_zip_date or at_zip_url,
         vac_de=de_vac_date or de_vac_root,
         vac_it=it_vac_fingerprint,
-        streckenflug=(
-            streckenflug_list_fingerprint(args.streckenflug_url, args.streckenflug_countries, raw_dir)
-            if args.include_streckenflug else ""
-        ),
         contributions=contributions_fingerprint(root / "contributions"),
     )
     # Record the cache's AIRAC-cycle identity and drop prior-cycle artifacts (CI keys the source
@@ -394,17 +381,12 @@ def main() -> None:
             add_airfield_entries_from_index(fields, airport_index, runway_index, frequency_index, args.pack_id, args.vac_candidate_mode)
         extra_codes = parse_vac_codes(args.vac_codes, raw_dir)
 
-    streckenflug_count = 0
-    streckenflug_media_count = 0
-    streckenflug_fields: list[dict[str, Any]] = []
-
     at_chart_count = 0
     de_vac_count = 0
     it_chart_count = 0
 
-    # Chart/VAC importers share one spec list so the parallel first pass and the late-fields
-    # second pass can never drift apart: a chart source added here is automatically part of
-    # both. Per-call kwargs (fields/docs_dir/max_vac/restrict_codes) are applied at call time.
+    # Chart/VAC importers share one spec list that drives the parallel import pass below.
+    # Per-call kwargs (fields/docs_dir/max_vac) are applied at call time.
     importer_specs: list[tuple[str, Any, dict[str, Any]]] = []
     if at_zip_url:
         importer_specs.append(("at_charts", import_at_chart_pdfs, dict(
@@ -422,7 +404,7 @@ def main() -> None:
             frequency_index=frequency_index, extra_codes=extra_codes, pack_id=args.pack_id,
             raw_dir=raw_dir)))
 
-    # VAC imports (FR/AT/DE/IT) and streckenflug are independent network-heavy tasks after
+    # VAC/chart imports (FR + AT + DE + IT) are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
     # remote source while the others could already be downloading. The importers mutate
     # disjoint fields (LF vs LO/ED/LI codes), so concurrent attachment is safe.
@@ -432,18 +414,6 @@ def main() -> None:
             futures[executor.submit(
                 importer, fields=fields, docs_dir=docs_dir, max_vac=args.max_vac,
                 **importer_kwargs)] = importer_name
-        if args.include_streckenflug:
-            futures[executor.submit(
-                load_streckenflug_fields,
-                args.streckenflug_url,
-                raw_dir,
-                workers=args.streckenflug_workers,
-                media_dir=media_dir,
-                pack_id=args.pack_id,
-                countries=args.streckenflug_countries,
-                max_detail=args.streckenflug_max_detail,
-                include_images=not args.no_streckenflug_images,
-            )] = "streckenflug"
 
         for future in as_completed(futures):
             task = futures[future]
@@ -457,34 +427,6 @@ def main() -> None:
                 de_vac_count = future.result()
             elif task == "it_charts":
                 it_chart_count = future.result()
-            elif task == "streckenflug":
-                streckenflug_fields = future.result()
-                streckenflug_count = len(streckenflug_fields)
-                streckenflug_media_count = count_media_items(streckenflug_fields)
-
-    if streckenflug_fields:
-        fields.extend(streckenflug_fields)
-        # Streckenflug introduces ICAO-coded airfields (e.g. LIPB Bolzano, LIDA Asiago) that did
-        # not exist when the concurrent chart imports indexed the field list — a second,
-        # incremental attach pass gives those late fields their charts too. It is scoped to the
-        # codes streckenflug actually added (otherwise the DE importer would re-crawl the whole
-        # BasicVFR portal for the permanently chartless codes on every build), and the importers
-        # are idempotent: chart files on disk are reused and only NEW PDFs count.
-        late_codes = {clean(f.get("code")).upper() for f in streckenflug_fields if clean(f.get("code"))}
-        if late_codes:
-            for importer_name, importer, importer_kwargs in importer_specs:
-                result = importer(
-                    fields=fields, docs_dir=docs_dir, max_vac=args.max_vac,
-                    restrict_codes=late_codes, **importer_kwargs)
-                if importer_name == "at_charts":
-                    at_chart_count += result
-                elif importer_name == "de_vac":
-                    de_vac_count += result
-                elif importer_name == "it_charts":
-                    it_chart_count += result
-                elif importer_name == "vac":
-                    vac_count += result["downloaded"]
-                    vac_created_airfields += result["createdAirfields"]
 
     # Drop major airports / military bases (any source) before translating or merging: a glider
     # must not land there, and they otherwise dominate the pinned "best options" list.
@@ -528,7 +470,6 @@ def main() -> None:
             "deVacCount": de_vac_count,
             "itChartCount": it_chart_count,
             "vacOnlyAirfieldsCreated": vac_created_airfields,
-            "streckenflugCount": streckenflug_count,
             "contributionNotes": contrib_notes,
             "contributionPhotos": contrib_photos,
             "sources": sources,
@@ -571,13 +512,12 @@ def main() -> None:
     label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
         f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
-        f"{vac_count} FR + {at_chart_count} AT + {de_vac_count} DE + {it_chart_count} IT VAC PDFs, {vac_created_airfields} VAC-only airfields, "
-        f"{streckenflug_count} streckenflug fields, {streckenflug_media_count} streckenflug images"
+        f"{vac_count} FR + {at_chart_count} AT + {de_vac_count} DE + {it_chart_count} IT VAC PDFs, {vac_created_airfields} VAC-only airfields"
     )
 
 
 # All source downloads route through one on-disk cache so a full rebuild triggered by ONE
-# changed source does not re-fetch the others (e.g. a streckenflug edit must not re-pull the
+# changed source does not re-fetch the others (e.g. a new contribution must not re-pull the
 # 450 MB Austrian AIP ZIP or re-crawl the DFS tree). The cache dir (raw_dir) is persisted across
 # CI runs; see the "Restore/Save source download cache" steps in build-data-pack.yml.
 SOURCE_CACHE_TTL_S = 20 * 3600  # a daily cron always revalidates; intra-day rebuilds reuse.
@@ -700,7 +640,7 @@ SOURCE_VERSIONS_FILE = ".source-versions.json"
 def write_source_versions(raw_dir: Path, versions: dict[str, str]) -> None:
     """Record the AIRAC-cycle markers of the cached sources. CI keys the source-download cache
     on this file's hash (see build-data-pack.yml), so the cache is re-saved only when a cycle
-    actually rolls — a rebuild triggered by a volatile source (streckenflug, a contribution)
+    actually rolls — a rebuild triggered by a volatile source (a new contribution)
     reuses the restored downloads and saves nothing."""
     raw_dir.mkdir(parents=True, exist_ok=True)
     (raw_dir / SOURCE_VERSIONS_FILE).write_text(
@@ -746,36 +686,7 @@ def source_version_tag(url_or_path: str) -> str:
     return ""
 
 
-def extract_streckenflug_list_versions(page: str) -> list[tuple[str, str]]:
-    """From a streckenflug list page, return (id, visit-year) pairs (the change signal)."""
-    pairs: list[tuple[str, str]] = []
-    for row_match in re.finditer(r"<tr\b[^>]*>(?P<row>.*?)</tr>", page, re.I | re.S):
-        row = row_match.group("row")
-        id_match = re.search(r"iID=(\d+)", row)
-        if not id_match:
-            continue
-        cells = re.findall(r"<td\b[^>]*>(.*?)</td>", row, re.I | re.S)
-        visit = normalize_space(strip_html(cells[4])) if len(cells) > 4 else ""
-        pairs.append((id_match.group(1), visit))
-    return pairs
-
-
-def streckenflug_list_fingerprint(list_url: str, countries: Sequence[str], raw_dir: Path) -> str:
-    """Hash of (id, visit-year) across the country list pages. Year-granular by design."""
-    entries: list[str] = []
-    for country in countries:
-        url = streckenflug_country_list_url(list_url, str(country).upper())
-        try:
-            page = read_text(url, raw_dir)
-        except Exception as error:  # noqa: BLE001 - unknown -> force rebuild (safe)
-            print(f"streckenflug list fingerprint failed for {country}: {error}", file=sys.stderr)
-            return ""
-        entries.extend(f"{iid}:{visit}" for iid, visit in extract_streckenflug_list_versions(page))
-    entries.sort()
-    return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:16]
-
-
-def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions: str = "", vac_at: str = "", vac_de: str = "", vac_it: str = "") -> dict[str, Any]:
+def build_source_state(*, cupx: str, vac: str, contributions: str = "", vac_at: str = "", vac_de: str = "", vac_it: str = "") -> dict[str, Any]:
     return {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "cupx": cupx,
@@ -783,7 +694,6 @@ def build_source_state(*, cupx: str, vac: str, streckenflug: str, contributions:
         "vacAt": vac_at,
         "vacDe": vac_de,
         "vacIt": vac_it,
-        "streckenflug": streckenflug,
         "contributions": contributions,
     }
 
@@ -808,7 +718,7 @@ def contributions_fingerprint(contrib_dir: Path) -> str:
 def source_states_match(previous: dict[str, Any] | None, current: dict[str, Any]) -> bool:
     if not previous:
         return False
-    keys = ("schemaVersion", "cupx", "vac", "vacAt", "vacDe", "vacIt", "streckenflug", "contributions")
+    keys = ("schemaVersion", "cupx", "vac", "vacAt", "vacDe", "vacIt", "contributions")
     return all(str(previous.get(k) or "") == str(current.get(k) or "") for k in keys)
 
 
@@ -819,8 +729,8 @@ def source_state_version(source_state: dict[str, Any]) -> str:
     last synced. Deriving it from the source state (schema + upstream fingerprints) rather than
     the build clock means a rebuild that changed nothing upstream — notably the weekly Sunday
     full refresh — keeps the same version and does NOT prompt every pilot to re-download the
-    pack. It advances only when a source actually advances (new CUPX, VAC cycle, or streckenflug
-    edit) or the schema is bumped.
+    pack. It advances only when a source actually advances (new CUPX, VAC cycle, or a new
+    contribution) or the schema is bumped.
     """
     payload = json.dumps(source_state, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
@@ -1073,12 +983,6 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "url": args.openaip_base_url if args.airfield_source == "openaip" else (args.airports_csv if args.include_vac_airfields else "not used"),
             "countries": [str(c).upper() for c in args.countries],
             "note": "Used to discover glider-relevant official airfields and coordinates; verify official country AIP/VAC documents.",
-        },
-        {
-            "name": "streckenflug.at Landout Database",
-            "url": args.streckenflug_url if args.include_streckenflug else "not used",
-            "countries": [str(c).upper() for c in args.streckenflug_countries] if args.include_streckenflug else [],
-            "note": "Public list/detail pages scraped when enabled. Additional landout source; verify against current local knowledge before flight.",
         },
         {
             "name": "Radio frequency sources",
@@ -1406,7 +1310,6 @@ def extract_frequencies_from_text(text: str, *, source: str) -> list[dict[str, A
     return found
 
 
-
 def merge_frequency_lists(*lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1463,7 +1366,6 @@ def format_frequency_short(frequencies: list[dict[str, Any]]) -> str:
     if freq_type.isdigit() or freq_type.upper() in {"OTHER", "UNKNOWN", "N/A", "NA"}:
         freq_type = ""
     return " ".join(part for part in (mhz_text, freq_type) if part)
-
 
 
 def parse_int_set(value: str) -> set[int]:
@@ -1533,7 +1435,7 @@ def load_openaip_airfields(
             else:
                 is_candidate = is_openaip_glider_relevant(record, include_type_codes)
             # Always keep an OpenAIP airfield whose ICAO code we already have from a primary
-            # source (Guide/streckenflug). This lets its authoritative name and metadata
+            # source (the Guide). This lets its authoritative name and metadata
             # merge onto that field even when it is not otherwise flagged glider-relevant
             # (e.g. type 0 aerodromes like LFMR/LFNS/LFNC with no glider keyword).
             if not is_candidate and airport_code and airport_code in known_codes:
@@ -1940,7 +1842,6 @@ def load_runway_index(runways_csv: str, raw_dir: Path, countries: Sequence[str] 
     return longest
 
 
-
 def load_frequency_index(frequencies_csv: str, raw_dir: Path) -> dict[str, list[dict[str, Any]]]:
     if not frequencies_csv:
         return {}
@@ -1999,7 +1900,6 @@ def parse_vac_codes(vac_codes: str, raw_dir: Path) -> set[str]:
     return codes
 
 
-
 def resolve_vac_root(vac_root: str, raw_dir: Path) -> tuple[str, str]:
     value = (vac_root or "").strip()
     if not value:
@@ -2054,7 +1954,6 @@ def infer_vac_date_from_root(vac_root: str) -> str:
     if not month:
         return ""
     return dt.date(int(year), month, int(day)).isoformat()
-
 
 
 def add_airfield_entries_from_index(
@@ -2117,7 +2016,6 @@ def make_open_airfield_entry(
         "source": {"name": "OpenAIP", "importedAt": dt.date.today().isoformat(), "packId": pack_id},
         "media": [],
     }
-
 
 
 # PDFs above this size get a Ghostscript recompression pass; the result is kept only when it
@@ -2233,7 +2131,7 @@ def _download_at_zip(url: str, target: Path, *, attempts: int = 3) -> None:
 
 def has_vac_doc(field: dict[str, Any]) -> bool:
     """True when a chart import pass already attached a VAC document to this field. Makes the
-    importers idempotent so the post-streckenflug second pass only touches new fields."""
+    chart importers idempotent so a re-run only attaches to fields without a chart yet."""
     docs = field.get("docs")
     return isinstance(docs, dict) and bool(clean(docs.get("vac")))
 
@@ -2790,305 +2688,7 @@ def make_vac_airfield_entry(
     }
 
 
-
-def load_streckenflug_fields(
-    list_url: str,
-    raw_dir: Path,
-    *,
-    workers: int = 1,
-    media_dir: Path,
-    pack_id: str,
-    countries: Sequence[str],
-    max_detail: int = 0,
-    include_images: bool = True,
-) -> list[dict[str, Any]]:
-    """Scrape the public streckenflug.at landout list and JSON detail endpoint.
-
-    The list page supports a server-side side_land=<country> filter. Use that first
-    so a FR/CH/IT build fetches only those countries instead of probing the full EU
-    list and throwing most detail calls away afterwards.
-    """
-    country_filter = {str(c).upper() for c in countries if str(c).strip()}
-    countries_to_fetch = sorted(country_filter) if country_filter else [""]
-
-    candidates: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for country in countries_to_fetch:
-        country_url = streckenflug_country_list_url(list_url, country)
-        label = country or "all countries"
-        print(f"Loading streckenflug.at list {label}: {country_url}", file=sys.stderr)
-        list_html = read_text(country_url, raw_dir)
-        country_items = extract_streckenflug_links(list_html, country_url, {country} if country else country_filter)
-        for item in country_items:
-            source_id = clean(item.get("streckenflugId"))
-            if not source_id or source_id in seen:
-                continue
-            if country and not clean(item.get("country")):
-                item["country"] = country
-            seen.add(source_id)
-            candidates.append(item)
-        print(f"streckenflug.at {label}: {len(country_items)} ids from public list", file=sys.stderr)
-
-    if max_detail:
-        candidates = candidates[:max_detail]
-    print(f"streckenflug.at: {len(candidates)} candidate ids after country filtering", file=sys.stderr)
-
-    if not candidates:
-        return []
-
-    worker_count = max(1, int(workers or 1))
-    progress = Progress(len(candidates), "streckenflug.at details")
-    fields: list[dict[str, Any]] = []
-    skipped = 0
-    failed = 0
-
-    def fetch_one(item: dict[str, str]) -> tuple[dict[str, Any] | None, str]:
-        source_id = clean(item.get("streckenflugId"))
-        try:
-            data = fetch_streckenflug_detail_json(source_id, raw_dir)
-            field = parse_streckenflug_detail(data, item, pack_id, media_dir, include_images=include_images)
-            if not field:
-                return None, f"skip {item.get('name','')[:32]}"
-            if country_filter and clean(field.get("country")).upper() not in country_filter:
-                return None, f"skip country {field.get('country','')}"
-            return field, f"+ {field.get('name','')[:32]}"
-        except Exception as error:
-            return None, f"err {item.get('name','')[:24]}: {error}"
-
-    if worker_count == 1:
-        for item in candidates:
-            field, status = fetch_one(item)
-            if field:
-                fields.append(field)
-            elif status.startswith("err"):
-                failed += 1
-            else:
-                skipped += 1
-            progress.update(step=1, extra=f"{status} ({len(fields)} imported)", force=status.startswith("err"))
-    else:
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [executor.submit(fetch_one, item) for item in candidates]
-            for future in as_completed(futures):
-                field, status = future.result()
-                if field:
-                    fields.append(field)
-                elif status.startswith("err"):
-                    failed += 1
-                else:
-                    skipped += 1
-                progress.update(step=1, extra=f"{status} ({len(fields)} imported)", force=status.startswith("err"))
-
-    fields.sort(key=lambda f: (clean(f.get("country")), clean(f.get("name"))))
-    progress.done(f"imported {len(fields)}, skipped {skipped}, failed {failed}, {count_media_items(fields)} images")
-    return fields
-
-
-def streckenflug_country_list_url(list_url: str, country: str) -> str:
-    if not country:
-        return list_url
-    parsed = urllib.parse.urlparse(list_url)
-    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-    query["side_land"] = [country.upper()]
-    if "side_kontinent" not in query:
-        query["side_kontinent"] = ["EU"]
-    # Keep blank fields stable; urlencode with doseq preserves the legacy endpoint shape.
-    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query, doseq=True)))
-
-
-def extract_streckenflug_links(page: str, base_url: str, countries: set[str]) -> list[dict[str, str]]:
-    """Extract streckenflug ids from either the list table or the map select."""
-    country_map = {
-        "FRANCE": "FR", "FRANKREICH": "FR",
-        "SWITZERLAND": "CH", "SCHWEIZ": "CH", "SUISSE": "CH",
-        "ITALY": "IT", "ITALIA": "IT", "ITALIEN": "IT",
-        "AUSTRIA": "AT", "ÖSTERREICH": "AT", "OESTERREICH": "AT",
-        "GERMANY": "DE", "DEUTSCHLAND": "DE",
-    }
-    items: list[dict[str, str]] = []
-    seen: set[str] = set()
-
-    # List view: rows contain iID links and country/category columns.
-    row_pattern = re.compile(r"<tr\b[^>]*>(?P<row>.*?)</tr>", re.I | re.S)
-    link_pattern = re.compile(r'<a\b[^>]*href=["\'](?P<href>[^"\']*iID=(?P<id>\d+)[^"\']*)["\'][^>]*>(?P<name>.*?)</a>', re.I | re.S)
-    for row_match in row_pattern.finditer(page):
-        row = row_match.group("row")
-        link = link_pattern.search(row)
-        if not link:
-            continue
-        source_id = link.group("id")
-        if source_id in seen:
-            continue
-        name = normalize_streckenflug_option_name(strip_html(link.group("name")))
-        if not name:
-            continue
-        row_text = strip_html(row)
-        detected_country = ""
-        for label, code in country_map.items():
-            if re.search(rf"\b{re.escape(label)}\b", row_text, flags=re.I):
-                detected_country = code
-                break
-        if countries and detected_country and detected_country not in countries:
-            continue
-        seen.add(source_id)
-        items.append({
-            "streckenflugId": source_id,
-            "name": name,
-            "url": urllib.parse.urljoin(base_url, html.unescape(link.group("href"))),
-            "country": detected_country,
-        })
-
-    # Fallback for older pages without rows: scan iID links and nearby text.
-    for match in link_pattern.finditer(page):
-        source_id = match.group("id")
-        if source_id in seen:
-            continue
-        name = normalize_streckenflug_option_name(strip_html(match.group("name")))
-        if not name:
-            continue
-        nearby = strip_html(page[match.start(): match.end() + 700])
-        detected_country = ""
-        for label, code in country_map.items():
-            if re.search(rf"\b{re.escape(label)}\b", nearby, flags=re.I):
-                detected_country = code
-                break
-        if countries and detected_country and detected_country not in countries:
-            continue
-        seen.add(source_id)
-        items.append({
-            "streckenflugId": source_id,
-            "name": name,
-            "url": urllib.parse.urljoin(base_url, html.unescape(match.group("href"))),
-            "country": detected_country,
-        })
-
-    # Map view fallback: <option value="339" style="...">L - Achensee</option>
-    option_pattern = re.compile(r'<option\b[^>]*\bvalue=["\'](?P<id>\d+)["\'][^>]*>(?P<name>.*?)</option>', re.I | re.S)
-    for match in option_pattern.finditer(page):
-        source_id = match.group("id")
-        if source_id in seen:
-            continue
-        name = normalize_streckenflug_option_name(strip_html(match.group("name")))
-        if not name:
-            continue
-        seen.add(source_id)
-        items.append({
-            "streckenflugId": source_id,
-            "name": name,
-            "url": f"https://landout.streckenflug.at/index.php?inc=map&iID={source_id}",
-            "country": next(iter(countries), "") if len(countries) == 1 else "",
-        })
-    return items
-
-def normalize_streckenflug_option_name(value: str) -> str:
-    value = normalize_space(value)
-    # The public selector prefixes values with L/F, e.g. "L - Achensee".
-    value = re.sub(r"^[A-Z]\s*-\s*", "", value)
-    return value.strip()
-
-
-def fetch_streckenflug_detail_json(source_id: str, raw_dir: Path) -> dict[str, Any]:
-    cache_path = raw_dir / f"streckenflug-landeplatz-{source_id}.json"
-    if cache_path.exists():
-        try:
-            return json.loads(cache_path.read_text(encoding="utf-8"))
-        except Exception:
-            cache_path.unlink(missing_ok=True)
-
-    params = {"inc": "map", "task": "landeplatz", "id": str(source_id)}
-    url = STRECKENFLUG_JSON_URL + "?" + urllib.parse.urlencode(params)
-    request = urllib.request.Request(url, headers={
-        "User-Agent": "MeetTheCows/0.4 (+https://github.com/)",
-        "Accept": "application/json,text/javascript,*/*;q=0.01",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": f"https://landout.streckenflug.at/index.php?inc=map&iID={source_id}",
-    })
-    with urllib.request.urlopen(request, timeout=60) as response:
-        body = response.read().decode("utf-8", errors="replace")
-    data = json.loads(body)
-    cache_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return data
-
-
-def parse_streckenflug_detail(
-    data: dict[str, Any],
-    item: dict[str, str],
-    pack_id: str,
-    media_dir: Path,
-    *,
-    include_images: bool = True,
-) -> dict[str, Any] | None:
-    name = clean(data.get("ueb")) or item.get("name", "")
-    lat = parse_float(data.get("lat"))
-    lon = parse_float(data.get("lon"))
-    if not name or lat is None or lon is None:
-        return None
-
-    country = streckenflug_country_code(clean(data.get("land"))) or item.get("country") or infer_country_from_lon_lat(lon, lat) or ""
-    code = clean(data.get("icao"))
-    category = clean(data.get("kategorie"))
-    raw_difficulty, difficulty = extract_streckenflug_difficulty(category)
-    field_type = clean(data.get("art"))
-    kind = "airfield" if "airfield" in field_type.lower() or "airport" in field_type.lower() or ICAO_RE.match(code or "") else "outlanding"
-    elevation_m = parse_first_metric_length(data.get("hoehe"))
-    length_m = parse_first_metric_length(data.get("laenge"))
-    width_m = parse_first_metric_length(data.get("breite"))
-    runway_direction = parse_runway_direction_deg(data.get("richtung"))
-    source_url = item.get("url") or f"https://landout.streckenflug.at/index.php?inc=map&iID={data.get('id') or item.get('streckenflugId', '')}"
-    notes = build_streckenflug_notes_from_json(data)
-    freqs = extract_frequencies_from_text(notes, source="streckenflug.at detail")
-    field_id = stable_id(country or "xx", code, name, lat, lon)
-
-    media: list[dict[str, Any]] = []
-    if include_images:
-        media = download_streckenflug_images(
-            field_id=field_id,
-            source_id=clean(data.get("id")) or item.get("streckenflugId", field_id),
-            html_parts=[clean(data.get("fotos")), clean(data.get("feedback"))],
-            media_dir=media_dir,
-            source_url=source_url,
-            updated_at=parse_streckenflug_date(clean(data.get("modified"))),
-        )
-
-    return {
-        "id": field_id,
-        "kind": kind,
-        "name": name,
-        "code": code,
-        "country": country,
-        "latitude": round(float(lat), 7),
-        "longitude": round(float(lon), 7),
-        "elevationM": elevation_m,
-        "difficulty": difficulty,
-        "rawDifficulty": raw_difficulty,
-        "lengthM": length_m,
-        "widthM": width_m,
-        "runwayDirectionDeg": runway_direction,
-        "frequency": format_frequency_short(freqs),
-        "frequencies": freqs,
-        "notes": notes,
-        "source": {
-            "name": "streckenflug.at Landout Database",
-            "sourceId": clean(data.get("id")) or item.get("streckenflugId", ""),
-            "importedAt": dt.date.today().isoformat(),
-            "modified": clean(data.get("modified")),
-            "packId": pack_id,
-        },
-        "media": media,
-    }
-
-
-def streckenflug_country_code(label: str) -> str:
-    mapping = {
-        "france": "FR", "frankreich": "FR",
-        "switzerland": "CH", "schweiz": "CH", "suisse": "CH",
-        "italy": "IT", "italia": "IT", "italien": "IT",
-        "austria": "AT", "österreich": "AT", "oesterreich": "AT",
-        "germany": "DE", "deutschland": "DE",
-    }
-    return mapping.get(label.strip().lower(), label.strip().upper() if len(label.strip()) == 2 else "")
-
-
-STRECKENFLUG_GERMAN_PHRASES: list[tuple[str, str]] = [
+GERMAN_PHRASES: list[tuple[str, str]] = [
     (r"\bBesichtigung am\b", "Inspection on"),
     (r"\bUnverändert wie beschrieben\b", "Unchanged from the description"),
     (r"\bDefinitiv nur Kategorie\s+([A-D])\b", r"Definitely category \1"),
@@ -3354,82 +2954,6 @@ GERMAN_TEXT_HINT_RE = re.compile(
 )
 
 
-def build_streckenflug_notes_from_json(data: dict[str, Any]) -> str:
-    """Assemble the streckenflug note in its native German.
-
-    Labels and hazard phrases are German and the free-text values are left untranslated, so the
-    note is coherent German. localize_note() then keeps this German text as the "de" slot (no
-    round-trip) and translates it once into English and French.
-    """
-    parts: list[str] = []
-    for label, key in [
-        ("Info", "info"),
-        ("Oberfläche", "oberflaeche"),
-        ("Richtung", "richtung"),
-        ("Neigung", "steigung"),
-        ("Besichtigung", "last_check_year"),
-        ("Geändert", "modified"),
-    ]:
-        value = clean(data.get(key))
-        if value:
-            value = clean_streckenflug_text(value)
-            parts.append(f"{label}: {value}")
-    obstacles: list[str] = []
-    if clean(data.get("z_uneben")) == "1":
-        obstacles.append("unebener Boden")
-    if clean(data.get("z_bodenhindernis")) == "1":
-        obstacles.append("Bodenhindernisse")
-    if clean(data.get("z_leitungen")) == "1":
-        obstacles.append("Strom-/andere Leitungen")
-    if obstacles:
-        parts.append("Gemeldete Gefahren: " + ", ".join(obstacles))
-    feedback_entries = extract_streckenflug_feedback_entries(clean(data.get("feedback")))
-    if feedback_entries:
-        parts.append("Rückmeldungen:\n" + "\n".join(f"- {entry}" for entry in feedback_entries[:4]))
-    return "\n".join(parts).strip()
-
-
-def extract_streckenflug_feedback_entries(value: str) -> list[str]:
-    if not value:
-        return []
-    entries: list[str] = []
-    pattern = re.compile(
-        r"<p\b[^>]*>\s*<b>(?P<header>.*?)</b>\s*</p>\s*<p\b[^>]*>(?P<body>.*?)</p>",
-        flags=re.I | re.S,
-    )
-    for match in pattern.finditer(value):
-        header = tidy_streckenflug_text(strip_html(match.group("header")))
-        body = streckenflug_html_text(match.group("body"))
-        if not body:
-            continue
-        entries.append(f"{header}: {body}" if header else body)
-    if entries:
-        return entries
-    fallback = streckenflug_html_text(value)
-    return [fallback] if fallback else []
-
-
-def streckenflug_html_text(value: str) -> str:
-    value = re.sub(r"<\s*(?:br|/p|/div|hr)\b[^>]*>", ". ", value, flags=re.I)
-    value = strip_html(value)
-    value = re.sub(r"https?://\S+", "", value, flags=re.I)
-    return tidy_streckenflug_text(value)
-
-
-def clean_streckenflug_text(value: str) -> str:
-    """Tidy a streckenflug free-text value without translating it.
-
-    Notes are kept in their native language and translated later by localize_note(); this only
-    strips URLs and the trailing "Inspection video" marker and normalises whitespace/casing.
-    """
-    text = normalize_space(value)
-    if not text:
-        return ""
-    text = re.sub(r"https?://\S+", "", text, flags=re.I)
-    text = re.sub(r"\bInspection video:\s*(?:[.;]\s*)?$", "", text, flags=re.I)
-    return tidy_streckenflug_text(text)
-
-
 def deepl_translate(text: str, target_lang: str = "EN-GB") -> str | None:
     """Return the translation of `text` into `target_lang`, or None when DeepL is unavailable.
 
@@ -3601,8 +3125,8 @@ def localize_note_reusing_segments(text: str, lang: str) -> str:
 def localize_note(text: str, source_lang: str | None = None) -> dict[str, str]:
     """Turn a native note string into {"en","fr","de"}.
 
-    When the note's source language is known (Guide = French, streckenflug = German, our own
-    airfield boilerplate = English), that slot keeps the original text verbatim and only the two
+    When the note's source language is known (Guide = French, our own airfield boilerplate =
+    English), that slot keeps the original text verbatim and only the two
     other languages are translated — no round-trip through a third language, and no DeepL
     characters spent re-encoding a note into its own language. When the source is unknown (e.g.
     a legacy mixed note), the English slot is translated first so DeepL can report the source and
@@ -3634,8 +3158,6 @@ def note_source_lang(field: dict[str, Any]) -> str | None:
     None for anything unrecognised, letting localize_note fall back to language detection.
     """
     name = clean((field.get("source") or {}).get("name")).lower()
-    if "streckenflug" in name:
-        return "de"
     if "guide" in name or "planeur-net" in name:
         return "fr"
     if "openaip" in name or "sia" in name or "vac" in name or "aerodrome" in name:
@@ -3900,7 +3422,7 @@ def dictionary_translate_german(text: str) -> str:
     if not looks_german_text(text):
         return text
     translated = text
-    for pattern, replacement in STRECKENFLUG_GERMAN_PHRASES:
+    for pattern, replacement in GERMAN_PHRASES:
         translated = re.sub(pattern, replacement, translated, flags=re.I)
     return translated
 
@@ -3983,80 +3505,6 @@ def looks_german_text(value: str) -> bool:
     return bool(GERMAN_TEXT_HINT_RE.search(value or ""))
 
 
-def tidy_streckenflug_text(value: str) -> str:
-    text = normalize_space(value)
-    text = re.sub(r"\s+([.,;:])", r"\1", text)
-    text = re.sub(r"([.!?])\s*\.", r"\1", text)
-    text = re.sub(r"\.{2,}", ".", text)
-    text = re.sub(r"([.!?])\s+([a-z])", lambda m: f"{m.group(1)} {m.group(2).upper()}", text)
-    return text.strip()
-
-
-def extract_streckenflug_photo_urls(html_parts: Sequence[str], source_url: str) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    # Full-resolution images are on photoswipe anchors. Avoid img src thumbnails.
-    anchor_pattern = re.compile(r'<a\b[^>]*(?:class=["\'][^"\']*photoswipe[^"\']*["\'][^>]*)?\bhref=["\'](?P<url>[^"\']*shield\.php\?[^"\']+)["\'][^>]*>', re.I | re.S)
-    datasrc_pattern = re.compile(r'\bdata-src=["\'](?P<url>[^"\']*shield\.php\?[^"\']+)["\']', re.I | re.S)
-    for part in html_parts:
-        if not part:
-            continue
-        for pattern in (anchor_pattern, datasrc_pattern):
-            for match in pattern.finditer(part):
-                url = html.unescape(match.group("url"))
-                url = urllib.parse.urljoin(source_url or "https://landout.streckenflug.at/", url)
-                if url in seen:
-                    continue
-                seen.add(url)
-                urls.append(url)
-    return urls
-
-
-def download_streckenflug_images(
-    *,
-    field_id: str,
-    source_id: str,
-    html_parts: Sequence[str],
-    media_dir: Path,
-    source_url: str,
-    updated_at: str = "",
-) -> list[dict[str, Any]]:
-    urls = extract_streckenflug_photo_urls(html_parts, source_url)
-    if not urls:
-        return []
-    field_dir = media_dir / field_id
-    field_dir.mkdir(parents=True, exist_ok=True)
-    media: list[dict[str, Any]] = []
-    for index, url in enumerate(urls, start=1):
-        try:
-            data, _content_type = download_url_bytes(url, referer=source_url)
-            target_name = f"streckenflug_{safe_filename(source_id)}_{index:02d}.jpg"
-            target = field_dir / target_name
-            write_optimized_jpeg_image(data, target)
-            item = {
-                "type": "image",
-                "url": f"media/{field_id}/{target_name}",
-                "caption": f"streckenflug.at photo {index}",
-                "source": "streckenflug.at",
-                "sourceUrl": url,
-            }
-            if updated_at:
-                item["updatedAt"] = updated_at
-            media.append(item)
-        except Exception as error:
-            print(f"streckenflug.at image download failed for {field_id}: {error}", file=sys.stderr)
-    return media
-
-def download_url_bytes(url: str, *, referer: str = "") -> tuple[bytes, str]:
-    request = urllib.request.Request(url, headers={
-        "User-Agent": "MeetTheCows/0.4 (+https://github.com/)",
-        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        "Referer": referer or "https://landout.streckenflug.at/",
-    })
-    with urllib.request.urlopen(request, timeout=90) as response:
-        return response.read(), response.headers.get("Content-Type", "")
-
-
 def write_optimized_jpeg_image(data: bytes, target: Path) -> None:
     """Write a phone-optimised JPEG: max 2560 px long edge, RGB, q85, no metadata."""
     try:
@@ -4089,18 +3537,6 @@ def write_optimized_jpeg_image(data: bytes, target: Path) -> None:
         image.save(target, format="JPEG", quality=PACK_IMAGE_JPEG_QUALITY, optimize=True, progressive=True)
 
 
-def parse_first_metric_length(value: object) -> float | None:
-    text = clean(value)
-    if not text:
-        return None
-    # streckenflug values look like "940m | 3084" or "200m | 656ft".
-    match = re.search(r"(-?\d+(?:[.,]\d+)?)\s*m\b", text, flags=re.I)
-    if match:
-        return float(match.group(1).replace(",", "."))
-    match = re.search(r"(-?\d+(?:[.,]\d+)?)", text)
-    return float(match.group(1).replace(",", ".")) if match else None
-
-
 def parse_float(value: object) -> float | None:
     text = clean(value).replace(",", ".")
     if not text:
@@ -4124,14 +3560,6 @@ def parse_runway_direction_deg(value: object) -> float | None:
     return float(number) if 0 <= number <= 360 else None
 
 
-def parse_streckenflug_date(value: str) -> str:
-    match = re.match(r"(\d{2})\.(\d{2})\.(\d{4})", value or "")
-    if not match:
-        return value
-    day, month, year = match.groups()
-    return f"{year}-{month}-{day}"
-
-
 def strip_html(value: str) -> str:
     value = re.sub(r"<script\b.*?</script>", " ", value, flags=re.I | re.S)
     value = re.sub(r"<style\b.*?</style>", " ", value, flags=re.I | re.S)
@@ -4141,30 +3569,6 @@ def strip_html(value: str) -> str:
 
 def normalize_space(value: str) -> str:
     return re.sub(r"\s+", " ", value or " ").strip()
-
-
-def infer_country_from_lon_lat(lon: float, lat: float) -> str:
-    # Rough fallback only, used when the scraped page omits a country label.
-    if 41 <= lat <= 52 and -5 <= lon <= 10:
-        return "FR"
-    if 45 <= lat <= 48.5 and 5 <= lon <= 11:
-        return "CH"
-    if 36 <= lat <= 47.5 and 6 <= lon <= 19:
-        return "IT"
-    return ""
-
-
-def extract_streckenflug_difficulty(text: str) -> tuple[str, str]:
-    match = re.search(r"\b([ABCDU])\s*-\s*(Good option|Caution|Only for emergencies|no longer landable|Unknown)", text, flags=re.I)
-    if match:
-        raw = f"streckenflug-{match.group(1).upper()}"
-        value = match.group(1).upper()
-        return raw, "UNKNOWN" if value == "U" else value
-    if re.search(r"Good option", text, flags=re.I): return "streckenflug-A", "A"
-    if re.search(r"Caution", text, flags=re.I): return "streckenflug-B", "B"
-    if re.search(r"Only for emergencies", text, flags=re.I): return "streckenflug-C", "C"
-    if re.search(r"no longer landable", text, flags=re.I): return "streckenflug-D", "D"
-    return "streckenflug-unknown", "UNKNOWN"
 
 
 def consolidate_duplicate_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -4351,8 +3755,6 @@ def name_quality_score(field: dict[str, Any], name: str) -> tuple[int, int, int,
         source_score = 90
     elif "guide" in source_name or "planeur-net" in source_name:
         source_score = 70
-    elif "streckenflug" in source_name:
-        source_score = 50
 
     cleaned = clean_display_name(name)
     typo_penalty = 1 if re.search(r"\bcair\b", cleaned, flags=re.I) else 0
@@ -4469,7 +3871,6 @@ def frequency_source_score(freq: dict[str, Any]) -> int:
     if clean(freq.get("description")):
         score += 1
     return score
-
 
 
 def count_media_items(fields: Iterable[dict[str, Any]]) -> int:
@@ -4619,3 +4020,4 @@ def clean(value: object) -> str:
 
 if __name__ == "__main__":
     main()
+

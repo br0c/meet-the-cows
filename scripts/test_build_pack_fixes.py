@@ -4,7 +4,7 @@
 Run directly: `python scripts/test_build_pack_fixes.py`. No network or API key needed;
 the DeepL call is monkeypatched. Guards the fixes for:
   - truncated airfield names (Barcelonnett / Sisteron The / LFNC St Crepin)
-  - German streckenflug notes not being fully translated (French must stay French)
+  - German notes not being fully translated (French must stay French)
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def load_build_pack():
 
 bp = load_build_pack()
 GUIDE = "planeur-net / Guide des Aires de Sécurité"
-STRK = "streckenflug.at Landout Database"
+SECONDARY = "Secondary source"  # any non-primary source (scores below the Guide in name selection)
 
 
 def field(source: str, name: str) -> dict:
@@ -47,15 +47,15 @@ def test_clean_display_name_keeps_place_names():
         assert bp.clean_display_name(name) == name, name
 
 
-def test_guide_full_name_beats_truncated_streckenflug():
+def test_guide_full_name_beats_truncated_secondary():
     cases = [
         ("#42 LFMR Barcelonnette", "Barcelonnett", "Barcelonnette"),
         ("#32 LFNS Sisteron", "Sisteron The", "Sisteron"),
         ("#40 LFNC St Crepin", "LFNC St Crepin", "St Crepin"),
     ]
-    for guide_name, strk_name, expected in cases:
-        group = [field(GUIDE, guide_name), field(STRK, strk_name)]
-        assert bp.choose_best_name(group, group[0]) == expected, (guide_name, strk_name)
+    for guide_name, alt_name, expected in cases:
+        group = [field(GUIDE, guide_name), field(SECONDARY, alt_name)]
+        assert bp.choose_best_name(group, group[0]) == expected, (guide_name, alt_name)
 
 
 def test_openaip_name_wins_when_present():
@@ -174,7 +174,6 @@ def test_drop_major_airports_filters_and_keeps_order():
 
 
 def test_note_source_lang_by_source_name():
-    assert bp.note_source_lang({"source": {"name": STRK}}) == "de"
     assert bp.note_source_lang({"source": {"name": GUIDE}}) == "fr"
     assert bp.note_source_lang({"source": {"name": "OpenAIP"}}) == "en"
     assert bp.note_source_lang({"source": {"name": "SIA VAC + OpenAIP/airport coordinates"}}) == "en"
@@ -341,13 +340,12 @@ def test_deepl_retries_on_429_then_succeeds(monkeypatch=None):
 
 
 def test_source_states_match():
-    base = bp.build_source_state(cupx="etagA", vac="2026-06-11", streckenflug="hash1", contributions="c1")
+    base = bp.build_source_state(cupx="etagA", vac="2026-06-11", contributions="c1")
     assert bp.source_states_match(dict(base), base) is True
     assert bp.source_states_match(None, base) is False
     # Any source change -> mismatch -> rebuild.
     assert bp.source_states_match({**base, "cupx": "etagB"}, base) is False
     assert bp.source_states_match({**base, "vac": "2026-07-09"}, base) is False
-    assert bp.source_states_match({**base, "streckenflug": "hash2"}, base) is False
     assert bp.source_states_match({**base, "contributions": "c2"}, base) is False
     # A schema bump forces a rebuild even if sources are identical.
     assert bp.source_states_match({**base, "schemaVersion": base["schemaVersion"] - 1}, base) is False
@@ -536,7 +534,7 @@ def test_parse_runway_direction():
     assert bp.parse_runway_direction_deg("361") is None
     assert bp.parse_runway_direction_deg("grass") is None
     assert bp.parse_runway_direction_deg("") is None
-    # Streckenflug free-text 'richtung' goes through the same parser since the dedupe.
+    # Free-text runway values (e.g. 'Grasbahn 07/25') go through the same parser.
     assert bp.parse_runway_direction_deg("Grasbahn 07/25") == 70.0
     assert bp.parse_runway_direction_deg("N-S") is None
 
@@ -590,21 +588,6 @@ def test_import_vac_second_pass_restricted():
         assert probed == ["https://sia.example/vac/AD-2.LFHM.pdf"], probed
         assert [len(f["media"]) for f in fields] == [1, 1, 1, 0]
         assert fields[1]["docs"]["vac"] == "docs/vac/LFXA.pdf"
-
-
-def test_extract_streckenflug_list_versions():
-    page = (
-        "<table><tr><td>Name</td><td>Country</td><td>Region</td><td>Category</td><td>Visit</td><td></td></tr>"
-        "<tr><td><a href='index.php?inc=map&iID=452'>Altdorf</a></td><td>Switzerland</td>"
-        "<td>Alps</td><td>Landout</td><td>2026</td><td></td></tr>"
-        "<tr><td><a href='index.php?inc=map&iID=20'>Aiton</a></td><td>France</td>"
-        "<td>Alps</td><td>Landout</td><td>2022</td><td></td></tr></table>"
-    )
-    pairs = bp.extract_streckenflug_list_versions(page)
-    assert ("452", "2026") in pairs and ("20", "2022") in pairs
-    # A visit-year change alters the fingerprint (record would be re-fetched).
-    changed = page.replace("<td>2026</td>", "<td>2027</td>")
-    assert bp.extract_streckenflug_list_versions(changed) != pairs
 
 
 def main() -> None:
