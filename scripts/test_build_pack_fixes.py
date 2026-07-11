@@ -590,6 +590,18 @@ def test_import_vac_second_pass_restricted():
         assert fields[1]["docs"]["vac"] == "docs/vac/LFXA.pdf"
 
 
+def test_parse_cup_honors_source_name():
+    # Extra CUPs (Champs des Alpes, BASULM) are parsed with their own attribution and still map
+    # to French for localisation; the default stays the Guide.
+    cup = ('name,code,country,lat,lon,elev,style,rwdir,rwlen,rwwidth,freq,desc\n'
+           '"213 Aups",V13,FR,4337.517N,00610.983E,450.0m,3,,300.0m,,,"Zone cultures"\n')
+    extra = bp.parse_cup(cup, "fr", source_name="planeur-net / BASULM terrains ULM")
+    assert len(extra) == 1
+    assert extra[0]["source"]["name"] == "planeur-net / BASULM terrains ULM"
+    assert bp.note_source_lang(extra[0]) == "fr"
+    assert bp.parse_cup(cup, "fr")[0]["source"]["name"] == "planeur-net / Guide des Aires de Sécurité"
+
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

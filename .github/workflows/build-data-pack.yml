@@ -191,6 +191,8 @@ jobs:
             --multi-pack \
             --out data/packs \
             --cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx \
+            --champs-cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/champs_des_alpes.cupx \
+            --basulm-cupx https://raw.githubusercontent.com/planeur-net/outlanding/main/basulm_terrains.cupx \
             --airfield-source openaip \
             --vac-root auto \
             --vac-date auto \

@@ -56,6 +56,29 @@ import airac  # noqa: E402
 import packs  # noqa: E402
 
 DEFAULT_CUPX_URL = "https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx"
+_OUTLANDING_RAW = "https://raw.githubusercontent.com/planeur-net/outlanding/main"
+# Extra planeur-net CUPs merged with the Guide to broaden coverage. Each keeps "planeur-net" in
+# its source name so note_source_lang and name selection treat it exactly like the Guide (French
+# prose, same priority tier), and each carries its own attribution. Disable any one with
+# 'none'/empty on its flag. NOTE: the upstream repo has no formal licence and these are
+# third-party aggregations (BASULM = basulm.ffplum.fr / FFPLUM) — verify permission before
+# rehosting publicly.
+EXTRA_CUPS: tuple[dict[str, str], ...] = (
+    {
+        "dest": "champs_cupx", "flag": "--champs-cupx", "env": "CHAMPS_CUPX",
+        "url": f"{_OUTLANDING_RAW}/champs_des_alpes.cupx",
+        "source_name": "planeur-net / Champs des Alpes", "media_source": "Champs des Alpes",
+        "help": "planeur-net Champs des Alpes CUP/CUPX merged with the Guide to broaden Alpine outlanding coverage. 'none' or empty disables it.",
+        "note": "Additional Alpine outlanding fields and photos (planeur-net contributors); verify upstream permission/licence before rehosting publicly.",
+    },
+    {
+        "dest": "basulm_cupx", "flag": "--basulm-cupx", "env": "BASULM_CUPX",
+        "url": f"{_OUTLANDING_RAW}/basulm_terrains.cupx",
+        "source_name": "planeur-net / BASULM terrains ULM", "media_source": "BASULM terrains ULM",
+        "help": "planeur-net BASULM ULM-terrains CUP/CUPX (extracted from basulm.ffplum.fr / FFPLUM) merged with the Guide. 'none' or empty disables it.",
+        "note": "ULM (microlight) landing fields from basulm.ffplum.fr (FFPLUM), gliding-filtered by planeur-net; verify FFPLUM/BASULM permission/licence before rehosting publicly.",
+    },
+)
 OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 OURAIRPORTS_RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv"
 OURAIRPORTS_FREQUENCIES_URL = "https://davidmegginson.github.io/ourairports-data/airport-frequencies.csv"
@@ -152,7 +175,8 @@ _DEEPL_LOCK = threading.Lock()
 # v14: Italian ENAV charts attached to IT airfields; Alps pack split into West/East halves.
 # v15: second chart-attach pass so late-added airfields get their AT/DE/IT charts.
 # v16: dropped the third-party landout source; packs rebuild without its fields/photos.
-PACK_SCHEMA_VERSION = 16
+# v17: extra planeur-net CUPs (Champs des Alpes, BASULM terrains) merged in to broaden coverage.
+PACK_SCHEMA_VERSION = 17
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -216,6 +240,8 @@ class Progress:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cupx", default=DEFAULT_CUPX_URL, help="CUP/CUPX URL or local file path")
+    for _spec in EXTRA_CUPS:
+        parser.add_argument(_spec["flag"], dest=_spec["dest"], default=os.environ.get(_spec["env"], _spec["url"]), help=_spec["help"])
     parser.add_argument("--pack-id", default="fr-alps")
     parser.add_argument("--pack-name", default="France / Alps")
     parser.add_argument("--countries", nargs="+", default=["FR"], help="Countries to import from OpenAIP for glider-airfield candidates, e.g. FR CH IT")
@@ -310,7 +336,15 @@ def main() -> None:
     at_zip_url, at_zip_date = resolve_at_chart_zip(args.at_vac_root)
     de_vac_root, de_vac_date = resolve_de_vac_root(args.de_vac_root)
     it_vac_dir, it_vac_date, it_vac_fingerprint = resolve_it_vac_dir(args.it_vac_dir)
+    # Active extra CUPs (Champs des Alpes, BASULM, ...) resolved from their flags; 'none'/empty off.
+    active_extra_cups = [
+        (spec, url) for spec in EXTRA_CUPS
+        if (url := (getattr(args, spec["dest"], "") or "").strip()) and url.lower() != "none"
+    ]
+    # Fold every CUP into one fingerprint slot: a change in any triggers a rebuild, no new key.
     cup_tag = source_version_tag(args.cupx)
+    for _spec, _url in active_extra_cups:
+        cup_tag = f"{cup_tag}|{source_version_tag(_url)}"
     source_state = build_source_state(
         cupx=cup_tag,
         vac=resolved_vac_date or resolved_vac_root,
@@ -337,6 +371,18 @@ def main() -> None:
     cup_text, pictures = extract_cup_and_pictures(blob)
     fields = parse_cup(cup_text, args.pack_id)
     copied_media = copy_referenced_pictures(fields, pictures, media_dir)
+
+    # Extra planeur-net CUPs (Champs des Alpes, BASULM, ...): parse and merge each in. They flow
+    # through the same downstream (VAC attach, major-airport drop, localize, dedupe) as the Guide
+    # fields, so overlapping places consolidate and genuinely new ones broaden the coverage.
+    for spec, url in active_extra_cups:
+        extra_blob = read_bytes(url, raw_dir)
+        extra_text, extra_pictures = extract_cup_and_pictures(extra_blob)
+        extra_fields = parse_cup(extra_text, args.pack_id, source_name=spec["source_name"])
+        copied_media += copy_referenced_pictures(
+            extra_fields, extra_pictures, media_dir, source_label=spec["media_source"])
+        fields.extend(extra_fields)
+        print(f"{spec['source_name']}: merged {len(extra_fields)} fields", file=sys.stderr)
 
     frequency_index: dict[str, list[dict[str, Any]]] = {}
     if args.frequencies_csv and args.include_vac_airfields:
@@ -954,6 +1000,14 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "url": str(args.cupx),
             "note": "Outlanding data and photos; verify upstream permission/licence before rehosting publicly.",
         },
+        *[
+            {
+                "name": spec["source_name"],
+                "url": str(getattr(args, spec["dest"])) if (getattr(args, spec["dest"], "") or "").strip().lower() not in ("", "none") else "not used",
+                "note": spec["note"],
+            }
+            for spec in EXTRA_CUPS
+        ],
         {
             "name": "Service de l’Information Aéronautique (SIA) VAC",
             "url": resolved_vac_root or "not imported",
@@ -1120,7 +1174,7 @@ def is_zip(data: bytes) -> bool:
         return False
 
 
-def parse_cup(cup_text: str, pack_id: str) -> list[dict[str, Any]]:
+def parse_cup(cup_text: str, pack_id: str, source_name: str = "planeur-net / Guide des Aires de Sécurité") -> list[dict[str, Any]]:
     # Some CUP files are missing a newline after the header. Fix the common case so csv.DictReader works.
     cup_text = cup_text.replace('pics "version="', 'pics\n"version="', 1)
     rows = csv.DictReader(io.StringIO(cup_text))
@@ -1167,7 +1221,7 @@ def parse_cup(cup_text: str, pack_id: str) -> list[dict[str, Any]]:
             "frequencies": frequencies,
             "notes": strip_difficulty_tags(notes),
             "source": {
-                "name": "planeur-net / Guide des Aires de Sécurité",
+                "name": source_name,
                 "importedAt": dt.date.today().isoformat(),
                 "packId": pack_id,
             },
@@ -1247,7 +1301,7 @@ def parse_media_refs(row: dict[str, Any]) -> list[str]:
     return refs
 
 
-def copy_referenced_pictures(fields: list[dict[str, Any]], pictures: dict[str, bytes], media_dir: Path) -> int:
+def copy_referenced_pictures(fields: list[dict[str, Any]], pictures: dict[str, bytes], media_dir: Path, source_label: str = "Guide des Aires de Sécurité") -> int:
     copied = 0
     for field in fields:
         refs = field.pop("_mediaRefs", [])
@@ -1274,7 +1328,7 @@ def copy_referenced_pictures(fields: list[dict[str, Any]], pictures: dict[str, b
                 "type": kind,
                 "url": f"media/{field['id']}/{target_name}",
                 "caption": ref,
-                "source": "Guide des Aires de Sécurité",
+                "source": source_label,
             })
     return copied
 
