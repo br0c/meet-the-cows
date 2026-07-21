@@ -602,6 +602,31 @@ def test_parse_cup_honors_source_name():
     assert bp.parse_cup(cup, "fr")[0]["source"]["name"] == "planeur-net / Guide des Aires de Sécurité"
 
 
+def test_copy_referenced_pictures_skips_undecodable_image():
+    # A bad upstream picture (e.g. a Git LFS pointer committed instead of the JPEG, as with
+    # LIMW_Aoste_zpa.jpg in the 2026-07-21 guide CUPX) must be skipped with a warning, not
+    # crash the build; good pictures around it still land.
+    import io
+    import tempfile
+    from pathlib import Path
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (10, 120, 30)).save(buf, "JPEG")
+    pictures = {
+        "good.jpg": buf.getvalue(),
+        "lfs_pointer.jpg": b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 96588\n",
+    }
+    fields = [{"id": "f1", "name": "#76 LIMW Aoste", "media": [],
+               "_mediaRefs": ["good.jpg", "lfs_pointer.jpg"]}]
+    with tempfile.TemporaryDirectory() as tmp:
+        copied = bp.copy_referenced_pictures(fields, pictures, Path(tmp))
+        assert copied == 1
+        assert [m["caption"] for m in fields[0]["media"]] == ["good.jpg"]
+        # No partial file left behind for the skipped picture.
+        assert sorted(p.name for p in (Path(tmp) / "f1").iterdir()) == ["good.jpg"]
+
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

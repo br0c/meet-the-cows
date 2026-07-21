@@ -1313,16 +1313,22 @@ def copy_referenced_pictures(fields: list[dict[str, Any]], pictures: dict[str, b
             field_dir.mkdir(parents=True, exist_ok=True)
             original_name = safe_filename(ref)
             source_ext = Path(original_name).suffix.lower()
-            if source_ext == ".pdf":
-                target_name = original_name
-                target = field_dir / target_name
-                target.write_bytes(blob)
-                kind = "pdf"
-            else:
-                target_name = f"{Path(original_name).stem}.jpg"
-                target = field_dir / target_name
-                write_optimized_jpeg_image(blob, target)
-                kind = "image"
+            try:
+                if source_ext == ".pdf":
+                    target_name = original_name
+                    target = field_dir / target_name
+                    target.write_bytes(blob)
+                    kind = "pdf"
+                else:
+                    target_name = f"{Path(original_name).stem}.jpg"
+                    target = field_dir / target_name
+                    write_optimized_jpeg_image(blob, target)
+                    kind = "image"
+            except Exception as error:  # noqa: BLE001 - one bad upstream picture (e.g. a Git LFS
+                # pointer committed instead of the JPEG) must not sink the whole build.
+                print(f"CUP picture skipped for {field.get('name') or field['id']}: {ref}: {error}", file=sys.stderr)
+                target.unlink(missing_ok=True)
+                continue
             copied += 1
             field["media"].append({
                 "type": kind,
