@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.7.7-beta",
+    "date": "2026-07-23",
+    "en": [
+      "Changed: The data-source mention returns at the bottom of field details, as plain text"
+    ],
+    "fr": [
+      "Modifié : La mention de la source de données revient en bas de la fiche d'un terrain, en texte simple"
+    ],
+    "de": [
+      "Geändert: Der Datenquellen-Hinweis kehrt unten in den Felddetails zurück, als einfacher Text"
+    ]
+  },
+  {
     "version": "0.7.6-beta",
     "date": "2026-07-23",
     "en": [

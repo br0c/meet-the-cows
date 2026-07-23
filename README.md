@@ -144,7 +144,7 @@ longitudes); regenerate the map with `python scripts/generate_alps_pack_map.py` 
 
 Meet the Cows stands on work published by several aviation and gliding data providers. Please respect each source's terms, licences, and attribution requirements.
 
-- [planeur-net](https://github.com/planeur-net/outlanding): outlanding fields.
+- planeur-net: outlanding fields.
 - [Service de l'Information Aeronautique (SIA)](https://www.sia.aviation-civile.gouv.fr): official French VAC documents where included.
 - [Austro Control](https://www.austrocontrol.at): Austrian AIP aerodrome charts (CC BY 4.0 per AIP Austria GEN 3.2) where included.
 - [DFS Deutsche Flugsicherung](https://aip.dfs.de/basicVFR): German AIP VFR (BasicVFR) aerodrome charts where included.

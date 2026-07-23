@@ -1,4 +1,4 @@
-const APP_VERSION = '0.7.6-beta';
+const APP_VERSION = '0.7.7-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -161,6 +161,7 @@ const STRINGS = {
     glideNotShown: r => `Glide not shown: ${r}.`,
     notes: 'Notes', noNotes: 'No notes.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'No media attached.', openPdf: 'Open PDF',
+    source: 'Source', imported: 'imported', unknown: 'unknown',
     altMissing: 'missing', altManual: 'manual',
     gpsOk: acc => `OK ±${acc}m`, gpsErr: 'Error',
     gpsIdle: 'idle', gpsRequesting: 'requesting', gpsUnavailable: 'unavailable',
@@ -260,6 +261,7 @@ const STRINGS = {
     glideNotShown: r => `Finesse non affichée : ${r}.`,
     notes: 'Notes', noNotes: 'Aucune note.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'Aucun média joint.', openPdf: 'Ouvrir le PDF',
+    source: 'Source', imported: 'importé le', unknown: 'inconnu',
     altMissing: 'absente', altManual: 'manuelle',
     gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Erreur',
     gpsIdle: 'inactif', gpsRequesting: 'en cours', gpsUnavailable: 'indisponible',
@@ -359,6 +361,7 @@ const STRINGS = {
     glideNotShown: r => `Gleitzahl nicht angezeigt: ${r}.`,
     notes: 'Notizen', noNotes: 'Keine Notizen.', mediaHeading: 'Fotos / Dokumente / VAC',
     noMedia: 'Keine Medien angehängt.', openPdf: 'PDF öffnen',
+    source: 'Quelle', imported: 'importiert am', unknown: 'unbekannt',
     altMissing: 'fehlt', altManual: 'manuell',
     gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Fehler',
     gpsIdle: 'inaktiv', gpsRequesting: 'anfordern', gpsUnavailable: 'nicht verfügbar',
@@ -1258,6 +1261,7 @@ function renderDetail(field) {
         <div class="notes">${escapeHtml(fieldNotes(field) || t('noNotes'))}</div>
         <h3>${t('mediaHeading')}</h3>
         <div class="media-grid">${media}</div>
+        <p class="footer-note">${t('source')}: ${escapeHtml(field.source?.name || t('unknown'))} ${field.source?.importedAt ? `· ${t('imported')} ${escapeHtml(field.source.importedAt)}` : ''}</p>
         <div class="button-row single">
           <button id="openContribute" class="primary contribute-btn">📷 ${t('contribute')}</button>
         </div>
