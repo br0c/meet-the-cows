@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.7.6-beta",
+    "date": "2026-07-23",
+    "en": [
+      "Changed: Field details no longer show a data-source line; sources are credited in the README and each pack's manifest"
+    ],
+    "fr": [
+      "Modifié : La fiche d'un terrain n'affiche plus la ligne de source de données ; les sources sont créditées dans le README et le manifeste de chaque pack"
+    ],
+    "de": [
+      "Geändert: Die Felddetails zeigen keine Datenquellen-Zeile mehr; die Quellen werden im README und im Manifest jedes Pakets genannt"
+    ]
+  },
+  {
     "version": "0.7.5-beta",
     "date": "2026-07-10",
     "en": [

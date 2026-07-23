@@ -144,9 +144,7 @@ longitudes); regenerate the map with `python scripts/generate_alps_pack_map.py` 
 
 Meet the Cows stands on work published by several aviation and gliding data providers. Please respect each source's terms, licences, and attribution requirements.
 
-- [planeur-net / Guide des Aires de Securite](https://github.com/planeur-net/outlanding): outlanding field data and source photos where included.
-- [planeur-net / Champs des Alpes](https://github.com/planeur-net/outlanding): additional Alpine outlanding fields and photos where included.
-- [planeur-net / BASULM terrains](https://github.com/planeur-net/outlanding): ULM (microlight) landing fields, extracted from [basulm.ffplum.fr](https://basulm.ffplum.fr) (FFPLUM) with a gliding filter, where included.
+- [planeur-net](https://github.com/planeur-net/outlanding): outlanding fields.
 - [Service de l'Information Aeronautique (SIA)](https://www.sia.aviation-civile.gouv.fr): official French VAC documents where included.
 - [Austro Control](https://www.austrocontrol.at): Austrian AIP aerodrome charts (CC BY 4.0 per AIP Austria GEN 3.2) where included.
 - [DFS Deutsche Flugsicherung](https://aip.dfs.de/basicVFR): German AIP VFR (BasicVFR) aerodrome charts where included.
