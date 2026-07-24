@@ -1,0 +1,59 @@
+{
+  "schema": 3,
+  "type": "update",
+  "fieldId": "fr_crots_44p5369_6p4357",
+  "fieldCode": "LF0551",
+  "fieldLat": 44.5368976,
+  "fieldLon": 6.4356539,
+  "fieldName": "Crots",
+  "proposed": null,
+  "date": "2026-07-18",
+  "description": "",
+  "photoAssets": [
+    {
+      "storage": "r2",
+      "key": "originals/fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_1.jpg",
+      "name": "fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_1.jpg",
+      "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_1.jpg",
+      "size": 3060395,
+      "geo": {
+        "verified": false,
+        "source": "exif",
+        "distanceM": 4992947
+      }
+    },
+    {
+      "storage": "r2",
+      "key": "originals/fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_2.jpg",
+      "name": "fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_2.jpg",
+      "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_2.jpg",
+      "size": 2191142,
+      "geo": {
+        "verified": false,
+        "source": "exif",
+        "distanceM": 4992947
+      }
+    },
+    {
+      "storage": "r2",
+      "key": "originals/fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_3.jpg",
+      "name": "fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_3.jpg",
+      "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_crots_44p5369_6p4357_2026-07-24T18-31-11-207_265ea626_3.jpg",
+      "size": 1823029,
+      "geo": {
+        "verified": false,
+        "source": "exif",
+        "distanceM": 4992947
+      }
+    }
+  ],
+  "submitter": {
+    "handle": "Fabien"
+  },
+  "geo": {
+    "verified": false,
+    "source": "exif",
+    "distanceM": 4992947
+  },
+  "submittedAt": "2026-07-24T18:31:12.185Z"
+}
