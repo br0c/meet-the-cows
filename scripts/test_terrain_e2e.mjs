@@ -176,6 +176,31 @@ check('the route reports going around terrain', /Around terrain/.test(routeText)
 check('the route names the ground that limits the glide', /Tightest/.test(routeText));
 check('the route prose uses the col name', /Col de Saint-Pantal/.test(routeText), routeText.slice(0, 70));
 
+// How tight it is, in the two numbers a ratio alone hides. The height standing between the pilot
+// and the pinch point is the one that moves; what the glide leaves over it is the clearance by
+// construction, and pinning that here is what would catch the geometry drifting away from the
+// setting it is supposed to honour.
+const crossing = /([\d,]+) m below you now; the glide clears it by ([\d,]+) m/.exec(routeText);
+check('the route says how far below you the pinch point sits', crossing !== null, routeText);
+if (crossing) {
+  const [, below, clears] = crossing.map(v => Number(String(v).replace(/,/g, '')));
+  check('the height over the pinch point is a real figure, not the clearance echoed back',
+    below > 400, `${below} m`);
+  check('the glide crosses the pinch point on exactly the clearance in force',
+    Math.abs(clears - 200) <= 1, `${clears} m against a 200 m setting`);
+}
+
+// The consequence of a col setting the ratio: the glide sized for the col overflies the field.
+// The pilot who cannot see that surplus has no way to tell this field from one that arrives on
+// the margin exactly.
+const arrivalCard = await page.$$eval('.detail-card', cards => cards
+  .map(c => c.innerText.replace(/\n/g, ' '))
+  .find(text => /^ARRIVAL/i.test(text)) || '');
+const arrivalM = Number((/([+-]?[\d,]+) m/.exec(arrivalCard)?.[1] || '').replace(/,/g, ''));
+check('the detail grid states the height the glide arrives with', arrivalCard.length > 0, arrivalCard);
+check('a terrain-limited glide arrives well above the safety margin',
+  arrivalM > 250, `${arrivalCard} against a 250 m margin`);
+
 // The mockup's three list/detail additions.
 const profile = await page.$('.route-profile');
 check('the detail sheet draws a route profile', profile !== null);

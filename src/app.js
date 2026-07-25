@@ -227,7 +227,7 @@ const STRINGS = {
     terrain: 'Terrain',
     terrainRouting: 'Fly the glide around terrain',
     terrainNote: 'With terrain on, the required glide follows a path that stays clear of the ground instead of a straight line. A field down a valley can become reachable; one behind a ridge can stop being.',
-    terrainClearance: 'Terrain clearance, m',
+    terrainClearance: 'Terrain clearance',
     terrainClearanceNote: c => `Routed glides stay at least ${c} m above the ground. Raise it for more room to turn away from rising ground; lower it to reach further.`,
     terrainAttribution: 'Elevation: Copernicus DEM (ESA). Col and pass names: © OpenStreetMap contributors.',
     terrainUnsupported: 'This browser cannot read terrain data. Glide stays straight-line.',
@@ -244,7 +244,9 @@ const STRINGS = {
     routeViaPlain: 'around terrain',
     routeViaCompass: point => `${point} of track`,
     routeLimitedByCol: (name, elev, dist) => `Tightest over ${name}, ${elev}, ${dist} away.`,
-    routeProfileKey: c => `Ground along the route, the ${c} m clearance line above it, and the glide at the ratio shown.`,
+    routeCrossing: (above, clears) => `${above} below you now; the glide clears it by ${clears}.`,
+    routeAbove: above => `${above} below you now.`,
+    routeProfileKey: c => `Ground along the route, the ${c} m clearance line above it, and the glide at the ratio shown — the two meet at the marked point.`,
     routeProfileAlt: (dist, ratio) => `Route profile over ${dist}, glide drawn at ${ratio} to 1`,
     routeStraight: 'Straight line — nothing in the way.',
     routeAround: (dist, legs) => `Around terrain: ${dist} in ${legs} leg${legs === 1 ? '' : 's'}.`,
@@ -264,7 +266,7 @@ const STRINGS = {
     gpsError: e => `GPS error: ${e}.`,
     altMissingWarning: 'GPS altitude is missing, so required glide ratio cannot be computed. Settings has a testing mode for checking figures on the ground.',
     close: 'Close', bearing: 'Bearing', distance: 'Distance', reqGlide: 'Req glide',
-    deltaSafe: 'Δsafe', elevation: 'Elevation', runway: 'Runway', frequency: 'Frequency',
+    arrivalHeight: 'Arrival', deltaSafe: 'Δsafe', elevation: 'Elevation', runway: 'Runway', frequency: 'Frequency',
     glideNotShown: r => `Glide not shown: ${r}.`,
     notes: 'Notes', noNotes: 'No notes.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'No media attached.', openPdf: 'Open PDF',
@@ -275,7 +277,7 @@ const STRINGS = {
     testPlace: 'Place',
     testPlacePlaceholder: 'Search a town, airfield, peak…',
     testSearching: 'Searching…',
-    testAltitude: 'Altitude, m',
+    testAltitude: 'Altitude',
     testStop: 'Stop testing',
     testNoResults: 'Nothing found for that.',
     testSearchFailed: 'Search failed — this needs a connection.',
@@ -379,7 +381,7 @@ const STRINGS = {
     terrain: 'Relief',
     terrainRouting: 'Calculer la finesse en contournant le relief',
     terrainNote: "Avec le relief activé, la finesse requise suit un trajet qui reste dégagé du sol au lieu d'une ligne droite. Un terrain au fond d'une vallée peut devenir atteignable ; un terrain derrière une crête peut cesser de l'être.",
-    terrainClearance: 'Garde au sol, m',
+    terrainClearance: 'Garde au sol',
     terrainClearanceNote: c => `Les trajets calculés restent au moins ${c} m au-dessus du sol. Augmentez pour garder de la marge face au relief montant ; diminuez pour aller plus loin.`,
     terrainAttribution: 'Altitudes : Copernicus DEM (ESA). Noms des cols : © contributeurs OpenStreetMap.',
     terrainUnsupported: 'Ce navigateur ne peut pas lire les données de relief. Finesse à vol d\'oiseau.',
@@ -396,7 +398,9 @@ const STRINGS = {
     routeViaPlain: 'contourne le relief',
     routeViaCompass: point => `${point} de la route`,
     routeLimitedByCol: (name, elev, dist) => `Point critique au-dessus de ${name}, ${elev}, à ${dist}.`,
-    routeProfileKey: c => `Le relief le long du trajet, la ligne de garde de ${c} m au-dessus, et la pente à la finesse affichée.`,
+    routeCrossing: (above, clears) => `${above} sous vous ; le trajet passe ${clears} au-dessus.`,
+    routeAbove: above => `${above} sous vous.`,
+    routeProfileKey: c => `Le relief le long du trajet, la ligne de garde de ${c} m au-dessus, et la pente à la finesse affichée — les deux se rejoignent au point marqué.`,
     routeProfileAlt: (dist, ratio) => `Profil du trajet sur ${dist}, pente tracée à ${ratio} pour 1`,
     routeStraight: 'Ligne droite — rien sur le chemin.',
     routeAround: (dist, legs) => `Contournement du relief : ${dist} en ${legs} branche${legs === 1 ? '' : 's'}.`,
@@ -416,7 +420,7 @@ const STRINGS = {
     gpsError: e => `Erreur GPS : ${e}.`,
     altMissingWarning: "L'altitude GPS est absente, la finesse requise ne peut pas être calculée. Ajoutez une altitude manuelle dans les Réglages pour les tests au sol.",
     close: 'Fermer', bearing: 'Relèvement', distance: 'Distance', reqGlide: 'Finesse req.',
-    deltaSafe: 'Δsécu', elevation: 'Altitude', runway: 'Piste', frequency: 'Fréquence',
+    arrivalHeight: 'Arrivée', deltaSafe: 'Δsécu', elevation: 'Altitude', runway: 'Piste', frequency: 'Fréquence',
     glideNotShown: r => `Finesse non affichée : ${r}.`,
     notes: 'Notes', noNotes: 'Aucune note.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'Aucun média joint.', openPdf: 'Ouvrir le PDF',
@@ -427,7 +431,7 @@ const STRINGS = {
     testPlace: 'Lieu',
     testPlacePlaceholder: 'Chercher une ville, un terrain, un sommet…',
     testSearching: 'Recherche…',
-    testAltitude: 'Altitude, m',
+    testAltitude: 'Altitude',
     testStop: 'Arrêter le test',
     testNoResults: 'Aucun résultat.',
     testSearchFailed: 'Recherche impossible — une connexion est nécessaire.',
@@ -531,7 +535,7 @@ const STRINGS = {
     terrain: 'Gelände',
     terrainRouting: 'Gleitpfad um das Gelände herum rechnen',
     terrainNote: 'Mit eingeschaltetem Gelände folgt die erforderliche Gleitzahl einem Pfad, der vom Boden frei bleibt, statt einer Luftlinie. Ein Feld talabwärts kann erreichbar werden, eines hinter einem Grat nicht mehr.',
-    terrainClearance: 'Geländefreiheit, m',
+    terrainClearance: 'Geländefreiheit',
     terrainClearanceNote: c => `Berechnete Pfade bleiben mindestens ${c} m über Grund. Höher für mehr Spielraum zum Wegdrehen von steigendem Gelände, niedriger für mehr Reichweite.`,
     terrainAttribution: 'Höhen: Copernicus DEM (ESA). Pass- und Sattelnamen: © OpenStreetMap-Mitwirkende.',
     terrainUnsupported: 'Dieser Browser kann keine Geländedaten lesen. Gleitzahl bleibt Luftlinie.',
@@ -548,7 +552,9 @@ const STRINGS = {
     routeViaPlain: 'um das Gelände',
     routeViaCompass: point => `${point} des Kurses`,
     routeLimitedByCol: (name, elev, dist) => `Engste Stelle über ${name}, ${elev}, ${dist} entfernt.`,
-    routeProfileKey: c => `Das Gelände entlang des Pfades, die ${c} m Freiheitslinie darüber und der Gleitpfad zur angezeigten Zahl.`,
+    routeCrossing: (above, clears) => `${above} unter dir; der Pfad bleibt ${clears} darüber.`,
+    routeAbove: above => `${above} unter dir.`,
+    routeProfileKey: c => `Das Gelände entlang des Pfades, die ${c} m Freiheitslinie darüber und der Gleitpfad zur angezeigten Zahl — beide treffen sich am markierten Punkt.`,
     routeProfileAlt: (dist, ratio) => `Pfadprofil über ${dist}, Gleitpfad bei ${ratio} zu 1`,
     routeStraight: 'Luftlinie — nichts im Weg.',
     routeAround: (dist, legs) => `Um das Gelände herum: ${dist} in ${legs} Schenkel${legs === 1 ? '' : 'n'}.`,
@@ -568,7 +574,7 @@ const STRINGS = {
     gpsError: e => `GPS-Fehler: ${e}.`,
     altMissingWarning: 'GPS-Höhe fehlt, daher kann die erforderliche Gleitzahl nicht berechnet werden. Für Bodentests eine manuelle Höhe in den Einstellungen angeben.',
     close: 'Schließen', bearing: 'Peilung', distance: 'Entfernung', reqGlide: 'Erf. Gleit',
-    deltaSafe: 'Δsicher', elevation: 'Höhe', runway: 'Bahn', frequency: 'Frequenz',
+    arrivalHeight: 'Ankunft', deltaSafe: 'Δsicher', elevation: 'Höhe', runway: 'Bahn', frequency: 'Frequenz',
     glideNotShown: r => `Gleitzahl nicht angezeigt: ${r}.`,
     notes: 'Notizen', noNotes: 'Keine Notizen.', mediaHeading: 'Fotos / Dokumente / VAC',
     noMedia: 'Keine Medien angehängt.', openPdf: 'PDF öffnen',
@@ -579,7 +585,7 @@ const STRINGS = {
     testPlace: 'Ort',
     testPlacePlaceholder: 'Ort, Flugplatz, Gipfel suchen…',
     testSearching: 'Suche…',
-    testAltitude: 'Höhe, m',
+    testAltitude: 'Höhe',
     testStop: 'Test beenden',
     testNoResults: 'Nichts gefunden.',
     testSearchFailed: 'Suche fehlgeschlagen — dafür ist eine Verbindung nötig.',
@@ -1508,11 +1514,12 @@ function nameRouteCols() {
   for (const route of state.terrain.routes.values()) {
     if (!route.critical) continue;
     const col = store.nearestCol(route.critical.latitude, route.critical.longitude);
-    if (col) {
-      route.critical.colName = col.name;
-      // The col's own surveyed height reads better than a max-pooled DEM cell, when we have it.
-      if (Number.isFinite(col.elevationM)) route.critical.colElevationM = col.elevationM;
-    }
+    // Only the name is taken. OpenStreetMap also carries the col's surveyed height, and it reads
+    // more authoritative — but it is not the ground this glide was measured against. A max-pooled
+    // cell near a saddle catches the shoulder, so it sits ~100 m above the surveyed notch, and
+    // quoting the surveyed figure beside a margin computed from the shoulder gives a route block
+    // whose own numbers disagree and whose height is optimistic by the difference.
+    if (col) route.critical.colName = col.name;
   }
 }
 
@@ -1909,6 +1916,39 @@ function renderUpdateBanner() {
   `;
 }
 
+/**
+ * A setting that is on or off, as a labelled row with the switch on the right.
+ *
+ * The control is still a real checkbox — same id, same change event, same label and keyboard
+ * behaviour — with only its appearance replaced, so nothing downstream has to know it is drawn
+ * differently. A switch reads as a state rather than as a choice being ticked, which is what
+ * these settings are, and it is a far better target for a thumb.
+ */
+function switchRow(id, label, note, checked, disabled = false) {
+  return `
+        <div class="set-row">
+          <div class="set-top">
+            <label for="${id}">${escapeHtml(label)}</label>
+            <input id="${id}" type="checkbox" class="switch" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+          </div>
+          ${note ? `<p class="set-sub">${escapeHtml(note)}</p>` : ''}
+        </div>`;
+}
+
+/** A setting with a magnitude: the value sits beside its own label, the track spans the row. */
+function sliderRow({ id, valueId, label, value, display, min, max, step, note, noteId, disabled }) {
+  return `
+        <div class="set-row">
+          <div class="set-top">
+            <label for="${id}">${escapeHtml(label)}</label>
+            <output id="${valueId}" for="${id}" class="set-value">${escapeHtml(display)}</output>
+          </div>
+          <input id="${id}" type="range" min="${min}" max="${max}" step="${step}"
+                 value="${value}" ${disabled ? 'disabled' : ''} />
+          ${note ? `<p class="set-sub"${noteId ? ` id="${noteId}"` : ''}>${escapeHtml(note)}</p>` : ''}
+        </div>`;
+}
+
 function renderSettingsPage() {
   const activeIds = new Set(activePackIds());
   // Hidden packs (e.g. the transitional whole-Alps alias kept for old cached shells) stay
@@ -1916,9 +1956,9 @@ function renderSettingsPage() {
   const packList = state.packs.filter(p => !p.hidden).map(p => {
     const count = typeof p.fieldsCount === 'number' ? `${p.fieldsCount} ${t('fieldsWord')}` : '';
     return `<label class="pack-option">
-        <input type="checkbox" class="packCheck" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
         <span class="pack-name">${escapeHtml(packName(p))}</span>
         <span class="pack-meta">${escapeHtml(count)}</span>
+        <input type="checkbox" class="packCheck switch" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
       </label>`;
   }).join('');
   const manifest = state.packManifest;
@@ -1937,8 +1977,12 @@ function renderSettingsPage() {
 
       <div class="settings-card">
         <h3>${t('app')}</h3>
-        <label for="languageSelect">${t('language')}</label>
-        <select id="languageSelect">${langOptions}</select>
+        <div class="set-row">
+          <div class="set-top">
+            <label for="languageSelect">${t('language')}</label>
+            <select id="languageSelect" class="set-control">${langOptions}</select>
+          </div>
+        </div>
         <dl class="meta-list">
           <div><dt>${t('version')}</dt><dd>${escapeHtml(APP_VERSION)} · <a href="#" id="whatsNewLink">${t('whatsNew')}</a></dd></div>
           <div><dt>${t('licenceLabel')}</dt><dd><a href="${DATA_LICENCE_URL}" target="_blank" rel="noopener">${escapeHtml(t('licenceValue'))}</a></dd></div>
@@ -1972,22 +2016,24 @@ function renderSettingsPage() {
 
       <div class="settings-card">
         <h3>${t('nearestList')}</h3>
-        <label for="sortMode">${t('sort')}</label>
-        <select id="sortMode">
-          <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>${t('sortGlide')}</option>
-          <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>${t('sortDistance')}</option>
-        </select>
-        <label for="safetyMarginM">${t('safetyMargin')}</label>
-        <input id="safetyMarginM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.safetyMarginM}" />
-        <div class="checkbox-row">
-          <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
-          <label for="hideC">${t('hideC')}</label>
+        <div class="set-row">
+          <div class="set-top">
+            <label for="sortMode">${t('sort')}</label>
+            <select id="sortMode" class="set-control">
+              <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>${t('sortGlide')}</option>
+              <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>${t('sortDistance')}</option>
+            </select>
+          </div>
         </div>
-        <div class="checkbox-row">
-          <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
-          <label for="hideD">${t('hideD')}</label>
+        <div class="set-row">
+          <div class="set-top">
+            <label for="safetyMarginM">${t('safetyMargin')}</label>
+            <input id="safetyMarginM" class="set-control" inputmode="numeric" type="number"
+                   min="0" step="50" value="${state.settings.safetyMarginM}" />
+          </div>
         </div>
-        <p class="settings-note">${escapeHtml(t('cdNote'))}</p>
+        ${switchRow('hideC', t('hideC'), '', state.settings.hideC)}
+        ${switchRow('hideD', t('hideD'), t('cdNote'), state.settings.hideD)}
       </div>
 
       ${renderTerrainCard()}
@@ -2012,19 +2058,20 @@ function renderTerrainCard() {
   return `
       <div class="settings-card">
         <h3>${t('terrain')}</h3>
-        <div class="checkbox-row">
-          <input id="terrainRouting" type="checkbox" ${state.settings.terrainRouting ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
-          <label for="terrainRouting">${t('terrainRouting')}</label>
-        </div>
-        <p class="settings-note">${escapeHtml(t('terrainNote'))}</p>
-        <label for="terrainClearanceM">${t('terrainClearance')}</label>
-        <div class="range-row">
-          <input id="terrainClearanceM" type="range"
-                 min="${TERRAIN_CLEARANCE_MIN_M}" max="${TERRAIN_CLEARANCE_MAX_M}" step="${TERRAIN_CLEARANCE_STEP_M}"
-                 value="${terrainClearanceM()}" ${state.settings.terrainRouting && !disabled ? '' : 'disabled'} />
-          <output id="terrainClearanceValue" for="terrainClearanceM">${fmtM(terrainClearanceM())}</output>
-        </div>
-        <p class="settings-note" id="terrainClearanceNote">${escapeHtml(t('terrainClearanceNote', terrainClearanceM()))}</p>
+        ${switchRow('terrainRouting', t('terrainRouting'), t('terrainNote'), state.settings.terrainRouting, disabled)}
+        ${sliderRow({
+          id: 'terrainClearanceM',
+          valueId: 'terrainClearanceValue',
+          label: t('terrainClearance'),
+          value: terrainClearanceM(),
+          display: fmtM(terrainClearanceM()),
+          min: TERRAIN_CLEARANCE_MIN_M,
+          max: TERRAIN_CLEARANCE_MAX_M,
+          step: TERRAIN_CLEARANCE_STEP_M,
+          note: t('terrainClearanceNote', terrainClearanceM()),
+          noteId: 'terrainClearanceNote',
+          disabled: !state.settings.terrainRouting || disabled,
+        })}
         ${targets.keys.length ? `
         <dl class="meta-list">
           <div><dt>${t('downloadSize')}</dt><dd>${escapeHtml(t('terrainTiles', targets.keys.length, formatBytes(targets.bytes)))}</dd></div>
@@ -2061,11 +2108,14 @@ function renderTestingCard() {
                value="${escapeHtml(state.testQuery || '')}"
                placeholder="${escapeHtml(t('testPlacePlaceholder'))}" />
         <div class="test-results" id="testResults">${renderTestResults()}</div>
-        <label for="testAltitudeM">${t('testAltitude')}</label>
-        <div class="range-row">
-          <input id="testAltitudeM" type="range" min="0" max="6000" step="100" value="${Number(settings.testAltitudeM) || 0}" />
-          <output id="testAltitudeValue" for="testAltitudeM">${fmtM(Number(settings.testAltitudeM) || 0)}</output>
-        </div>
+        ${sliderRow({
+          id: 'testAltitudeM',
+          valueId: 'testAltitudeValue',
+          label: t('testAltitude'),
+          value: Number(settings.testAltitudeM) || 0,
+          display: fmtM(Number(settings.testAltitudeM) || 0),
+          min: 0, max: 6000, step: 100,
+        })}
         ${active ? `<div class="button-row single"><button id="stopTesting">${t('testStop')}</button></div>` : ''}
         <p class="settings-note">${escapeHtml(t('testAttribution'))}</p>` : ''}
       </div>`;
@@ -2225,6 +2275,7 @@ function renderDetail(field) {
   const glideNote = row?.glideReason ? `<p class="inline-note">${escapeHtml(t('glideNotShown', row.glideReason))}</p>` : '';
   const media = (field.media || []).map(item => renderMediaItem(item, field._base)).join('') || `<p class="footer-note">${escapeHtml(t('noMedia'))}</p>`;
   const kindLabel = field.kind === 'airfield' ? t('airfield') : t('outlanding');
+  const arrivalHeightM = state.settings.terrainRouting ? routeArrivalHeightM(row) : null;
   return `
     <div class="detail-backdrop" id="detailBackdrop">
       <article class="detail" role="dialog" aria-modal="true">
@@ -2239,6 +2290,7 @@ function renderDetail(field) {
           <div class="detail-card"><span class="status-label">${t('distance')}</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
           ${routeIsDetour(row) ? `<div class="detail-card"><span class="status-label">${t('routeLength')}</span><strong>${fmtKm(row.route.pathLengthM)}</strong></div>` : ''}
           <div class="detail-card"><span class="status-label">${t('reqGlide')}</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
+          ${arrivalHeightM !== null ? `<div class="detail-card"><span class="status-label">${t('arrivalHeight')}</span><strong>${fmtSignedM(arrivalHeightM)}</strong></div>` : ''}
           <div class="detail-card"><span class="status-label">${t('deltaSafe')}</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('elevation')}</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('runway')}</span><strong>${escapeHtml(formatRunwayDimensions(field))}</strong></div>
@@ -2260,6 +2312,52 @@ function renderDetail(field) {
 }
 
 
+
+/**
+ * The two things the pinch point's elevation alone does not say: how much height you have over it
+ * now, and how much the reported glide leaves when it crosses.
+ *
+ * The second is the clearance setting by construction — the tightest point is *defined* as where
+ * the glide grazes the clearance envelope, so it could not be anything else. Saying it anyway
+ * closes the loop: it shows the pilot that the ratio is bounded by their own margin rather than by
+ * the ground, and it is read off the geometry rather than off the setting, so a route solved under
+ * an older clearance still reports what that route actually does.
+ *
+ * The first is the number that moves. It is also the one that makes the ratio legible: the glide
+ * has to cover the distance to the point on roughly the height standing between you and it.
+ */
+function routeCrossingLine(route) {
+  const critical = route?.critical;
+  const altitude = activeAltitudeM();
+  if (!critical || altitude === null || !Number.isFinite(critical.elevationM)) return '';
+  const above = altitude - critical.elevationM;
+  if (!(above > 0)) return '';
+  const clears = Number.isFinite(critical.atM) && route.requiredGlideRatio > 0
+    ? above - critical.atM / route.requiredGlideRatio
+    : null;
+  return clears !== null && clears > 0
+    ? t('routeCrossing', fmtM(above), fmtM(clears))
+    : t('routeAbove', fmtM(above));
+}
+
+/**
+ * How high over the field the required glide actually puts you.
+ *
+ * When a col sets the ratio rather than the arrival does, the glide is sized for the col — it
+ * crosses that with the clearance and then goes on descending at the same slope to a field that
+ * needed much less, so it lands in with a good deal more than the safety margin. That surplus is
+ * a real reason to prefer one field over another and a bare ratio hides it completely. When the
+ * arrival is what sets the ratio this comes back as the margin exactly, which is the honest
+ * answer: there is nothing spare.
+ */
+function routeArrivalHeightM(row) {
+  const route = row?.route;
+  const altitude = activeAltitudeM();
+  const elevation = row?.field?.elevationM;
+  if (!route || altitude === null || !Number.isFinite(elevation)) return null;
+  if (!(route.requiredGlideRatio > 0) || !Number.isFinite(route.pathLengthM)) return null;
+  return altitude - route.pathLengthM / route.requiredGlideRatio - elevation;
+}
 
 /**
  * What the glide had to do to get here. Only shown when terrain routing produced something to
@@ -2286,8 +2384,10 @@ function renderRouteBlock(row) {
       );
       lines.push(route.critical.colName
         ? t('routeLimitedByCol', route.critical.colName,
-            fmtM(route.critical.colElevationM ?? route.critical.elevationM), fmtKm(distanceM))
+            fmtM(route.critical.elevationM), fmtKm(distanceM))
         : t('routeLimitedBy', fmtM(route.critical.elevationM), fmtKm(distanceM), fmtDeg(bearingDeg)));
+      const crossing = routeCrossingLine(route);
+      if (crossing) lines.push(crossing);
     } else {
       lines.push(t('routeLimitedArrival'));
     }
@@ -2359,7 +2459,7 @@ function renderRouteProfile(row) {
     const at = Math.min(1, Math.max(0, route.critical.atM / profile.lengthM));
     const markerX = padLeft + at * plotWidth;
     const markerY = y(altitude - route.critical.atM / ratio);
-    const label = route.critical.colName || fmtM(route.critical.colElevationM ?? route.critical.elevationM);
+    const label = route.critical.colName || fmtM(route.critical.elevationM);
     marker = `
       <line x1="${markerX.toFixed(1)}" y1="${padTop}" x2="${markerX.toFixed(1)}" y2="${(padTop + plotHeight).toFixed(1)}" class="rp-mark" />
       <circle cx="${markerX.toFixed(1)}" cy="${markerY.toFixed(1)}" r="3.5" class="rp-dot" />
