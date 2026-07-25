@@ -2,7 +2,10 @@ name: Deploy app to Pages
 
 on:
   push:
-    branches: [main]
+    # main -> production; dev -> the experimental deployment (next.meetthecows.org). Any other
+    # branch can still be deployed on demand with workflow_dispatch, which uses that branch's
+    # name for its own preview URL.
+    branches: [main, dev]
     paths:
       - "index.html"
       - "manifest.webmanifest"
@@ -66,7 +69,11 @@ jobs:
       # sources are unchanged, and the app shell never shipped (0.7.1-beta went out this way).
       # The shared pages-deploy concurrency group serializes the two workflows, so the rare
       # double deploy on a mixed push is harmless — the later run ships the same packs again.
+      # Packs only travel with the app shell while they are served from the same origin. Once
+      # PACKS_BASE_URL points at a data host, these two steps would download ~300 MB and upload
+      # it again for nothing, so they are skipped and an app deploy becomes a few hundred KB.
       - name: Restore latest generated data pack cache
+        if: vars.PACKS_BASE_URL == ''
         uses: actions/cache/restore@v6
         with:
           path: data/packs
@@ -75,6 +82,7 @@ jobs:
             pages-pack-
 
       - name: Restore packs from current Pages deployment when cache is unavailable
+        if: vars.PACKS_BASE_URL == ''
         run: |
           if [ -f "data/packs/packs.json" ]; then
             echo "Using cached data packs."
@@ -88,18 +96,19 @@ jobs:
 
       - name: Assemble Pages site
         run: |
-          mkdir -p dist/site/packs
+          mkdir -p dist/site
 
           cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json config.js dist/site/
           if [ -d icons ]; then cp -R icons dist/site/icons; fi
           mkdir -p dist/site/src
           cp src/app.js dist/site/src/app.js
 
-          # All pack dirs + shared media (_shared) + packs.json.
-          cp -R data/packs/. dist/site/packs/
+          # All pack dirs + shared media (_shared) + packs.json — only when packs are served
+          # from this origin; otherwise the app reads them from the data host.
+          if [ -d data/packs ]; then mkdir -p dist/site/packs && cp -R data/packs/. dist/site/packs/; fi
 
           find dist/site -maxdepth 3 -type f | sort | head -80
-          du -sh dist/site dist/site/packs
+          du -sh dist/site
 
       # Deployment config is written per environment, overwriting the committed defaults (which
       # stay empty so a local checkout behaves like a plain single-origin site). Everything is
@@ -136,6 +145,13 @@ jobs:
           print(f"self.MTC_CONFIG = {json.dumps(cfg, indent=2)};")
           PY
           cat dist/site/config.js
+
+          # Experimental deployments are shared by hand, never advertised: keep them out of
+          # search results so a pilot can never arrive at a test build from a web search.
+          if [ -n "${CHANNEL}" ]; then
+            printf '/*\n  X-Robots-Tag: noindex, nofollow\n' > dist/site/_headers
+            echo "channel '${CHANNEL}': marked noindex"
+          fi
 
       # --- GitHub Pages (default) ------------------------------------------------------------
       - name: Setup Pages
