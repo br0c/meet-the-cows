@@ -1,4 +1,4 @@
-const APP_VERSION = '0.8.1-beta';
+const APP_VERSION = '0.8.2-beta';
 // Shell cache is versioned and replaced on app update. Data cache is stable so downloaded
 // media/docs survive app updates (an app update must never wipe a pilot's offline pack).
 const SHELL_CACHE = `mtc-shell-${APP_VERSION}`;
@@ -43,7 +43,16 @@ const SCOPE_URL = new URL(SCOPE);
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const shell = await caches.open(SHELL_CACHE);
-    await shell.addAll(APP_SHELL);
+    // NOT cache.addAll: its fetches go through the browser's HTTP cache, so a host serving the
+    // shell with a long max-age lets a brand-new worker fill its brand-new versioned cache with
+    // the OLD build. That is not hypothetical — Cloudflare Pages serves these files with
+    // max-age=14400, and 0.8.1 installed itself and then cached 0.8.0 for four hours.
+    // 'reload' bypasses the HTTP cache on the way out and refreshes it on the way back.
+    await Promise.all(APP_SHELL.map(async url => {
+      const response = await fetch(url, { cache: 'reload' });
+      if (!isCacheable(response)) throw new Error(`shell fetch failed: ${url} (${response.status})`);
+      await shell.put(url, response);
+    }));
     const data = await caches.open(DATA_CACHE);
     await cacheOptional(data, PACK_CORE);
     await self.skipWaiting();
@@ -67,13 +76,15 @@ self.addEventListener('fetch', event => {
   if (!packData && !isSameScope(requestUrl)) return;
 
   if (event.request.mode === 'navigate') {
-    event.respondWith(networkFirst(SHELL_CACHE, event.request, u('index.html')));
+    event.respondWith(networkFirst(SHELL_CACHE, event.request, u('index.html'), true));
     return;
   }
 
   const key = requestUrl.toString();
   if (APP_SHELL_SET.has(key)) {
-    event.respondWith(networkFirst(SHELL_CACHE, event.request));
+    // revalidate: the shell must never be answered from a stale HTTP cache entry, whatever
+    // max-age the host decided to put on it. Costs a conditional request and usually a 304.
+    event.respondWith(networkFirst(SHELL_CACHE, event.request, '', true));
     return;
   }
   if (!packData) return;
@@ -98,10 +109,12 @@ async function cacheOptional(cache, urls) {
   }
 }
 
-async function networkFirst(cacheName, request, fallbackUrl = '') {
+async function networkFirst(cacheName, request, fallbackUrl = '', revalidate = false) {
   const cache = await caches.open(cacheName);
   try {
-    const response = await fetch(request);
+    // 'no-cache' means "ask the server, but a 304 is fine" — not "download it again". Offline
+    // this still throws and falls through to the cached copy below, exactly as before.
+    const response = await fetch(revalidate ? new Request(request, { cache: 'no-cache' }) : request);
     if (isCacheable(response)) await cache.put(request, response.clone());
     return response;
   } catch (error) {

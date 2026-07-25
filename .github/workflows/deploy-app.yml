@@ -139,12 +139,35 @@ jobs:
           PY
           cat dist/site/config.js
 
+          # The app shell must never be answered from a stale browser cache. Cloudflare Pages
+          # defaults these to max-age=14400, which meant an update could sit unseen for four
+          # hours — and, worse, a freshly installed service worker would fill its brand-new
+          # versioned cache with the previous build's bytes. The shell is a few hundred KB and
+          # revalidates to a 304, so there is nothing to save here. Icons keep the default.
+          cat > dist/site/_headers <<'HEADERS'
+          /index.html
+            Cache-Control: public, max-age=0, must-revalidate
+          /service-worker.js
+            Cache-Control: public, max-age=0, must-revalidate
+          /config.js
+            Cache-Control: public, max-age=0, must-revalidate
+          /styles.css
+            Cache-Control: public, max-age=0, must-revalidate
+          /manifest.webmanifest
+            Cache-Control: public, max-age=0, must-revalidate
+          /release-notes.json
+            Cache-Control: public, max-age=0, must-revalidate
+          /src/*
+            Cache-Control: public, max-age=0, must-revalidate
+          HEADERS
+
           # Experimental deployments are shared by hand, never advertised: keep them out of
           # search results so a pilot can never arrive at a test build from a web search.
           if [ -n "${CHANNEL}" ]; then
-            printf '/*\n  X-Robots-Tag: noindex, nofollow\n' > dist/site/_headers
+            printf '/*\n  X-Robots-Tag: noindex, nofollow\n' >> dist/site/_headers
             echo "channel '${CHANNEL}': marked noindex"
           fi
+          cat dist/site/_headers
 
       # --- GitHub Pages ------------------------------------------------------------------------
       # The default target, and — once DEPLOY_TARGET is 'cloudflare' — also the retired origin.

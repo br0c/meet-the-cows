@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.2-beta",
+    "date": "2026-07-25",
+    "en": [
+      "Fixed: app updates could sit unseen for up to four hours because the new version was being answered from the browser's cache"
+    ],
+    "fr": [
+      "Corrigé : les mises à jour de l'application pouvaient rester invisibles jusqu'à quatre heures, la nouvelle version étant servie depuis le cache du navigateur"
+    ],
+    "de": [
+      "Behoben: App-Updates konnten bis zu vier Stunden unbemerkt bleiben, weil die neue Version aus dem Browser-Cache beantwortet wurde"
+    ]
+  },
+  {
     "version": "0.8.1-beta",
     "date": "2026-07-25",
     "en": [
