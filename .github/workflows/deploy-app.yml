@@ -121,15 +121,22 @@ jobs:
           PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
           CANONICAL_APP_URL: ${{ vars.CANONICAL_APP_URL }}
           SITE_URL: ${{ vars.SITE_URL }}
+          # Explicit opt-in for the "the app has moved" notice on retired origins. Kept separate
+          # from CANONICAL_APP_URL so the new domain can be live, tested and used for a while
+          # before any pilot is nudged off the old one. Set MIGRATION_ENABLED=true to start it.
+          MIGRATION_ENABLED: ${{ vars.MIGRATION_ENABLED }}
           # NB: `x == 'main' && '' || x` does NOT work — '' is falsy, so the || arm always
           # wins and every deployment is labelled with its branch. Test the negative instead.
           CHANNEL: ${{ github.ref_name != 'main' && github.ref_name || '' }}
         run: |
-          # The migration notice must never send pilots to an address that does not serve yet
-          # (the custom domain is attached after the project's first deploy, so there is a real
-          # window where it 404s). Probe it; drop it from this deploy if it is not live. The
-          # next deploy picks it up automatically once it is.
-          if [ -n "${CANONICAL_APP_URL}" ] && ! curl -fsS -o /dev/null --max-time 10 "${CANONICAL_APP_URL}"; then
+          # Two independent conditions must both hold before a retired origin nags anyone:
+          #   1. MIGRATION_ENABLED=true — the deliberate decision that it is time.
+          #   2. the URL actually serves — so the notice can never point at a dead address
+          #      (the custom domain is attached only after the project's first deploy).
+          if [ "${MIGRATION_ENABLED}" != "true" ]; then
+            [ -n "${CANONICAL_APP_URL}" ] && echo "MIGRATION_ENABLED is not 'true' — migration notice stays off"
+            CANONICAL_APP_URL=""
+          elif [ -n "${CANONICAL_APP_URL}" ] && ! curl -fsS -o /dev/null --max-time 10 "${CANONICAL_APP_URL}"; then
             echo "::warning::${CANONICAL_APP_URL} is not reachable — omitting the migration notice from this deployment"
             CANONICAL_APP_URL=""
           fi
