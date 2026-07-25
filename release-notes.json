@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.5-beta",
+    "date": "2026-07-25",
+    "en": [
+      "Fixed: iOS kept showing a stale home-screen icon even after reinstalling — the icon address now changes with each release, so the phone fetches it again"
+    ],
+    "fr": [
+      "Corrigé : iOS conservait une ancienne icône d'écran d'accueil même après réinstallation — l'adresse de l'icône change désormais à chaque version, forçant le téléchargement"
+    ],
+    "de": [
+      "Behoben: iOS zeigte auch nach Neuinstallation ein altes Startbildschirm-Symbol — die Symboladresse ändert sich jetzt mit jeder Version, sodass das Telefon es neu lädt"
+    ]
+  },
+  {
     "version": "0.8.4-beta",
     "date": "2026-07-25",
     "en": [
