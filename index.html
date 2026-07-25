@@ -26,6 +26,9 @@
     <meta name="twitter:title" content="Meet the Cows — outlanding field viewer for glider pilots" />
     <meta name="twitter:description" content="Offline cockpit aid showing nearby outlanding fields with distance, bearing, required glide ratio, notes, photos, and VAC documents. Not for primary navigation." />
     <meta name="twitter:image" content="https://app.meetthecows.org/icons/og-image.png" />
+    <!-- iOS ignores manifest SVG icons for Add to Home Screen; without this it invents
+         one from a screenshot, which makes two installed builds indistinguishable. -->
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="stylesheet" href="styles.css" />
   </head>

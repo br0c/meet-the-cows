@@ -166,10 +166,13 @@ jobs:
           HEADERS
 
           # Experimental deployments are shared by hand, never advertised: keep them out of
-          # search results so a pilot can never arrive at a test build from a web search.
+          # search results so a pilot can never arrive at a test build from a web search. They
+          # also get their own icon colour and name, because both builds are installed on the
+          # same phone and the wrong one must not be openable by accident.
           if [ -n "${CHANNEL}" ]; then
             printf '/*\n  X-Robots-Tag: noindex, nofollow\n' >> dist/site/_headers
             echo "channel '${CHANNEL}': marked noindex"
+            python3 scripts/apply_channel_branding.py --dir dist/site --channel "${CHANNEL}"
           fi
           cat dist/site/_headers
 

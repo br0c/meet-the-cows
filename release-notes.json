@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.3-beta",
+    "date": "2026-07-25",
+    "en": [
+      "Sharper home-screen icon on iOS, which previously had only an SVG to work from"
+    ],
+    "fr": [
+      "Icône plus nette sur l'écran d'accueil iOS, qui ne disposait auparavant que d'un SVG"
+    ],
+    "de": [
+      "Schärferes Startbildschirm-Symbol unter iOS, dem bisher nur ein SVG zur Verfügung stand"
+    ]
+  },
+  {
     "version": "0.8.2-beta",
     "date": "2026-07-25",
     "en": [
