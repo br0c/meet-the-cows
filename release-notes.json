@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.4-beta",
+    "date": "2026-07-25",
+    "en": [
+      "Fixed: the home-screen icon could pick up a stray dark edge on iOS, which does not support transparency in app icons"
+    ],
+    "fr": [
+      "Corrigé : l'icône de l'écran d'accueil pouvait présenter un liseré sombre sur iOS, qui ne gère pas la transparence dans les icônes"
+    ],
+    "de": [
+      "Behoben: Das Startbildschirm-Symbol konnte unter iOS einen dunklen Rand bekommen, da iOS keine Transparenz in App-Symbolen unterstützt"
+    ]
+  },
+  {
     "version": "0.8.3-beta",
     "date": "2026-07-25",
     "en": [
