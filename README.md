@@ -172,12 +172,18 @@ The exact sources used by a deployed pack are listed in that pack's `manifest.js
 Three separate origins, on purpose — a browser scopes service workers, caches and local storage
 per origin, so the app, the landing page and any experimental build can never disturb each other:
 
-| Origin | What it is | Workflow |
-|---|---|---|
-| `app.meetthecows.org` | the PWA | `deploy-app.yml` (branch `main`) |
-| `meetthecows.org` | landing page | `deploy-site.yml` (`site/`) |
-| `data.meetthecows.org` | pack data in R2 | `build-data-pack.yml` |
-| `next.meetthecows.org` | experimental build, shared by hand and marked `noindex` | `deploy-app.yml` (branch `dev`) |
+| Origin | What it is | Deployed as | Workflow |
+|---|---|---|---|
+| `app.meetthecows.org` | the PWA | Worker `meet-the-cows-app` | `deploy-app.yml` (branch `main`) |
+| `next.meetthecows.org` | experimental build, shared by hand and marked `noindex` | Worker `meet-the-cows-next` | `deploy-app.yml` (branch `dev`) |
+| `meetthecows.org` | landing page | Worker `meet-the-cows-site` | `deploy-site.yml` (`site/`) |
+| `data.meetthecows.org` | pack data in R2 | R2 bucket | `build-data-pack.yml` |
+
+The app and the channel build share one `deploy/wrangler.toml` and differ only by the `--name`
+passed to `wrangler deploy`. That is deliberate: a channel served by a different stack than
+production rehearses the wrong thing, and the difference shows up exactly where it is least
+welcome — header handling, cache defaults, 404 behaviour. Everything is a Worker because Pages is
+being folded into Workers and this account can no longer create Pages projects.
 
 Deployment is split so app-only changes do not rebuild the data pack:
 

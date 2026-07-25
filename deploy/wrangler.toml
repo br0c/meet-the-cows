@@ -1,0 +1,25 @@
+# How the app is served — for BOTH main and the dev channel.
+#
+# ONE config, deployed twice under different Worker names, because the whole point of the
+# experimental build is to rehearse what production will do. When next.meetthecows.org ran on a
+# Worker and app.meetthecows.org ran on a Pages project, it was rehearsing a different serving
+# stack: different header handling, different defaults, different failure modes. That is not a
+# staging environment, it is a second guess. The only difference between the two deployments is
+# the --name passed on the command line.
+#
+# Workers rather than Pages because Pages is being folded into Workers and this account can no
+# longer create Pages projects at all (API error 8000000). Workers static assets support the same
+# _headers file, and default to Cache-Control: public, max-age=0, must-revalidate — which is what
+# the shell wants anyway.
+#
+# The assets are whatever .github/workflows/deploy-app.yml has just assembled into dist/site,
+# already carrying the right config.js, icons and channel branding.
+name = "meet-the-cows-app"
+compatibility_date = "2026-07-01"
+
+[assets]
+directory = "../dist/site"
+# Matches what the Pages project did: an unknown path serves the shell rather than a 404. Pack
+# data and terrain live on data.meetthecows.org, so nothing that needs an honest 404 is served
+# from here.
+not_found_handling = "single-page-application"
