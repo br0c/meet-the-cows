@@ -5,10 +5,6 @@ Meet the Cows is an offline-friendly landing-field viewer for glider pilots, des
 **Live app: <https://app.meetthecows.org>** — open it on your phone and add it to your home screen.
 Project site: <https://meetthecows.org>.
 
-The app used to live at `br0c.github.io/meet-the-cows`. That address still works for now, but it is
-retired: a browser keeps its offline packs, cache and settings per address, so nothing carries
-across on its own. Install from the new one and download the pack again.
-
 Install it on your phone, open it before or during a flight, allow location access, and it shows nearby outlanding fields and airfields with distance, bearing, required glide ratio, notes, photos, and available documents such as VAC PDFs.
 
 ## Safety
