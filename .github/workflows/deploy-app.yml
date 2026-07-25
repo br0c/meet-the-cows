@@ -139,11 +139,15 @@ jobs:
           PY
           cat dist/site/config.js
 
-          # The app shell must never be answered from a stale browser cache. Cloudflare Pages
-          # defaults these to max-age=14400, which meant an update could sit unseen for four
-          # hours — and, worse, a freshly installed service worker would fill its brand-new
-          # versioned cache with the previous build's bytes. The shell is a few hundred KB and
-          # revalidates to a 304, so there is nothing to save here. Icons keep the default.
+          # The app shell must never be answered from a stale browser cache: an update would sit
+          # unseen, and a freshly installing service worker would fill its brand-new versioned
+          # cache with the previous build's bytes. The shell is a few hundred KB and revalidates
+          # to a 304, so there is nothing to save by caching it.
+          # These rules do apply — meet-the-cows.pages.dev returns max-age=0 — but a Cloudflare
+          # cache/page rule scoped to the app.meetthecows.org hostname currently rewrites them to
+          # max-age=14400 at the edge, so the service worker's own 'reload' and 'no-cache' fetches
+          # are what actually guarantee freshness there. Both belong here: the rules are correct
+          # and host-independent, the worker is the one that cannot be overridden from a dashboard.
           cat > dist/site/_headers <<'HEADERS'
           /index.html
             Cache-Control: public, max-age=0, must-revalidate
