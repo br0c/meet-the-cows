@@ -23,7 +23,7 @@ Difficulty `C` and `D` fields are highly contraindicated. Treat them as hazardou
 - Three best safe options (difficulty `A`, required glide ratio 20 or better, airfields first) pinned above the list
 - Distance, bearing, and straight-line required glide ratio
 - Safety arrival margin setting
-- Manual altitude mode for ground testing
+- Testing mode: place the app at any searched location and altitude to check figures on the ground
 - Filters for more difficult fields
 - Field detail view with notes, photos, and documents
 - Full French / English / German localization — the interface and field notes follow your device language, with a manual switch in Settings
@@ -73,19 +73,30 @@ When a newer data pack is published, a `New field data available` banner appears
 4. Tap a field to review notes, photos, documents, and VAC material.
 5. Adjust the safety arrival margin in Settings if you want a more conservative glide estimate.
 
-The app uses phone GPS altitude when available. If your browser does not provide altitude, required glide ratio may be unavailable unless you use manual altitude for testing.
+The app uses phone GPS altitude when available. If your browser does not provide altitude, the required glide ratio is not shown — Settings has a testing mode for checking figures on the ground.
 
 ## Ground Testing
 
-Manual altitude is useful for testing the app before flight.
+Settings → **Testing** puts the app at a place and altitude of your choosing, so the numbers can
+be checked without leaving the ground.
 
-1. Open Settings.
-2. Enable `Use manual altitude for testing`.
-3. Enter a realistic altitude in meters.
-4. Open the app somewhere with location permission available so the nearest list can use your real phone position.
-5. Check that glide ratio, filters, field detail view, and offline media/docs behave as expected.
+1. Open Settings and expand `Testing` at the bottom.
+2. Search for a place — a town, an airfield, a peak.
+3. Pick a result, and set the altitude with the slider.
+4. Check that distance, glide ratio, filters and the field detail view behave as expected.
+5. `Stop testing` returns to real GPS.
 
-Turn manual altitude off before relying on live GPS altitude in flight.
+An earlier version of this only let you override the altitude, which stopped being enough once
+glide started depending on the ground: a plausible altitude in the wrong valley tells you nothing,
+and every interesting case is somewhere you are not standing.
+
+While a simulated position is in force a red banner sits above everything, on every screen, saying
+so. That is deliberate — a cockpit aid quietly reporting fields near a place you are not is the
+worst thing this app could do. The mode needs a connection, caches nothing, and its position is
+never used to answer anything the app cannot answer from GPS.
+
+Place search is [Photon](https://photon.komoot.io), on OpenStreetMap data. Nominatim would be the
+obvious choice but sends no `Access-Control-Allow-Origin`, so a browser cannot call it.
 
 ## Languages
 

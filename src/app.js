@@ -67,8 +67,14 @@ const DEFAULT_SETTINGS = {
   hideC: true,
   hideD: true,
   sortMode: 'glide',
-  useManualAltitude: false,
-  manualAltitudeM: 2500,
+  // Simulated position for testing on the ground. Deliberately not persisted as "manual
+  // altitude" any more: with terrain routing, a plausible altitude at the wrong place tells you
+  // nothing, and every interesting case is somewhere you are not standing.
+  testMode: false,
+  testLatitude: null,
+  testLongitude: null,
+  testAltitudeM: 2500,
+  testLabel: '',
 };
 
 // Languages the app UI and pack notes are translated into. 'auto' follows the device.
@@ -193,8 +199,6 @@ const STRINGS = {
     nearestList: 'Nearest list', sort: 'Sort',
     sortGlide: 'Best glide ratio', sortDistance: 'Nearest distance',
     safetyMargin: 'Safety arrival margin, m',
-    useManualAlt: 'Use manual altitude for testing', manualAlt: 'Manual altitude, m',
-    manualAltNote: 'Manual altitude is only for ground testing. In flight, leave it off and use phone GPS altitude.',
     hideC: 'Hide C fields', hideD: 'Hide D fields',
     cdNote: 'C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.',
     colName: 'Name', colDist: 'Dist', colGlide: 'Glide', colDiff: 'Diff',
@@ -205,14 +209,28 @@ const STRINGS = {
     updateBanner: '🔄 New field data available.', update: 'Update',
     sampleWarning: 'Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.',
     gpsError: e => `GPS error: ${e}.`,
-    altMissingWarning: 'GPS altitude is missing, so required glide ratio cannot be computed. Add a manual altitude in Settings for ground testing.',
+    altMissingWarning: 'GPS altitude is missing, so required glide ratio cannot be computed. Settings has a testing mode for checking figures on the ground.',
     close: 'Close', bearing: 'Bearing', distance: 'Distance', reqGlide: 'Req glide',
     deltaSafe: 'Δsafe', elevation: 'Elevation', runway: 'Runway', frequency: 'Frequency',
     glideNotShown: r => `Glide not shown: ${r}.`,
     notes: 'Notes', noNotes: 'No notes.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'No media attached.', openPdf: 'Open PDF',
     source: 'Source', imported: 'imported', unknown: 'unknown',
-    altMissing: 'missing', altManual: 'manual',
+    gpsSimulated: 'Simulated position — GPS is off',
+    testing: 'Testing',
+    testNote: 'Puts the app at a chosen place and altitude so glide figures can be checked on the ground. Needs a connection, stores nothing, and overrides GPS until you stop it.',
+    testPlace: 'Place',
+    testPlacePlaceholder: 'Search a town, airfield, peak…',
+    testSearchGo: 'Search',
+    testAltitude: 'Altitude, m',
+    testStop: 'Stop testing',
+    testNoResults: 'Nothing found for that.',
+    testSearchFailed: 'Search failed — this needs a connection.',
+    testUnnamed: 'Chosen position',
+    testAttribution: 'Place search by Photon, using OpenStreetMap data.',
+    testBanner: (where, altitude) => `⚠︎ Simulated position: ${where}, ${altitude}. Not your real position.`,
+    altSimulated: 'simulated',
+    altMissing: 'missing',
     gpsOk: acc => `OK ±${acc}m`, gpsErr: 'Error',
     gpsIdle: 'idle', gpsRequesting: 'requesting', gpsUnavailable: 'unavailable',
     reasonGpsAlt: 'GPS altitude missing', reasonFieldElev: 'Field elevation missing',
@@ -302,8 +320,6 @@ const STRINGS = {
     nearestList: 'Liste des plus proches', sort: 'Tri',
     sortGlide: 'Meilleure finesse requise', sortDistance: 'Distance la plus courte',
     safetyMargin: "Marge d'arrivée de sécurité, m",
-    useManualAlt: 'Altitude manuelle (test au sol)', manualAlt: 'Altitude manuelle, m',
-    manualAltNote: "L'altitude manuelle sert uniquement aux tests au sol. En vol, désactivez-la et utilisez l'altitude GPS du téléphone.",
     hideC: 'Masquer les terrains C', hideD: 'Masquer les terrains D',
     cdNote: "Les terrains C et D sont masqués par défaut. Ils sont difficiles et potentiellement dangereux — recommandés uniquement en dernier recours d'urgence.",
     colName: 'Nom', colDist: 'Dist', colGlide: 'Finesse', colDiff: 'Diff',
@@ -321,7 +337,21 @@ const STRINGS = {
     notes: 'Notes', noNotes: 'Aucune note.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'Aucun média joint.', openPdf: 'Ouvrir le PDF',
     source: 'Source', imported: 'importé le', unknown: 'inconnu',
-    altMissing: 'absente', altManual: 'manuelle',
+    gpsSimulated: 'Position simulée — GPS désactivé',
+    testing: 'Test',
+    testNote: "Place l'application à un lieu et une altitude choisis pour vérifier les finesses au sol. Nécessite une connexion, n'enregistre rien et remplace le GPS jusqu'à l'arrêt.",
+    testPlace: 'Lieu',
+    testPlacePlaceholder: 'Chercher une ville, un terrain, un sommet…',
+    testSearchGo: 'Chercher',
+    testAltitude: 'Altitude, m',
+    testStop: 'Arrêter le test',
+    testNoResults: 'Aucun résultat.',
+    testSearchFailed: 'Recherche impossible — une connexion est nécessaire.',
+    testUnnamed: 'Position choisie',
+    testAttribution: 'Recherche de lieux par Photon, données OpenStreetMap.',
+    testBanner: (where, altitude) => `⚠︎ Position simulée : ${where}, ${altitude}. Ce n'est pas votre position réelle.`,
+    altSimulated: 'simulée',
+    altMissing: 'absente',
     gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Erreur',
     gpsIdle: 'inactif', gpsRequesting: 'en cours', gpsUnavailable: 'indisponible',
     reasonGpsAlt: 'Altitude GPS absente', reasonFieldElev: 'Altitude terrain absente',
@@ -411,8 +441,6 @@ const STRINGS = {
     nearestList: 'Nächstgelegene Felder', sort: 'Sortierung',
     sortGlide: 'Beste erforderliche Gleitzahl', sortDistance: 'Kürzeste Entfernung',
     safetyMargin: 'Sicherheits-Ankunftsreserve, m',
-    useManualAlt: 'Manuelle Höhe (Bodentest)', manualAlt: 'Manuelle Höhe, m',
-    manualAltNote: 'Manuelle Höhe nur für Bodentests. Im Flug ausschalten und die GPS-Höhe des Telefons verwenden.',
     hideC: 'C-Felder ausblenden', hideD: 'D-Felder ausblenden',
     cdNote: 'C- und D-Felder sind standardmäßig ausgeblendet. Sie sind schwierig und möglicherweise gefährlich — nur als letzte Notfalloption empfohlen.',
     colName: 'Name', colDist: 'Dist', colGlide: 'Gleit', colDiff: 'Diff',
@@ -430,7 +458,21 @@ const STRINGS = {
     notes: 'Notizen', noNotes: 'Keine Notizen.', mediaHeading: 'Fotos / Dokumente / VAC',
     noMedia: 'Keine Medien angehängt.', openPdf: 'PDF öffnen',
     source: 'Quelle', imported: 'importiert am', unknown: 'unbekannt',
-    altMissing: 'fehlt', altManual: 'manuell',
+    gpsSimulated: 'Simulierte Position — GPS aus',
+    testing: 'Test',
+    testNote: 'Versetzt die App an einen gewählten Ort und eine gewählte Höhe, um Gleitzahlen am Boden zu prüfen. Braucht eine Verbindung, speichert nichts und ersetzt das GPS bis zum Beenden.',
+    testPlace: 'Ort',
+    testPlacePlaceholder: 'Ort, Flugplatz, Gipfel suchen…',
+    testSearchGo: 'Suchen',
+    testAltitude: 'Höhe, m',
+    testStop: 'Test beenden',
+    testNoResults: 'Nichts gefunden.',
+    testSearchFailed: 'Suche fehlgeschlagen — dafür ist eine Verbindung nötig.',
+    testUnnamed: 'Gewählte Position',
+    testAttribution: 'Ortssuche von Photon, mit OpenStreetMap-Daten.',
+    testBanner: (where, altitude) => `⚠︎ Simulierte Position: ${where}, ${altitude}. Nicht deine echte Position.`,
+    altSimulated: 'simuliert',
+    altMissing: 'fehlt',
     gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Fehler',
     gpsIdle: 'inaktiv', gpsRequesting: 'anfordern', gpsUnavailable: 'nicht verfügbar',
     reasonGpsAlt: 'GPS-Höhe fehlt', reasonFieldElev: 'Feldhöhe fehlt',
@@ -582,6 +624,8 @@ let state = {
   offlineSync: null,
   detailScrollTop: 0,
   dataUpdateAvailable: false,
+  showTesting: false,
+  testSearch: null,
   activePacks: [],
 };
 
@@ -815,10 +859,20 @@ async function reloadSelectedPack() {
   }
 }
 
-function startGps() {
+function stopGps() {
   if (gpsWatchId !== null && 'geolocation' in navigator) {
     navigator.geolocation.clearWatch(gpsWatchId);
     gpsWatchId = null;
+  }
+}
+
+function startGps() {
+  stopGps();
+  // Simulated position wins and the receiver stays off, so a real fix can never arrive and
+  // quietly replace the position under test halfway through a comparison.
+  if (state.settings.testMode) {
+    applyTestPosition();
+    return;
   }
   if (!('geolocation' in navigator)) {
     state.gpsStatus = 'unavailable';
@@ -851,18 +905,38 @@ function startGps() {
   );
 }
 
+/** Put the simulated position in place of a GPS fix. Everything downstream reads state.position,
+ *  so nothing else has to know the difference — except the warning banner, which must. */
+function applyTestPosition() {
+  const { testLatitude, testLongitude, testAltitudeM } = state.settings;
+  if (!Number.isFinite(testLatitude) || !Number.isFinite(testLongitude)) return false;
+  state.position = {
+    latitude: testLatitude,
+    longitude: testLongitude,
+    altitudeM: Number.isFinite(Number(testAltitudeM)) ? Number(testAltitudeM) : null,
+    accuracyM: 0,
+    altitudeAccuracyM: 0,
+    timestamp: Date.now(),
+    simulated: true,
+  };
+  state.gpsStatus = 'simulated';
+  state.gpsError = '';
+  computeRows();
+  return true;
+}
+
+function testModeActive() {
+  return Boolean(state.settings.testMode && state.position?.simulated);
+}
+
 function activeAltitudeM() {
-  if (state.settings.useManualAltitude) {
-    const manual = Number(state.settings.manualAltitudeM);
-    return Number.isFinite(manual) ? manual : null;
-  }
   return state.position?.altitudeM ?? null;
 }
 
 function altitudeLabel() {
   const altitude = activeAltitudeM();
   if (altitude === null) return t('altMissing');
-  return `${fmtM(altitude)}${state.settings.useManualAltitude ? ` ${t('altManual')}` : ''}`;
+  return `${fmtM(altitude)}${testModeActive() ? ` ${t('altSimulated')}` : ''}`;
 }
 
 // Distance/bearing/required-glide for one field from the current position. Shared by the
@@ -909,6 +983,82 @@ function computeRows() {
   });
   state.computedRows = rows;
 }
+
+// --- simulated position (testing only) ---------------------------------------------------------
+//
+// Online-only and deliberately uncached: this exists to put the app somewhere it is not, which is
+// the one thing that must never survive into a flight by accident. The service worker only
+// intercepts its own scope and the pack origin, so these requests pass straight through it.
+//
+// Photon rather than Nominatim because Nominatim sends no Access-Control-Allow-Origin and is
+// therefore unusable from a browser. Both are OpenStreetMap data; Photon is Komoot's.
+const GEOCODER_URL = 'https://photon.komoot.io/api/';
+
+async function searchPlaces(query) {
+  const url = new URL(GEOCODER_URL);
+  url.searchParams.set('q', query);
+  url.searchParams.set('limit', '6');
+  const language = resolveLang();
+  if (['en', 'fr', 'de'].includes(language)) url.searchParams.set('lang', language);
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
+  return (data.features || []).map(feature => {
+    const properties = feature.properties || {};
+    const [longitude, latitude] = feature.geometry?.coordinates || [];
+    const parts = [
+      properties.name,
+      properties.city && properties.city !== properties.name ? properties.city : '',
+      properties.state,
+      properties.country,
+    ];
+    return { latitude, longitude, kind: properties.osm_value || '', label: parts.filter(Boolean).join(', ') };
+  }).filter(place => Number.isFinite(place.latitude) && Number.isFinite(place.longitude));
+}
+
+async function runPlaceSearch() {
+  const query = String(document.querySelector('#testPlace')?.value || '').trim();
+  if (query.length < 2) return;
+  state.testSearch = { status: 'searching', results: [], error: '' };
+  render();
+  try {
+    const results = await searchPlaces(query);
+    state.testSearch = { status: 'done', results, error: results.length ? '' : t('testNoResults') };
+  } catch (error) {
+    console.warn('Place search failed', error);
+    state.testSearch = { status: 'done', results: [], error: t('testSearchFailed') };
+  }
+  render();
+}
+
+/** Adopt a searched place as the simulated position. */
+function startTestMode(place) {
+  state.settings.testMode = true;
+  state.settings.testLatitude = place.latitude;
+  state.settings.testLongitude = place.longitude;
+  state.settings.testLabel = place.label;
+  saveSettings();
+  stopGps();
+  applyTestPosition();
+  onSimulatedPositionChanged();
+  render();
+}
+
+function stopTestMode() {
+  state.settings.testMode = false;
+  saveSettings();
+  state.position = null;
+  state.gpsStatus = 'idle';
+  state.testSearch = null;
+  onSimulatedPositionChanged();
+  startGps();
+  render();
+}
+
+// Seam for anything that has to recompute when the position jumps rather than drifts. Empty in
+// production; the terrain build hangs its re-solve here, because a simulated move is instant and
+// arbitrary and none of the "has the glider moved far enough" throttling applies to it.
+function onSimulatedPositionChanged() {}
 
 function scheduleRender() {
   if (renderTimer !== null) return;
@@ -983,6 +1133,7 @@ function render() {
         </div>
         <div id="statusArea">${renderStatus()}</div>
       </header>
+      ${renderTestBanner()}
       <main class="main">
         ${state.view === 'settings' ? renderSettingsPage() : renderMainPage()}
       </main>
@@ -1035,15 +1186,26 @@ function renderStatus() {
 function gpsLabel() {
   if (state.gpsStatus === 'ok') return t('gpsOk', Math.round(state.position?.accuracyM || 0));
   if (state.gpsStatus === 'error') return t('gpsErr');
-  const map = { idle: 'gpsIdle', requesting: 'gpsRequesting', unavailable: 'gpsUnavailable' };
+  const map = { idle: 'gpsIdle', requesting: 'gpsRequesting', unavailable: 'gpsUnavailable', simulated: 'gpsSimulated' };
   return map[state.gpsStatus] ? t(map[state.gpsStatus]) : state.gpsStatus;
+}
+
+// Shown above everything, in red, whenever the position on screen is invented. A cockpit aid
+// quietly reporting fields near a place you are not is the worst thing this app could do.
+function renderTestBanner() {
+  if (!testModeActive()) return '';
+  const where = state.settings.testLabel || `${state.settings.testLatitude.toFixed(3)}, ${state.settings.testLongitude.toFixed(3)}`;
+  return `<div class="test-banner">
+      <span>${escapeHtml(t('testBanner', where, fmtM(state.position.altitudeM ?? 0)))}</span>
+      <button id="testBannerStop">${t('testStop')}</button>
+    </div>`;
 }
 
 function renderWarnings() {
   const items = [];
   if (state.packManifest?.isSample) items.push(escapeHtml(t('sampleWarning')));
   if (state.gpsStatus === 'error') items.push(escapeHtml(t('gpsError', state.gpsError)));
-  if (state.position && state.position.altitudeM === null && !state.settings.useManualAltitude) items.push(escapeHtml(t('altMissingWarning')));
+  if (state.position && state.position.altitudeM === null && !testModeActive()) items.push(escapeHtml(t('altMissingWarning')));
   if (!items.length) return '';
   return items.map(i => `<div class="warning">${i}</div>`).join('');
 }
@@ -1228,13 +1390,6 @@ function renderSettingsPage() {
         <label for="safetyMarginM">${t('safetyMargin')}</label>
         <input id="safetyMarginM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.safetyMarginM}" />
         <div class="checkbox-row">
-          <input id="useManualAltitude" type="checkbox" ${state.settings.useManualAltitude ? 'checked' : ''} />
-          <label for="useManualAltitude">${t('useManualAlt')}</label>
-        </div>
-        <label for="manualAltitudeM">${t('manualAlt')}</label>
-        <input id="manualAltitudeM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.manualAltitudeM}" ${state.settings.useManualAltitude ? '' : 'disabled'} />
-        <p class="settings-note">${escapeHtml(t('manualAltNote'))}</p>
-        <div class="checkbox-row">
           <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
           <label for="hideC">${t('hideC')}</label>
         </div>
@@ -1244,8 +1399,52 @@ function renderSettingsPage() {
         </div>
         <p class="settings-note">${escapeHtml(t('cdNote'))}</p>
       </div>
+
+      ${renderTestingCard()}
     </section>
   `;
+}
+
+// Last in Settings and collapsed by default: useful on the ground, never wanted in the air.
+function renderTestingCard() {
+  const settings = state.settings;
+  const search = state.testSearch;
+  const active = testModeActive();
+  const results = (search?.results || []).map((place, index) => `
+      <button class="test-result" data-test-index="${index}">
+        <span class="test-result-name">${escapeHtml(place.label)}</span>
+        <span class="test-result-meta">${escapeHtml(place.kind)} · ${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}</span>
+      </button>`).join('');
+
+  return `
+      <div class="settings-card">
+        <button class="disclosure" id="toggleTesting" aria-expanded="${state.showTesting ? 'true' : 'false'}">
+          <span>🧪 ${t('testing')}</span>
+          <span class="disclosure-mark">${state.showTesting ? '▾' : '▸'}</span>
+        </button>
+        ${state.showTesting ? `
+        <p class="settings-note">${escapeHtml(t('testNote'))}</p>
+        ${active ? `
+        <div class="test-active">
+          <div><strong>${escapeHtml(settings.testLabel || t('testUnnamed'))}</strong></div>
+          <div class="test-active-meta">${settings.testLatitude.toFixed(4)}, ${settings.testLongitude.toFixed(4)} · ${fmtM(settings.testAltitudeM)}</div>
+        </div>` : ''}
+        <label for="testPlace">${t('testPlace')}</label>
+        <div class="test-search-row">
+          <input id="testPlace" type="search" inputmode="search" autocomplete="off"
+                 placeholder="${escapeHtml(t('testPlacePlaceholder'))}" />
+          <button id="testSearch">${search?.status === 'searching' ? '…' : t('testSearchGo')}</button>
+        </div>
+        ${search?.error ? `<p class="settings-note">${escapeHtml(search.error)}</p>` : ''}
+        ${results ? `<div class="test-results">${results}</div>` : ''}
+        <label for="testAltitudeM">${t('testAltitude')}</label>
+        <div class="range-row">
+          <input id="testAltitudeM" type="range" min="0" max="6000" step="100" value="${Number(settings.testAltitudeM) || 0}" />
+          <output id="testAltitudeValue" for="testAltitudeM">${fmtM(Number(settings.testAltitudeM) || 0)}</output>
+        </div>
+        ${active ? `<div class="button-row single"><button id="stopTesting">${t('testStop')}</button></div>` : ''}
+        <p class="settings-note">${escapeHtml(t('testAttribution'))}</p>` : ''}
+      </div>`;
 }
 
 
@@ -2179,12 +2378,7 @@ function attachEvents() {
     saveSettings();
     render();
   });
-  document.querySelector('#manualAltitudeM')?.addEventListener('change', e => {
-    state.settings.manualAltitudeM = Number(e.target.value);
-    saveSettings();
-    render();
-  });
-  for (const id of ['hideC', 'hideD', 'useManualAltitude']) {
+  for (const id of ['hideC', 'hideD']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       if ((id === 'hideC' || id === 'hideD') && !e.target.checked) {
         // Revealing difficult fields — make the pilot acknowledge the risk before showing them.
@@ -2197,11 +2391,39 @@ function attachEvents() {
         }
       }
       state.settings[id] = e.target.checked;
-      if (id === 'useManualAltitude') computeRows();
       saveSettings();
       render();
     });
   }
+  document.querySelector('#toggleTesting')?.addEventListener('click', () => {
+    state.showTesting = !state.showTesting;
+    render();
+  });
+  document.querySelector('#testSearch')?.addEventListener('click', runPlaceSearch);
+  document.querySelector('#testPlace')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); runPlaceSearch(); }
+  });
+  document.querySelectorAll('.test-result').forEach(button => button.addEventListener('click', () => {
+    const place = state.testSearch?.results?.[Number(button.dataset.testIndex)];
+    if (place) startTestMode(place);
+  }));
+  // Dragging updates the readout only; the position is re-adopted on release, same reasoning as
+  // the terrain clearance slider.
+  document.querySelector('#testAltitudeM')?.addEventListener('input', e => {
+    const readout = document.querySelector('#testAltitudeValue');
+    if (readout) readout.textContent = fmtM(Number(e.target.value));
+  });
+  document.querySelector('#testAltitudeM')?.addEventListener('change', e => {
+    state.settings.testAltitudeM = Number(e.target.value);
+    saveSettings();
+    if (state.settings.testMode) {
+      applyTestPosition();
+      onSimulatedPositionChanged();
+    }
+    render();
+  });
+  document.querySelector('#stopTesting')?.addEventListener('click', stopTestMode);
+  document.querySelector('#testBannerStop')?.addEventListener('click', stopTestMode);
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
   document.querySelector('#exportCup')?.addEventListener('click', exportCup);
   document.querySelector('#syncDataBtn')?.addEventListener('click', () => {
