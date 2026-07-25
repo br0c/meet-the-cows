@@ -178,6 +178,17 @@ a { color: var(--accent); }
 .field-sub { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .field-distance,
 .field-glide { text-align: right; font-weight: 800; font-size: 14px; white-space: nowrap; }
+/* A glide that had to go around terrain rather than straight at it. Deliberately quiet: the
+   number is the message, this only says where it came from, and it must not widen the column. */
+.field-glide.routed::after {
+  content: '▲';
+  font-size: 0.6em;
+  font-weight: 400;
+  opacity: 0.5;
+  margin-left: 2px;
+  vertical-align: 0.35em;
+}
+.route-summary { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); font-weight: 900; justify-self: end; }
 .badge-a {
   color: #000;

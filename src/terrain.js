@@ -199,7 +199,12 @@ export class TerrainStore {
 
   /** Load every tile covering a box. Returns the ones that exist; absent tiles are simply absent. */
   async loadBounds(bounds) {
-    const keys = tileKeysForBounds(bounds);
+    // Ask the index first. At the edge of a covered region most of the surrounding tiles do not
+    // exist, and requesting them anyway spends a round trip each to be told so — on a phone with
+    // one bar that is the difference between a solve and a stall.
+    const published = await this.availableKeys();
+    const keys = tileKeysForBounds(bounds)
+      .filter(key => published.size === 0 || published.has(key));
     const tiles = await Promise.all(keys.map(key => this.fetchTile(key)));
     const found = new Map();
     keys.forEach((key, i) => { if (tiles[i]) found.set(key, tiles[i]); });

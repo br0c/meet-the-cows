@@ -1,4 +1,4 @@
-const APP_VERSION = '0.8.3-beta';
+const APP_VERSION = '0.9.0-beta';
 // Shell cache is versioned and replaced on app update. Data cache is stable so downloaded
 // media/docs survive app updates (an app update must never wipe a pilot's offline pack).
 const SHELL_CACHE = `mtc-shell-${APP_VERSION}`;
@@ -28,6 +28,11 @@ const APP_SHELL = [
   u('styles.css'),
   u('config.js'),
   u('src/app.js'),
+  u('src/terrain.js'),
+  // The glide solver is a Worker script: it is never imported by the shell, so nothing else
+  // would ever pull it into the cache, and without it a downloaded pack loses terrain routing
+  // exactly when there is no radio to fetch it.
+  u('src/glide-worker.js'),
   u('manifest.webmanifest'),
   u('release-notes.json'),
   u('icons/icon.svg'),
