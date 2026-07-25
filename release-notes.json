@@ -5,19 +5,19 @@
     "en": [
       "New: the required glide ratio now follows a path that stays clear of the ground instead of a straight line — a field down a valley can become reachable, and one behind a ridge can stop being",
       "New: the field detail sheet shows the route, and the point that actually limits the glide",
-      "New: Settings → Terrain turns this on or off and sets how far above the ground a routed glide has to stay (200 m by default)",
+      "New: Settings → Terrain turns this on or off, with a slider for how far above the ground a routed glide has to stay (100–500 m, 200 m by default)",
       "Terrain has to be downloaded before it works offline — Settings → Terrain shows the size"
     ],
     "fr": [
       "Nouveau : la finesse requise suit désormais un trajet dégagé du sol au lieu d'une ligne droite — un terrain au fond d'une vallée peut devenir atteignable, un terrain derrière une crête peut cesser de l'être",
       "Nouveau : la fiche du terrain affiche le trajet et le point qui limite réellement la finesse",
-      "Nouveau : Réglages → Relief active ou désactive le calcul et fixe la garde au sol des trajets (200 m par défaut)",
+      "Nouveau : Réglages → Relief active ou désactive le calcul, avec un curseur pour la garde au sol des trajets (100–500 m, 200 m par défaut)",
       "Le relief doit être téléchargé pour fonctionner hors ligne — Réglages → Relief indique la taille"
     ],
     "de": [
       "Neu: Die erforderliche Gleitzahl folgt jetzt einem vom Boden freien Pfad statt einer Luftlinie — ein Feld talabwärts kann erreichbar werden, eines hinter einem Grat nicht mehr",
       "Neu: Das Felddetail zeigt den Pfad und die Stelle, die die Gleitzahl tatsächlich begrenzt",
-      "Neu: Einstellungen → Gelände schaltet das ein oder aus und legt die Geländefreiheit der Pfade fest (Standard 200 m)",
+      "Neu: Einstellungen → Gelände schaltet das ein oder aus, mit einem Schieberegler für die Geländefreiheit der Pfade (100–500 m, Standard 200 m)",
       "Gelände muss heruntergeladen werden, damit es offline funktioniert — Einstellungen → Gelände zeigt die Größe"
     ]
   },

@@ -185,6 +185,32 @@ const card = await page.$eval('.settings-card:has(#terrainRouting)', el => el.in
 check('settings states the terrain download size', /tiles ·/.test(card));
 check('settings states the clearance in force', /at least 200 m above the ground/.test(card));
 
+// The clearance control is a slider: dragging must update the readout live without re-rendering,
+// and releasing must actually change the routing.
+const slider = await page.$('#terrainClearanceM');
+const attrs = await page.$eval('#terrainClearanceM', el => ({
+  type: el.type, min: el.min, max: el.max, step: el.step, value: el.value,
+}));
+check('clearance is a slider over the intended range',
+  attrs.type === 'range' && attrs.min === '100' && attrs.max === '500' && attrs.step === '50',
+  JSON.stringify(attrs));
+
+await page.$eval('#terrainClearanceM', el => {
+  el.value = '400';
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+});
+const liveReadout = await page.$eval('#terrainClearanceValue', el => el.textContent);
+const liveNote = await page.$eval('#terrainClearanceNote', el => el.textContent);
+check('dragging updates the readout in place', liveReadout.trim() === '400 m', liveReadout);
+check('dragging updates the note in place', /at least 400 m/.test(liveNote), liveNote.slice(0, 50));
+check('dragging alone does not re-render the slider away',
+  (await page.$('#terrainClearanceM')) !== null && slider !== null);
+
+await page.$eval('#terrainClearanceM', el => el.dispatchEvent(new Event('change', { bubbles: true })));
+await page.waitForTimeout(1200);
+const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('mtc-settings-v2')).terrainClearanceM);
+check('releasing the slider saves the new clearance', stored === 400, String(stored));
+
 await page.uncheck('#terrainRouting');
 await page.click('#settingsToggle');
 await page.waitForSelector('.field-row');

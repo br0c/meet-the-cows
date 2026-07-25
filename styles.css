@@ -238,6 +238,22 @@ a { color: var(--accent); }
 .checkbox-row input { width: auto; transform: scale(1.2); }
 .checkbox-row label { margin: 0; color: var(--text); font-size: 15px; }
 .settings-card input:disabled { opacity: .55; }
+
+/* Slider + live readout. The generic .settings-card input rule above sets width:100% and a box
+   with padding, which turns a range input into a stretched, oddly inset track — so the range
+   opts out of all three and the row does the layout instead. */
+.range-row { display: flex; align-items: center; gap: 12px; margin: 6px 0 8px; }
+.settings-card .range-row input[type="range"] {
+  flex: 1; width: auto; min-width: 0;
+  border: 0; background: transparent; padding: 0;
+  accent-color: var(--accent);
+  /* Comfortable to hit with a thumb in a moving cockpit, not a hairline. */
+  height: 28px;
+}
+.range-row output {
+  min-width: 66px; text-align: right;
+  font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text);
+}
 .settings-note { margin: -4px 0 2px; color: var(--muted); font-size: 12px; line-height: 1.35; }
 
 .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

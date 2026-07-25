@@ -86,7 +86,8 @@ const DEFAULT_SETTINGS = {
 // floor is 100 m because below that the DEM's own error and the grid's 280 m cells are the
 // bigger number, and a clearance the data cannot support is a false promise.
 const TERRAIN_CLEARANCE_MIN_M = 100;
-const TERRAIN_CLEARANCE_MAX_M = 1000;
+const TERRAIN_CLEARANCE_MAX_M = 500;
+const TERRAIN_CLEARANCE_STEP_M = 50;
 // Fields to route per solve. Beyond the nearest ~80 the answer is academic — nobody is choosing
 // their 81st-nearest option — and every extra target costs a path reconstruction.
 const TERRAIN_MAX_TARGETS = 80;
@@ -227,7 +228,7 @@ const STRINGS = {
     terrainRouting: 'Fly the glide around terrain',
     terrainNote: 'With terrain on, the required glide follows a path that stays clear of the ground instead of a straight line. A field down a valley can become reachable; one behind a ridge can stop being.',
     terrainClearance: 'Terrain clearance, m',
-    terrainClearanceNote: c => `Routed glides stay at least ${c} m above the ground. Minimum ${TERRAIN_CLEARANCE_MIN_M} m.`,
+    terrainClearanceNote: c => `Routed glides stay at least ${c} m above the ground. Raise it for more room to turn away from rising ground; lower it to reach further.`,
     terrainUnsupported: 'This browser cannot read terrain data. Glide stays straight-line.',
     terrainMissing: 'No terrain data is published for this deployment. Glide stays straight-line.',
     terrainCoverage: p => `${p}% of the working area has terrain data`,
@@ -371,7 +372,7 @@ const STRINGS = {
     terrainRouting: 'Calculer la finesse en contournant le relief',
     terrainNote: "Avec le relief activé, la finesse requise suit un trajet qui reste dégagé du sol au lieu d'une ligne droite. Un terrain au fond d'une vallée peut devenir atteignable ; un terrain derrière une crête peut cesser de l'être.",
     terrainClearance: 'Garde au sol, m',
-    terrainClearanceNote: c => `Les trajets calculés restent au moins ${c} m au-dessus du sol. Minimum ${TERRAIN_CLEARANCE_MIN_M} m.`,
+    terrainClearanceNote: c => `Les trajets calculés restent au moins ${c} m au-dessus du sol. Augmentez pour garder de la marge face au relief montant ; diminuez pour aller plus loin.`,
     terrainUnsupported: 'Ce navigateur ne peut pas lire les données de relief. Finesse à vol d\'oiseau.',
     terrainMissing: "Aucune donnée de relief publiée pour ce déploiement. Finesse à vol d'oiseau.",
     terrainCoverage: p => `${p} % de la zone de travail dispose de données de relief`,
@@ -515,7 +516,7 @@ const STRINGS = {
     terrainRouting: 'Gleitpfad um das Gelände herum rechnen',
     terrainNote: 'Mit eingeschaltetem Gelände folgt die erforderliche Gleitzahl einem Pfad, der vom Boden frei bleibt, statt einer Luftlinie. Ein Feld talabwärts kann erreichbar werden, eines hinter einem Grat nicht mehr.',
     terrainClearance: 'Geländefreiheit, m',
-    terrainClearanceNote: c => `Berechnete Pfade bleiben mindestens ${c} m über Grund. Minimum ${TERRAIN_CLEARANCE_MIN_M} m.`,
+    terrainClearanceNote: c => `Berechnete Pfade bleiben mindestens ${c} m über Grund. Höher für mehr Spielraum zum Wegdrehen von steigendem Gelände, niedriger für mehr Reichweite.`,
     terrainUnsupported: 'Dieser Browser kann keine Geländedaten lesen. Gleitzahl bleibt Luftlinie.',
     terrainMissing: 'Für diese Installation sind keine Geländedaten veröffentlicht. Gleitzahl bleibt Luftlinie.',
     terrainCoverage: p => `${p} % des Arbeitsbereichs haben Geländedaten`,
@@ -1869,10 +1870,13 @@ function renderTerrainCard() {
         </div>
         <p class="settings-note">${escapeHtml(t('terrainNote'))}</p>
         <label for="terrainClearanceM">${t('terrainClearance')}</label>
-        <input id="terrainClearanceM" inputmode="numeric" type="number"
-               min="${TERRAIN_CLEARANCE_MIN_M}" max="${TERRAIN_CLEARANCE_MAX_M}" step="50"
-               value="${terrainClearanceM()}" ${state.settings.terrainRouting && !disabled ? '' : 'disabled'} />
-        <p class="settings-note">${escapeHtml(t('terrainClearanceNote', terrainClearanceM()))}</p>
+        <div class="range-row">
+          <input id="terrainClearanceM" type="range"
+                 min="${TERRAIN_CLEARANCE_MIN_M}" max="${TERRAIN_CLEARANCE_MAX_M}" step="${TERRAIN_CLEARANCE_STEP_M}"
+                 value="${terrainClearanceM()}" ${state.settings.terrainRouting && !disabled ? '' : 'disabled'} />
+          <output id="terrainClearanceValue" for="terrainClearanceM">${fmtM(terrainClearanceM())}</output>
+        </div>
+        <p class="settings-note" id="terrainClearanceNote">${escapeHtml(t('terrainClearanceNote', terrainClearanceM()))}</p>
         ${targets.keys.length ? `
         <dl class="meta-list">
           <div><dt>${t('downloadSize')}</dt><dd>${escapeHtml(t('terrainTiles', targets.keys.length, formatBytes(targets.bytes)))}</dd></div>
@@ -2913,12 +2917,19 @@ function attachEvents() {
     render();
     refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
   });
+  // Dragging fires continuously, so the live readout updates in place and nothing else happens
+  // until the pilot lets go. A wavefront per pixel of travel would be absurd, and a re-render
+  // mid-drag would tear the slider out from under their thumb.
+  document.querySelector('#terrainClearanceM')?.addEventListener('input', e => {
+    const metres = Number(e.target.value);
+    const readout = document.querySelector('#terrainClearanceValue');
+    if (readout) readout.textContent = fmtM(metres);
+    const note = document.querySelector('#terrainClearanceNote');
+    if (note) note.textContent = t('terrainClearanceNote', metres);
+  });
   document.querySelector('#terrainClearanceM')?.addEventListener('change', e => {
     state.settings.terrainClearanceM = Number(e.target.value);
     saveSettings();
-    // Write the clamped value back so the pilot sees the clearance actually in force rather than
-    // the one they typed.
-    e.target.value = terrainClearanceM();
     invalidateTerrainRoutes();
     render();
     refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
