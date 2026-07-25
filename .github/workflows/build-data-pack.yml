@@ -257,7 +257,7 @@ jobs:
         run: |
           mkdir -p dist/site/packs
 
-          cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json dist/site/
+          cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json config.js dist/site/
           if [ -d icons ]; then cp -R icons dist/site/icons; fi
           mkdir -p dist/site/src
           cp src/app.js dist/site/src/app.js
@@ -268,24 +268,84 @@ jobs:
           find dist/site -maxdepth 3 -type f | sort | head -80
           du -sh dist/site dist/site/packs
 
-      - name: Setup Pages
+      # See deploy-app.yml for what each repository variable means; the two workflows must emit
+      # the same config so the shell and the packs agree on where data lives.
+      - name: Write deployment config
         if: steps.build.outputs.changed != 'false'
+        env:
+          PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
+          CANONICAL_APP_URL: ${{ vars.CANONICAL_APP_URL }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          CHANNEL: ${{ github.ref_name == 'main' && '' || github.ref_name }}
+        run: |
+          python - <<'PY' > dist/site/config.js
+          import json, os
+          cfg = {
+              "packsBase": os.environ.get("PACKS_BASE_URL", ""),
+              "canonicalAppUrl": os.environ.get("CANONICAL_APP_URL", ""),
+              "siteUrl": os.environ.get("SITE_URL", ""),
+              "channel": os.environ.get("CHANNEL", ""),
+          }
+          print("// Generated at deploy time — see config.js in the repo for the field docs.")
+          print(f"self.MTC_CONFIG = {json.dumps(cfg, indent=2)};")
+          PY
+          cat dist/site/config.js
+
+      # --- Pack data to R2 (when PACKS_BASE_URL points at a data origin) ----------------------
+      # The ~300 MB of packs is uploaded once to the bucket and read by every app deployment,
+      # so experimental builds share production data instead of duplicating it. The bucket
+      # layout mirrors the site (packs/<id>/…), which is why no build output had to change.
+      # --remote writes to the real bucket; only changed objects are re-uploaded.
+      - name: Publish packs to R2
+        if: steps.build.outputs.changed != 'false' && vars.PACKS_BASE_URL != ''
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          BUCKET: ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }}
+        run: |
+          python -m pip install --quiet boto3
+          python scripts/publish_packs_r2.py --dir dist/site/packs --prefix packs --bucket "$BUCKET"
+
+      # --- GitHub Pages (default) ------------------------------------------------------------
+      - name: Setup Pages
+        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare'
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
-        if: steps.build.outputs.changed != 'false'
+        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare'
         uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages-${{ github.run_attempt }}
           path: dist/site
 
       - name: Deploy to GitHub Pages
-        if: steps.build.outputs.changed != 'false'
+        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare'
         id: deployment
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 
+      # --- Cloudflare Pages ------------------------------------------------------------------
+      # When packs are served from R2 the shell no longer needs them, so they are left out of
+      # the upload: a deployment becomes a few hundred KB instead of 300 MB.
+      - name: Deploy to Cloudflare Pages
+        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET == 'cloudflare'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "${{ vars.PACKS_BASE_URL }}" ]; then rm -rf dist/site/packs; fi
+          npx --yes wrangler@latest pages deploy dist/site \
+            --project-name "${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}" \
+            --branch "${{ github.ref_name }}" \
+            --commit-dirty=true
+
       - name: Show URL
         if: steps.build.outputs.changed != 'false'
-        run: echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
+        run: |
+          if [ "${{ vars.DEPLOY_TARGET }}" = "cloudflare" ]; then
+            echo "Deployed to Cloudflare Pages (branch ${{ github.ref_name }})"
+          else
+            echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
+          fi

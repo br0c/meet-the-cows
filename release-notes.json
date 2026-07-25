@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.0-beta",
+    "date": "2026-07-24",
+    "en": [
+      "New: Meet the Cows is moving to its own address — if you're on the old one, the app now tells you how to move across (do it on Wi-Fi: your offline packs have to be downloaded again)"
+    ],
+    "fr": [
+      "Nouveau : Meet the Cows déménage vers sa propre adresse — si vous êtes sur l'ancienne, l'application vous explique comment migrer (à faire en Wi-Fi : vos packs hors ligne doivent être retéléchargés)"
+    ],
+    "de": [
+      "Neu: Meet the Cows zieht auf eine eigene Adresse um — auf der alten erklärt dir die App jetzt den Wechsel (im WLAN erledigen: deine Offline-Pakete müssen neu geladen werden)"
+    ]
+  },
+  {
     "version": "0.7.8-beta",
     "date": "2026-07-24",
     "en": [

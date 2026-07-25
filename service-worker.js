@@ -1,14 +1,32 @@
-const APP_VERSION = '0.7.8-beta';
+const APP_VERSION = '0.8.0-beta';
 // Shell cache is versioned and replaced on app update. Data cache is stable so downloaded
 // media/docs survive app updates (an app update must never wipe a pilot's offline pack).
 const SHELL_CACHE = `mtc-shell-${APP_VERSION}`;
 const DATA_CACHE = 'mtc-data';
 const SCOPE = self.registration.scope;
 const u = path => new URL(path, SCOPE).toString();
+
+// Deployment config, shared verbatim with the app (see config.js). A deployment that predates
+// the file, or any failure to load it, must not break the worker — fall back to the built-in
+// single-origin behaviour.
+try {
+  importScripts(u('config.js'));
+} catch {
+  self.MTC_CONFIG = self.MTC_CONFIG || {};
+}
+const CONFIG = self.MTC_CONFIG || {};
+
+// Base that pack paths ("packs/…") resolve against: the app itself by default, or an R2
+// domain whose layout mirrors the site. Kept as a URL so cross-origin pack requests are
+// matched by prefix rather than by service-worker scope.
+const DATA_BASE = new URL(withTrailingSlash(CONFIG.packsBase) || './', SCOPE);
+const PACKS_BASE = new URL('packs/', DATA_BASE);
+
 const APP_SHELL = [
   u('.'),
   u('index.html'),
   u('styles.css'),
+  u('config.js'),
   u('src/app.js'),
   u('manifest.webmanifest'),
   u('release-notes.json'),
@@ -17,7 +35,7 @@ const APP_SHELL = [
 // Just the pack index is precached; each selected pack's core JSON is cached network-first on
 // first fetch (see isPackCoreJson), so any combination of packs works offline without hardcoding.
 const PACK_CORE = [
-  u('packs/packs.json'),
+  new URL('packs.json', PACKS_BASE).toString(),
 ];
 const APP_SHELL_SET = new Set(APP_SHELL);
 const SCOPE_URL = new URL(SCOPE);
@@ -45,7 +63,8 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
   const requestUrl = new URL(event.request.url);
-  if (!isSameScope(requestUrl)) return;
+  const packData = isUnderPacksBase(requestUrl);
+  if (!packData && !isSameScope(requestUrl)) return;
 
   if (event.request.mode === 'navigate') {
     event.respondWith(networkFirst(SHELL_CACHE, event.request, u('index.html')));
@@ -57,6 +76,8 @@ self.addEventListener('fetch', event => {
     event.respondWith(networkFirst(SHELL_CACHE, event.request));
     return;
   }
+  if (!packData) return;
+
   if (isPackCoreJson(requestUrl)) {
     event.respondWith(networkFirst(DATA_CACHE, event.request));
     return;
@@ -70,7 +91,7 @@ async function cacheOptional(cache, urls) {
   for (const url of urls) {
     try {
       const response = await fetch(url, { cache: 'reload' });
-      if (response.ok) await cache.put(url, response.clone());
+      if (isCacheable(response)) await cache.put(url, response.clone());
     } catch {
       // Local development may not have generated pack files yet.
     }
@@ -81,7 +102,7 @@ async function networkFirst(cacheName, request, fallbackUrl = '') {
   const cache = await caches.open(cacheName);
   try {
     const response = await fetch(request);
-    if (response.ok) await cache.put(request, response.clone());
+    if (isCacheable(response)) await cache.put(request, response.clone());
     return response;
   } catch (error) {
     const cached = await cache.match(request);
@@ -101,20 +122,40 @@ async function cacheOnlyFirst(cacheName, request) {
   return fetch(request);
 }
 
+// An opaque response (a no-cors <img>/<iframe> load of a cross-origin pack file) reports
+// status 0, so response.ok is false even though the bytes are fine and replayable from the
+// cache. Store those too, otherwise cross-origin media would never be available offline.
+function isCacheable(response) {
+  return !!response && (response.ok || response.type === 'opaque');
+}
+
+function withTrailingSlash(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.endsWith('/') ? text : `${text}/`;
+}
+
 function isSameScope(url) {
   return url.origin === SCOPE_URL.origin && url.pathname.startsWith(SCOPE_URL.pathname);
+}
+
+function isUnderPacksBase(url) {
+  return url.origin === PACKS_BASE.origin && url.pathname.startsWith(PACKS_BASE.pathname);
+}
+
+function packRelativePath(url) {
+  return url.pathname.slice(PACKS_BASE.pathname.length);
 }
 
 // Any pack JSON (packs.json, or a pack's manifest/fields/media-manifest/state/translation-cache):
 // cached network-first so the selected packs' data is available offline, whichever they are.
 function isPackCoreJson(url) {
-  const relativePath = url.pathname.slice(SCOPE_URL.pathname.length);
-  return relativePath.startsWith('packs/') && relativePath.endsWith('.json')
+  const relativePath = packRelativePath(url);
+  return relativePath.endsWith('.json')
     && !relativePath.includes('/media/') && !relativePath.includes('/docs/');
 }
 
 function isPackMediaOrDoc(url) {
-  const relativePath = url.pathname.slice(SCOPE_URL.pathname.length);
-  return relativePath.startsWith('packs/')
-    && (relativePath.includes('/media/') || relativePath.includes('/docs/'));
+  const relativePath = packRelativePath(url);
+  return relativePath.includes('/media/') || relativePath.includes('/docs/');
 }

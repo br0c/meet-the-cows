@@ -29,6 +29,9 @@
   <body>
     <noscript>Meet the Cows needs JavaScript enabled.</noscript>
     <div id="app"></div>
+    <!-- Deployment config (pack origin, canonical app URL, channel). Classic script so the
+         service worker can importScripts() the very same file; must load before app.js. -->
+    <script src="config.js"></script>
     <script type="module" src="src/app.js"></script>
   </body>
 </html>

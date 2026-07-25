@@ -171,6 +171,36 @@ GitHub Pages deployment is split so app-only changes do not rebuild the data pac
 - `.github/workflows/deploy-app.yml` deploys app-shell changes using the latest already-built pack.
 - `.github/workflows/build-data-pack.yml` rebuilds the data pack, assembles the full static site, and deploys it. It runs manually, on schedule, and when the data-build scripts change.
 
+### Where a deployment points (config.js)
+
+The app shell is origin-relative, so the same build runs at any URL. `config.js` — loaded both by
+`index.html` and, via `importScripts`, by the service worker, so the two can never disagree —
+carries the few things that differ per deployment:
+
+| Field | Meaning |
+|---|---|
+| `packsBase` | Base that `packs/…` paths resolve against. Empty = same origin as the app; set it to serve pack data from a separate host so the shell and the ~300 MB of packs deploy independently. |
+| `canonicalAppUrl` | The production app URL. A copy served from any *other* origin understands itself to be retired and shows the migration notice; on the canonical origin it stays silent. |
+| `siteUrl` | Landing site, linked from that notice. |
+| `channel` | Label for a non-production deployment. Any non-empty value also suppresses the migration notice, because an experimental build is a deliberate destination, not a retired one. |
+
+The committed values are all empty, so a plain checkout behaves exactly like the original
+single-origin site. Both workflows overwrite the file at deploy time from repository variables
+(`PACKS_BASE_URL`, `CANONICAL_APP_URL`, `SITE_URL`), so no URL is hardcoded anywhere.
+
+### Deploy target
+
+`DEPLOY_TARGET` (repository variable) selects where the assembled site goes — unset for GitHub
+Pages, `cloudflare` for Cloudflare Pages via `wrangler pages deploy`. The Cloudflare path is a
+direct upload rather than a git-connected build, so the heavy pack build stays in Actions with
+its caches and secrets and Cloudflare only receives the finished directory. Each branch deploys
+under its own name, which is what gives experimental branches their own URLs.
+
+When `PACKS_BASE_URL` is set, `scripts/publish_packs_r2.py` uploads the pack tree to an R2
+bucket (S3 API, hash-compared so only changed objects move) and the packs are then left out of
+the site upload — a deployment becomes a few hundred KB instead of 300 MB, and every app
+deployment reads the same pack data.
+
 Major commercial/controlled airports and active military bases — where a glider must not land — are excluded from the pack so they never appear as landing options. They otherwise leak in from the landout sources and dominate the pinned "best options". The rule is source-agnostic: any airfield with a paved runway of 2000 m or more, plus a short explicit ICAO list for the major/military fields with shorter runways (both in `scripts/build_pack.py`). Real gliding aerodromes in this dataset top out around 1300 m, so this does not touch soaring sites.
 
 The data-pack build is incremental: it fingerprints the upstream sources (Guide CUPX, SIA VAC cycle) and skips the rebuild and deploy entirely when nothing has changed, so the daily run is a no-op on quiet days. It does a full refresh on pushes, on manual runs, and once a week. Field notes are localized into English, French, and German and stored per language in `fields.json`, so the app can show each note in the pilot's language. Each note is kept native in its own source language — French Guide prose stays French — and only translated into the other two languages via DeepL, so nothing is round-tripped through a third language and no credits are wasted re-encoding a note into its own language. Translations are cached across runs, so only new or changed text is re-translated. The cache is also published with the deployed pack and re-seeded from there whenever the CI cache is evicted, so losing the CI cache never re-spends DeepL quota. Without a DeepL key the notes fall back to their source language in every slot.

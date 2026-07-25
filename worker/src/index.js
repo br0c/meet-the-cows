@@ -541,16 +541,21 @@ function b64(bytes) {
 
 function sanitize(s) { return String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80); }
 
-// Echo the request Origin when it is the configured app origin or a localhost dev server;
-// anything else gets the configured origin (and the browser blocks it). Lets the deployed app
-// AND a locally served dev app talk to the same Worker.
+// Echo the request Origin when it is one of the configured app origins or a localhost dev
+// server; anything else gets the first configured origin (and the browser blocks it).
+// ALLOWED_ORIGIN is a comma-separated list so the production app, experimental deployments and
+// the retired origin can all talk to one Worker during a migration. A bare "*" allows any.
+function allowedOrigins(env) {
+  return String(env.ALLOWED_ORIGIN || '*').split(',').map(s => s.trim()).filter(Boolean);
+}
+
 function resolveOrigin(request, env) {
-  const allow = env.ALLOWED_ORIGIN || '*';
-  if (allow === '*') return '*';
+  const allow = allowedOrigins(env);
+  if (!allow.length || allow.includes('*')) return '*';
   const origin = request.headers.get('Origin') || '';
-  if (origin === allow) return origin;
+  if (allow.includes(origin)) return origin;
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin; // local dev
-  return allow;
+  return allow[0];
 }
 
 function cors(origin) {

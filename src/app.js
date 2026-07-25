@@ -1,9 +1,41 @@
-const APP_VERSION = '0.7.8-beta';
+const APP_VERSION = '0.8.0-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
 const BASE_URL = new URL('..', import.meta.url);
-const PACK_INDEX_URL = new URL('packs/packs.json', BASE_URL).toString();
+// Deployment config (config.js, loaded as a classic script before this module and shared
+// verbatim with the service worker). Absent or empty fields keep the original behaviour.
+const CONFIG = (typeof self !== 'undefined' && self.MTC_CONFIG) || {};
+const withTrailingSlash = value => {
+  const text = String(value || '').trim();
+  return text && !text.endsWith('/') ? `${text}/` : text;
+};
+// Pack paths ("packs/…") resolve against the app by default, or against a separate data
+// origin (R2) when configured — the app shell and the ~300 MB of pack data are deployed
+// independently, so an experimental build can read the production packs without copying them.
+const DATA_BASE = CONFIG.packsBase ? new URL(withTrailingSlash(CONFIG.packsBase)) : BASE_URL;
+const PACK_INDEX_URL = new URL('packs/packs.json', DATA_BASE).toString();
+// A copy served from anywhere other than the canonical app URL understands itself to be a
+// retired deployment and offers a guided move. One config value is correct on both sides: on
+// the canonical origin the origins match and nothing is shown. null = nothing to migrate to.
+const MIGRATION = (() => {
+  const target = String(CONFIG.canonicalAppUrl || '').trim();
+  if (!target) return null;
+  // A labelled channel (next, a branch preview) is a deliberate alternate deployment, not a
+  // retired one: testers are there on purpose and must not be told the app has moved.
+  if (String(CONFIG.channel || '').trim()) return null;
+  try {
+    const url = new URL(target);
+    if (url.origin === self.location.origin) return null;
+    return { url: url.toString(), host: url.host, site: String(CONFIG.siteUrl || '').trim() };
+  } catch {
+    return null;  // a malformed config must never break the app
+  }
+})();
+const MIGRATION_SNOOZE_KEY = 'mtc-migration-snoozed-until';
+// Deliberately short: the user base is small, so a daily reminder moves everyone across in
+// days rather than months. Long enough that it never nags twice in one flying day.
+const MIGRATION_SNOOZE_MS = 24 * 60 * 60 * 1000;
 const SETTINGS_KEY = 'mtc-settings-v2';
 const syncedVersionKey = packId => `mtc-synced-version-${packId}`;
 const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
@@ -187,6 +219,15 @@ const STRINGS = {
     searchPlaceholder: 'Search a field by name or code', clearSearch: 'Clear search',
     searchResults: 'Search results', noMatches: q => `No fields match “${q}”.`,
     whatsNew: 'What’s new', updatedTo: v => `🆕 Updated to ${v}`,
+    migBanner: 'Meet the Cows has a new home. Same app, new address — move when you’re on Wi-Fi.',
+    migDetails: 'Details', migTitle: 'The app is moving',
+    migIntro: 'Meet the Cows now lives on its own address. This one keeps working for now, but updates and new features land on the new one.',
+    migStep1: 'Open the new address', migStep1Note: 'tap the button below, or type it in.',
+    migStep2: 'Install it', migStep2Note: '“Add to Home Screen”, exactly as you did before.',
+    migStep3: 'Download your packs again', migStep3Note: 'your offline maps and charts can’t follow the move, so pick your regions and download once.',
+    migStep4: 'Delete the old icon', migStep4Note: 'once the new one works offline.',
+    migWarnLead: 'Do this at home, on Wi-Fi.', migWarnBody: 'Re-downloading your packs uses a few hundred MB. Don’t start it at the airfield or before a flight.',
+    migOpen: h => `Open ${h}`, migSnooze: 'Remind me tomorrow', migWhy: 'Why the move?',
     licenceLabel: 'Licence', licenceValue: 'Personal use · data reuse on request',
     noNotesFile: 'Release notes are unavailable offline.',
     contribute: 'Contribute an update', contribTitle: 'Contribute an update',
@@ -287,6 +328,15 @@ const STRINGS = {
     searchPlaceholder: 'Rechercher un terrain (nom ou code)', clearSearch: 'Effacer la recherche',
     searchResults: 'Résultats de recherche', noMatches: q => `Aucun terrain ne correspond à « ${q} ».`,
     whatsNew: 'Nouveautés', updatedTo: v => `🆕 Mise à jour ${v}`,
+    migBanner: 'Meet the Cows a une nouvelle adresse. Même application — déménagez en Wi-Fi.',
+    migDetails: 'Détails', migTitle: 'L’application déménage',
+    migIntro: 'Meet the Cows a désormais sa propre adresse. Celle-ci continue de fonctionner, mais les mises à jour et les nouveautés arrivent sur la nouvelle.',
+    migStep1: 'Ouvrez la nouvelle adresse', migStep1Note: 'touchez le bouton ci-dessous, ou saisissez-la.',
+    migStep2: 'Installez-la', migStep2Note: '« Ajouter à l’écran d’accueil », comme la première fois.',
+    migStep3: 'Retéléchargez vos packs', migStep3Note: 'vos cartes et fiches hors ligne ne peuvent pas suivre le déménagement : choisissez vos régions et téléchargez une fois.',
+    migStep4: 'Supprimez l’ancienne icône', migStep4Note: 'une fois que la nouvelle fonctionne hors ligne.',
+    migWarnLead: 'Faites-le chez vous, en Wi-Fi.', migWarnBody: 'Retélécharger vos packs représente quelques centaines de Mo. Ne le lancez pas sur le terrain ni avant un vol.',
+    migOpen: h => `Ouvrir ${h}`, migSnooze: 'Me le rappeler demain', migWhy: 'Pourquoi ce changement ?',
     licenceLabel: 'Licence', licenceValue: 'Usage personnel · réutilisation des données sur demande',
     noNotesFile: 'Notes de version indisponibles hors ligne.',
     contribute: 'Proposer une mise à jour', contribTitle: 'Proposer une mise à jour',
@@ -387,6 +437,15 @@ const STRINGS = {
     searchPlaceholder: 'Feld suchen (Name oder Code)', clearSearch: 'Suche löschen',
     searchResults: 'Suchergebnisse', noMatches: q => `Keine Felder für „${q}“.`,
     whatsNew: 'Neuigkeiten', updatedTo: v => `🆕 Aktualisiert auf ${v}`,
+    migBanner: 'Meet the Cows hat eine neue Adresse. Gleiche App — wechsle im WLAN.',
+    migDetails: 'Details', migTitle: 'Die App zieht um',
+    migIntro: 'Meet the Cows hat jetzt eine eigene Adresse. Diese hier funktioniert vorerst weiter, aber Updates und neue Funktionen kommen auf der neuen.',
+    migStep1: 'Neue Adresse öffnen', migStep1Note: 'unten tippen oder die Adresse eingeben.',
+    migStep2: 'Installieren', migStep2Note: '„Zum Startbildschirm hinzufügen“, genau wie beim ersten Mal.',
+    migStep3: 'Pakete erneut laden', migStep3Note: 'deine Offline-Karten und -Blätter können nicht mitziehen: Regionen wählen und einmal herunterladen.',
+    migStep4: 'Altes Symbol löschen', migStep4Note: 'sobald das neue offline funktioniert.',
+    migWarnLead: 'Mach das zu Hause, im WLAN.', migWarnBody: 'Das erneute Laden der Pakete kostet einige hundert MB. Nicht am Flugplatz oder vor dem Start starten.',
+    migOpen: h => `${h} öffnen`, migSnooze: 'Morgen erinnern', migWhy: 'Warum der Umzug?',
     licenceLabel: 'Lizenz', licenceValue: 'Private Nutzung · Datenweiterverwendung auf Anfrage',
     noNotesFile: 'Versionshinweise offline nicht verfügbar.',
     contribute: 'Update beitragen', contribTitle: 'Update beitragen',
@@ -614,7 +673,7 @@ function selectedPack() {  // legacy single-pack callers use the first active pa
 }
 
 function manifestUrlForPack(pack) {
-  return new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, BASE_URL).toString();
+  return new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, DATA_BASE).toString();
 }
 
 // Load every selected pack, merge their fields and de-duplicate by id (a field shared by, e.g.,
@@ -898,13 +957,14 @@ function render() {
       ${state.contribFor ? renderContribute(state.fields.find(f => f.id === state.contribFor)) : ''}
       ${renderNewField()}
       ${state.showReleaseNotes ? renderReleaseNotes() : ''}
+      ${renderMigrationSheet()}
       ${renderBugReport()}
       ${renderOfflineBar()}
     </div>
   `;
   // Lock background scroll while an overlay is open, so scrolling a short bottom-sheet doesn't
   // fall through to the list behind it.
-  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport));
+  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport || state.showMigrationSheet));
   attachEvents();
   requestAnimationFrame(() => {
     const detail = document.querySelector('.detail');
@@ -958,11 +1018,66 @@ function renderWarnings() {
 function renderMainPage() {
   return `
     ${renderSearchBox()}
+    ${renderMigrationBanner()}
     ${renderReleaseBanner()}
     ${renderUpdateBanner()}
     ${renderWarnings()}
     <div id="fieldListArea">${renderFieldList()}</div>
     <p class="footer-note">${escapeHtml(t('footerNote'))}</p>
+  `;
+}
+
+// Shown only on a retired deployment (see MIGRATION). Amber rather than the teal used by the
+// update banners, so it reads as "something different", without the red that means danger.
+// Never blocks the app: a pilot at the airfield must always reach their fields.
+function migrationSnoozed() {
+  try {
+    return Number(localStorage.getItem(MIGRATION_SNOOZE_KEY) || 0) > Date.now();
+  } catch {
+    return false;  // private mode / storage disabled: show the notice rather than hide it
+  }
+}
+
+function renderMigrationBanner() {
+  if (!MIGRATION || migrationSnoozed()) return '';
+  return `
+    <div class="migration-banner">
+      <span>${escapeHtml(t('migBanner'))}</span>
+      <button id="migrationBannerBtn">${escapeHtml(t('migDetails'))}</button>
+    </div>
+  `;
+}
+
+function renderMigrationSheet() {
+  if (!MIGRATION || !state.showMigrationSheet) return '';
+  const step = (n, title, note) => `
+    <div class="mig-step"><span class="mig-step-n">${n}</span>
+      <span><strong>${escapeHtml(title)}</strong> <span class="mig-step-note">— ${escapeHtml(note)}</span></span>
+    </div>`;
+  const why = MIGRATION.site
+    ? `<a class="mig-why" href="${escapeHtml(MIGRATION.site)}" target="_blank" rel="noopener">${escapeHtml(t('migWhy'))}</a>`
+    : '';
+  return `
+    <div class="detail-backdrop" id="migrationBackdrop">
+      <article class="detail" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('migTitle'))}">
+        <button id="closeMigration">${t('close')}</button>
+        <div class="detail-title-row"><h2>${escapeHtml(t('migTitle'))}</h2></div>
+        <p class="detail-meta">${escapeHtml(t('migIntro'))}</p>
+        <div class="mig-url">🐄 ${escapeHtml(MIGRATION.host)}</div>
+        <div class="mig-steps">
+          ${step(1, t('migStep1'), t('migStep1Note'))}
+          ${step(2, t('migStep2'), t('migStep2Note'))}
+          ${step(3, t('migStep3'), t('migStep3Note'))}
+          ${step(4, t('migStep4'), t('migStep4Note'))}
+        </div>
+        <div class="mig-warn">⚠️ <span><strong>${escapeHtml(t('migWarnLead'))}</strong> ${escapeHtml(t('migWarnBody'))}</span></div>
+        <div class="button-row single">
+          <a class="mig-go" href="${escapeHtml(MIGRATION.url)}">${escapeHtml(t('migOpen', MIGRATION.host))}</a>
+          <button id="migrationSnooze">${escapeHtml(t('migSnooze'))}</button>
+          ${why}
+        </div>
+      </article>
+    </div>
   `;
 }
 
@@ -1989,6 +2104,16 @@ function attachEvents() {
   document.querySelector('#closeNotes')?.addEventListener('click', () => { state.showReleaseNotes = false; render(); });
   document.querySelector('#notesBackdrop')?.addEventListener('click', e => {
     if (e.target.id === 'notesBackdrop') { state.showReleaseNotes = false; render(); }
+  });
+  document.querySelector('#migrationBannerBtn')?.addEventListener('click', () => { state.showMigrationSheet = true; render(); });
+  document.querySelector('#closeMigration')?.addEventListener('click', () => { state.showMigrationSheet = false; render(); });
+  document.querySelector('#migrationBackdrop')?.addEventListener('click', e => {
+    if (e.target.id === 'migrationBackdrop') { state.showMigrationSheet = false; render(); }
+  });
+  document.querySelector('#migrationSnooze')?.addEventListener('click', () => {
+    try { localStorage.setItem(MIGRATION_SNOOZE_KEY, String(Date.now() + MIGRATION_SNOOZE_MS)); } catch { /* storage disabled */ }
+    state.showMigrationSheet = false;
+    render();
   });
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });

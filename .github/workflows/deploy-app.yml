@@ -90,7 +90,7 @@ jobs:
         run: |
           mkdir -p dist/site/packs
 
-          cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json dist/site/
+          cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json config.js dist/site/
           if [ -d icons ]; then cp -R icons dist/site/icons; fi
           mkdir -p dist/site/src
           cp src/app.js dist/site/src/app.js
@@ -101,10 +101,39 @@ jobs:
           find dist/site -maxdepth 3 -type f | sort | head -80
           du -sh dist/site dist/site/packs
 
+      # Deployment config is written per environment, overwriting the committed defaults (which
+      # stay empty so a local checkout behaves like a plain single-origin site). Everything is
+      # driven by repository variables, so no URL is hardcoded in the workflow.
+      #   PACKS_BASE_URL      data origin for packs, e.g. https://data.meetthecows.org/ ('' = self)
+      #   CANONICAL_APP_URL   production app URL; any other origin shows the migration notice
+      #   SITE_URL            landing site, linked from that notice
+      - name: Write deployment config
+        env:
+          PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
+          CANONICAL_APP_URL: ${{ vars.CANONICAL_APP_URL }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          CHANNEL: ${{ github.ref_name == 'main' && '' || github.ref_name }}
+        run: |
+          python - <<'PY' > dist/site/config.js
+          import json, os
+          cfg = {
+              "packsBase": os.environ.get("PACKS_BASE_URL", ""),
+              "canonicalAppUrl": os.environ.get("CANONICAL_APP_URL", ""),
+              "siteUrl": os.environ.get("SITE_URL", ""),
+              "channel": os.environ.get("CHANNEL", ""),
+          }
+          print("// Generated at deploy time — see config.js in the repo for the field docs.")
+          print(f"self.MTC_CONFIG = {json.dumps(cfg, indent=2)};")
+          PY
+          cat dist/site/config.js
+
+      # --- GitHub Pages (default) ------------------------------------------------------------
       - name: Setup Pages
+        if: vars.DEPLOY_TARGET != 'cloudflare'
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
+        if: vars.DEPLOY_TARGET != 'cloudflare'
         uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages-${{ github.run_attempt }}
@@ -112,9 +141,32 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
+        if: vars.DEPLOY_TARGET != 'cloudflare'
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 
+      # --- Cloudflare Pages (set repo variable DEPLOY_TARGET=cloudflare to switch over) -------
+      # Direct upload, not a git-connected build: the heavy pack build stays here in Actions
+      # with its caches and secrets, and Cloudflare only receives the finished directory.
+      # --branch drives the URL: the production branch serves the custom domain, every other
+      # branch gets its own <branch>.<project>.pages.dev alias — the experimental deployments.
+      - name: Deploy to Cloudflare Pages
+        id: cf
+        if: vars.DEPLOY_TARGET == 'cloudflare'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@latest pages deploy dist/site \
+            --project-name "${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}" \
+            --branch "${{ github.ref_name }}" \
+            --commit-dirty=true
+
       - name: Show URL
-        run: echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
+        run: |
+          if [ "${{ vars.DEPLOY_TARGET }}" = "cloudflare" ]; then
+            echo "Deployed to Cloudflare Pages (branch ${{ github.ref_name }})"
+          else
+            echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
+          fi

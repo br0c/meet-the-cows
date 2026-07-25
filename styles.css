@@ -79,6 +79,25 @@ a { color: var(--accent); }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #052e2b; color: #99f6e4; border: 1px solid #0f766e; border-radius: 12px; padding: 10px; margin: 8px 0; }
 .update-banner button { white-space: nowrap; }
 
+/* Migration notice for a retired deployment. Amber so it is clearly not one of the routine
+   teal update banners, but not red — nothing here is a hazard. */
+.migration-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: #2a1e05; color: #fcd34d; border: 1px solid #a16207; border-radius: 12px; padding: 10px; margin: 8px 0; }
+.migration-banner button { white-space: nowrap; background: #a16207; border-color: #ca8a04; color: #fffbeb; font-weight: 600; }
+.mig-url { display: flex; align-items: center; justify-content: center; gap: 8px; background: #052e2b;
+  border: 1px solid #0f766e; color: #5eead4; border-radius: 10px; padding: 10px; font-weight: 700; margin-bottom: 12px; }
+.mig-steps { display: grid; gap: 10px; margin-bottom: 12px; }
+.mig-step { display: flex; gap: 10px; align-items: flex-start; }
+.mig-step-n { flex: none; width: 21px; height: 21px; border-radius: 50%; background: var(--panel-2);
+  border: 1px solid var(--line); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.mig-step-note { color: var(--muted); }
+.mig-warn { display: flex; gap: 9px; background: #2a1206; border: 1px solid #9a3412; color: #fdba74;
+  border-radius: 10px; padding: 10px; margin-bottom: 12px; line-height: 1.35; }
+.mig-warn strong { color: #fed7aa; }
+.mig-go { display: block; text-align: center; text-decoration: none; background: #0f766e; border: 1px solid #14b8a6;
+  color: #ccfbf1; border-radius: 12px; padding: 10px 12px; font-weight: 700; }
+.mig-why { display: block; text-align: center; color: var(--muted); font-size: 14px; padding: 4px; }
+
 /* Floating offline-download progress bar: fixed so it stays put and updates in place while the
    rest of the app (search, list) remains fully usable. */
 .offline-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
