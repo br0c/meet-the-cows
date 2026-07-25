@@ -22,7 +22,7 @@ from pathlib import Path
 
 # Only the raster/vector icons a platform installs. og-image is excluded: it is fetched by link
 # unfurlers that have no such cache and sometimes choke on query strings.
-ICON_PATTERN = re.compile(r'(icons/(?:apple-touch-icon|icon-\d+|icon)\.(?:png|svg))(\?v=[^"\']*)?')
+ICON_PATTERN = re.compile(r'(icons/(?:[\w-]+/)?(?:apple-touch-icon|icon-\d+|icon)\.(?:png|svg))(\?v=[^"\']*)?')
 
 
 def stamp(value: str, version: str) -> str:

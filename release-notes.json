@@ -1,41 +1,15 @@
 [
   {
-    "version": "0.8.5-beta",
-    "date": "2026-07-25",
-    "en": [
-      "Fixed: iOS kept showing a stale home-screen icon even after reinstalling — the icon address now changes with each release, so the phone fetches it again"
-    ],
-    "fr": [
-      "Corrigé : iOS conservait une ancienne icône d'écran d'accueil même après réinstallation — l'adresse de l'icône change désormais à chaque version, forçant le téléchargement"
-    ],
-    "de": [
-      "Behoben: iOS zeigte auch nach Neuinstallation ein altes Startbildschirm-Symbol — die Symboladresse ändert sich jetzt mit jeder Version, sodass das Telefon es neu lädt"
-    ]
-  },
-  {
-    "version": "0.8.4-beta",
-    "date": "2026-07-25",
-    "en": [
-      "Fixed: the home-screen icon could pick up a stray dark edge on iOS, which does not support transparency in app icons"
-    ],
-    "fr": [
-      "Corrigé : l'icône de l'écran d'accueil pouvait présenter un liseré sombre sur iOS, qui ne gère pas la transparence dans les icônes"
-    ],
-    "de": [
-      "Behoben: Das Startbildschirm-Symbol konnte unter iOS einen dunklen Rand bekommen, da iOS keine Transparenz in App-Symbolen unterstützt"
-    ]
-  },
-  {
     "version": "0.8.3-beta",
     "date": "2026-07-25",
     "en": [
-      "Sharper home-screen icon on iOS, which previously had only an SVG to work from"
+      "Sharper, correctly coloured home-screen icon on iOS, which previously had only an SVG to work from"
     ],
     "fr": [
-      "Icône plus nette sur l'écran d'accueil iOS, qui ne disposait auparavant que d'un SVG"
+      "Icône d'écran d'accueil plus nette et aux bonnes couleurs sur iOS, qui ne disposait auparavant que d'un SVG"
     ],
     "de": [
-      "Schärferes Startbildschirm-Symbol unter iOS, dem bisher nur ein SVG zur Verfügung stand"
+      "Schärferes, farblich korrektes Startbildschirm-Symbol unter iOS, dem bisher nur ein SVG zur Verfügung stand"
     ]
   },
   {

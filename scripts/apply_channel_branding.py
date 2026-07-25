@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -26,6 +25,13 @@ CHANNEL_COLOUR = "#b45309"
 # Splash/composite ground. Dark enough for white text, warm enough to read as the amber build.
 CHANNEL_BACKGROUND = "#1c1207"
 ICON_FILES = ("icon.svg", "icon-192.png", "icon-512.png", "apple-touch-icon.png")
+
+
+def _variant_path(src: str, variant: str) -> str:
+    """icons/icon-192.png -> icons/<variant>/icon-192.png, leaving anything else alone."""
+    if not src.startswith("icons/") or src.startswith(f"icons/{variant}/"):
+        return src
+    return f"icons/{variant}/{src[len('icons/'):]}"
 
 
 def main() -> None:
@@ -42,19 +48,16 @@ def main() -> None:
         print("--channel must not be empty", file=sys.stderr)
         sys.exit(1)
 
-    # Icons: promote the variant over the production names so nothing else has to know it moved.
+    # Icons are referenced at their own PATH rather than copied over the production names.
+    # Copying kept the URL identical between the two builds, and iOS caches a home-screen icon per
+    # URL in a cache that survives uninstalling — so the channel inherited whatever the phone had
+    # already rasterised for that address, and no amount of correcting the bytes could dislodge it.
+    # A path it has never requested has nothing cached against it.
     variant_dir = site / "icons" / args.variant
-    promoted = 0
-    for name in ICON_FILES:
-        source = variant_dir / name
-        if source.is_file():
-            shutil.copyfile(source, site / "icons" / name)
-            promoted += 1
-    if not promoted:
-        print(f"::warning::no {args.variant} icons found in {variant_dir} — icons left unchanged",
-              file=sys.stderr)
-    else:
-        print(f"promoted {promoted} {args.variant} icon(s)", file=sys.stderr)
+    missing = [n for n in ICON_FILES if not (variant_dir / n).is_file()]
+    if missing:
+        print(f"::warning::{args.variant} icons missing: {', '.join(missing)}", file=sys.stderr)
+    print(f"icons referenced from icons/{args.variant}/", file=sys.stderr)
 
     manifest_path = site / "manifest.webmanifest"
     if manifest_path.is_file():
@@ -68,6 +71,12 @@ def main() -> None:
         # platform composites an icon over. Leaving it at production's navy is how an amber icon
         # ends up reading navy on an iOS home screen.
         manifest["background_color"] = CHANNEL_BACKGROUND
+        # A distinct id as well: identity is what a platform uses to decide whether this is the
+        # app it already knows. The origins differ, so this is belt and braces — but the whole
+        # problem here was a platform reusing something it should not have.
+        manifest["id"] = f"/?channel={label}"
+        for icon in manifest.get("icons", []):
+            icon["src"] = _variant_path(icon.get("src", ""), args.variant)
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                                  encoding="utf-8")
         print(f"manifest: {manifest['short_name']}, theme {CHANNEL_COLOUR}, background {CHANNEL_BACKGROUND}",
@@ -82,6 +91,9 @@ def main() -> None:
         html = re.sub(r'(<meta name="theme-color" content=")[^"]*(")',
                       rf'\1{CHANNEL_COLOUR}\2', html)
         html = re.sub(r"(<title>)[^<]*(</title>)", rf"\1Meet The Cows ({label})\2", html)
+        html = re.sub(r'(href=")(icons/[^"]+)(")',
+                      lambda m: m.group(1) + _variant_path(m.group(2), args.variant) + m.group(3),
+                      html)
         index_path.write_text(html, encoding="utf-8")
         print(f"index.html: title and theme-color set for '{label}'", file=sys.stderr)
 
