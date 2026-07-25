@@ -1,0 +1,298 @@
+// Terrain tiles: fetching, decoding, offline caching, and cutting a routing grid out of them.
+//
+// The tiles are built by scripts/build_terrain_tiles.py; scripts/terrain_format.py is the
+// authority on the container and the coordinate convention, and decodeTile below is its inverse.
+// Nothing here knows about glides — it hands a plain elevation grid to src/glide-worker.js.
+
+const SAMPLES_PER_DEGREE = 1200;   // 3 arc-seconds, ~92 m of latitude
+const TILE_SPAN_DEG = 1;
+const MAGIC = 0x5443544d;          // "MTCT" read as a little-endian uint32
+const FLAG_DEFLATE = 0x01;
+const FLAG_GRADIENT = 0x02;
+export const NODATA = -32768;
+
+// Routing runs on a coarser multiple of the tile grid: 3 rows is ~278 m of latitude, and the
+// column decimation is chosen per latitude so cells come out roughly square on the ground.
+// Coarser than this and a 300 m-wide valley floor stops existing; finer and the wavefront over a
+// 100 km radius stops fitting in a phone's patience.
+const ROUTE_LAT_DECIMATE = 3;
+
+const METRES_PER_DEGREE_LAT = 111320;
+
+export const terrainPaths = {
+  dir: 'packs/_terrain/',
+  index: 'packs/_terrain/index.json',
+  tile: key => `packs/_terrain/${key}.terr`,
+};
+
+/** Whether this browser can inflate a tile at all. Safari gained DecompressionStream in 16.4. */
+export function terrainSupported() {
+  return typeof DecompressionStream === 'function';
+}
+
+// --- tile addressing -------------------------------------------------------------------------
+//
+// A cell's latitude interval is closed at the top and open at the bottom (the source rows are),
+// so a position exactly on a whole degree belongs to the tile BELOW it. Longitude is the other
+// way round. See the header of scripts/terrain_format.py.
+
+export function tileLat0(lat) { return Math.ceil(lat) - 1; }
+export function tileLon0(lon) { return Math.floor(lon); }
+
+export function tileKey(lat0, lon0) {
+  const ns = lat0 >= 0 ? 'N' : 'S';
+  const ew = lon0 >= 0 ? 'E' : 'W';
+  return `${ns}${String(Math.abs(lat0)).padStart(2, '0')}${ew}${String(Math.abs(lon0)).padStart(3, '0')}`;
+}
+
+export function tileKeyFor(lat, lon) {
+  return tileKey(tileLat0(lat), tileLon0(lon));
+}
+
+/** Every tile key touching a lat/lon box, in a stable order. */
+export function tileKeysForBounds({ south, west, north, east }) {
+  const keys = [];
+  for (let lat0 = tileLat0(south); lat0 <= tileLat0(north); lat0 += TILE_SPAN_DEG) {
+    for (let lon0 = tileLon0(west); lon0 <= tileLon0(east); lon0 += TILE_SPAN_DEG) {
+      keys.push(tileKey(lat0, lon0));
+    }
+  }
+  return keys;
+}
+
+// Global 3-arc-second lattice, shared by every tile so pooling blocks never straddle a seam.
+const globalRow = lat => Math.floor((90 - lat) * SAMPLES_PER_DEGREE);
+const globalCol = lon => Math.floor((lon + 180) * SAMPLES_PER_DEGREE);
+const latOfRowTop = row => 90 - row / SAMPLES_PER_DEGREE;
+const lonOfColLeft = col => col / SAMPLES_PER_DEGREE - 180;
+
+// --- decoding --------------------------------------------------------------------------------
+
+async function inflateRaw(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/** Undo the gradient filter: rejoin the two byte planes, then sum down the columns and across
+ *  the rows. Both sums are mod 2**16, matching _gradient_filter in scripts/terrain_format.py. */
+function unfilterGradient(planes, samples) {
+  const count = samples * samples;
+  const values = new Uint16Array(count);
+  for (let i = 0; i < count; i += 1) values[i] = planes[i] | (planes[count + i] << 8);
+  for (let r = 1; r < samples; r += 1) {
+    const row = r * samples;
+    const above = row - samples;
+    for (let c = 0; c < samples; c += 1) values[row + c] += values[above + c];
+  }
+  for (let r = 0; r < samples; r += 1) {
+    const row = r * samples;
+    for (let c = 1; c < samples; c += 1) values[row + c] += values[row + c - 1];
+  }
+  // Uint16Array wraps on overflow, which is the mod-2**16 arithmetic the filter assumed; the
+  // same bytes reinterpreted as int16 are the elevations.
+  return new Int16Array(values.buffer);
+}
+
+export async function decodeTile(buffer) {
+  const view = new DataView(buffer);
+  if (buffer.byteLength < 16 || view.getUint32(0, true) !== MAGIC) throw new Error('not a .terr tile');
+  const version = view.getUint8(4);
+  if (version !== 1) throw new Error(`unsupported .terr version ${version}`);
+  const flags = view.getUint8(5);
+  const tile = {
+    lat0: view.getInt16(6, true),
+    lon0: view.getInt16(8, true),
+    span: view.getUint8(10),
+    samples: view.getUint16(11, true),
+    nodata: view.getInt16(13, true),
+  };
+  let payload = new Uint8Array(buffer, 16);
+  if (flags & FLAG_DEFLATE) payload = await inflateRaw(payload);
+  const expected = tile.samples * tile.samples * 2;
+  if (payload.byteLength !== expected) {
+    throw new Error(`tile payload is ${payload.byteLength} bytes, expected ${expected}`);
+  }
+  tile.elevations = (flags & FLAG_GRADIENT)
+    ? unfilterGradient(payload, tile.samples)
+    // byteOffset may be non-zero and Int16Array demands 2-byte alignment, so copy rather than view.
+    : new Int16Array(payload.slice().buffer);
+  return tile;
+}
+
+// --- store -----------------------------------------------------------------------------------
+
+/**
+ * Holds decoded tiles in memory, backed by the app's own Cache Storage so a downloaded region
+ * keeps working with the radio off. Deliberately not a global: the app owns one instance and
+ * hands it the current data origin, which can move between deployments.
+ */
+export class TerrainStore {
+  constructor({ baseUrl, cacheName, maxTilesInMemory = 12 }) {
+    this.baseUrl = baseUrl;
+    this.cacheName = cacheName;
+    this.maxTilesInMemory = maxTilesInMemory;
+    this.tiles = new Map();       // key -> decoded tile (insertion order doubles as LRU)
+    this.pending = new Map();     // key -> in-flight promise, so a burst asks the network once
+    this.missing = new Set();     // keys the server does not have; never asked for twice
+    this.index = null;
+  }
+
+  url(path) { return new URL(path, this.baseUrl).toString(); }
+
+  /** The published tile list, or null when this deployment ships no terrain at all. */
+  async loadIndex() {
+    if (this.index !== null) return this.index || null;
+    try {
+      const response = await fetch(this.url(terrainPaths.index), { cache: 'no-cache' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      this.index = await response.json();
+    } catch (error) {
+      console.info('No terrain index available', error);
+      this.index = false;
+    }
+    return this.index || null;
+  }
+
+  /** Tile keys the index actually offers, so callers never queue a download that 404s. */
+  async availableKeys() {
+    const index = await this.loadIndex();
+    return new Set((index?.tiles || []).map(entry => entry.key));
+  }
+
+  async fetchTile(key) {
+    if (this.tiles.has(key)) return this.tiles.get(key);
+    if (this.missing.has(key)) return null;
+    if (this.pending.has(key)) return this.pending.get(key);
+
+    const task = (async () => {
+      const url = this.url(terrainPaths.tile(key));
+      try {
+        // Cache first: in the air there is no network, and a tile never changes under its key
+        // within a build. A miss falls through to the network and is stored for next time.
+        let response = 'caches' in self ? await (await caches.open(this.cacheName)).match(url) : null;
+        if (!response) {
+          response = await fetch(url);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if ('caches' in self) {
+            await (await caches.open(this.cacheName)).put(url, response.clone());
+          }
+        }
+        const tile = await decodeTile(await response.arrayBuffer());
+        this.tiles.set(key, tile);
+        // Each tile is ~2.9 MB decoded, so hold a working set and drop the oldest beyond it.
+        while (this.tiles.size > this.maxTilesInMemory) {
+          this.tiles.delete(this.tiles.keys().next().value);
+        }
+        return tile;
+      } catch (error) {
+        this.missing.add(key);
+        console.info('Terrain tile unavailable', key, error);
+        return null;
+      } finally {
+        this.pending.delete(key);
+      }
+    })();
+
+    this.pending.set(key, task);
+    return task;
+  }
+
+  /** Load every tile covering a box. Returns the ones that exist; absent tiles are simply absent. */
+  async loadBounds(bounds) {
+    const keys = tileKeysForBounds(bounds);
+    const tiles = await Promise.all(keys.map(key => this.fetchTile(key)));
+    const found = new Map();
+    keys.forEach((key, i) => { if (tiles[i]) found.set(key, tiles[i]); });
+    return found;
+  }
+
+  /**
+   * Cut a routing grid out of the loaded tiles: a rectangle of cells around a centre, each
+   * holding the highest ground within it. Cells not covered by any tile are NODATA, and the
+   * caller decides what an uncovered route is worth.
+   *
+   * Returns null when nothing at all is covered, which is the signal to fall back to straight
+   * lines rather than to invent terrain.
+   */
+  async routingGrid({ latitude, longitude, radiusM }) {
+    const latPad = radiusM / METRES_PER_DEGREE_LAT;
+    const cosLat = Math.max(0.2, Math.cos(latitude * Math.PI / 180));
+    const lonPad = latPad / cosLat;
+    const bounds = {
+      south: latitude - latPad, north: latitude + latPad,
+      west: longitude - lonPad, east: longitude + lonPad,
+    };
+    const tiles = await this.loadBounds(bounds);
+    if (!tiles.size) return null;
+
+    // Square-ish cells: the same number of metres across as down, at this latitude.
+    const lonDecimate = Math.max(1, Math.round(ROUTE_LAT_DECIMATE / cosLat));
+    // Snap the window to the global lattice so a pooling block is always the same set of source
+    // cells regardless of where the glider happens to be standing.
+    const rowStart = Math.floor(globalRow(bounds.north) / ROUTE_LAT_DECIMATE) * ROUTE_LAT_DECIMATE;
+    const rowEnd = Math.ceil((globalRow(bounds.south) + 1) / ROUTE_LAT_DECIMATE) * ROUTE_LAT_DECIMATE;
+    const colStart = Math.floor(globalCol(bounds.west) / lonDecimate) * lonDecimate;
+    const colEnd = Math.ceil((globalCol(bounds.east) + 1) / lonDecimate) * lonDecimate;
+
+    const rows = (rowEnd - rowStart) / ROUTE_LAT_DECIMATE;
+    const cols = (colEnd - colStart) / lonDecimate;
+    const elevations = new Int16Array(rows * cols).fill(NODATA);
+    let covered = 0;
+
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        let best = NODATA;
+        for (let sr = 0; sr < ROUTE_LAT_DECIMATE; sr += 1) {
+          const gr = rowStart + r * ROUTE_LAT_DECIMATE + sr;
+          const tileRowIndex = Math.floor(gr / SAMPLES_PER_DEGREE);
+          const lat0 = 89 - tileRowIndex;
+          const localRow = gr - tileRowIndex * SAMPLES_PER_DEGREE;
+          for (let sc = 0; sc < lonDecimate; sc += 1) {
+            const gc = colStart + c * lonDecimate + sc;
+            const tileColIndex = Math.floor(gc / SAMPLES_PER_DEGREE);
+            const tile = tiles.get(tileKey(lat0, tileColIndex - 180));
+            if (!tile) continue;
+            const value = tile.elevations[localRow * SAMPLES_PER_DEGREE + (gc - tileColIndex * SAMPLES_PER_DEGREE)];
+            if (value !== NODATA && value > best) best = value;
+          }
+        }
+        if (best !== NODATA) covered += 1;
+        elevations[r * cols + c] = best;
+      }
+    }
+    if (!covered) return null;
+
+    const latStepDeg = ROUTE_LAT_DECIMATE / SAMPLES_PER_DEGREE;
+    const lonStepDeg = lonDecimate / SAMPLES_PER_DEGREE;
+    return {
+      rows, cols, elevations, nodata: NODATA,
+      north: latOfRowTop(rowStart),
+      west: lonOfColLeft(colStart),
+      latStepDeg,
+      lonStepDeg,
+      // Cell size on the ground, taken at the centre latitude. The grid spans at most ~2°, over
+      // which the longitude scale moves a couple of per cent — well inside the grid's own
+      // resolution, and the error is symmetric rather than one-sided.
+      cellNorthM: latStepDeg * METRES_PER_DEGREE_LAT,
+      cellEastM: lonStepDeg * METRES_PER_DEGREE_LAT * cosLat,
+      coveredCells: covered,
+      coverage: covered / (rows * cols),
+    };
+  }
+}
+
+/** Row/column of the cell holding a position within a routing grid, or null if outside it. */
+export function gridIndexFor(grid, latitude, longitude) {
+  const row = Math.floor((grid.north - latitude) / grid.latStepDeg);
+  const col = Math.floor((longitude - grid.west) / grid.lonStepDeg);
+  if (row < 0 || col < 0 || row >= grid.rows || col >= grid.cols) return null;
+  return { row, col };
+}
+
+/** Centre of a routing cell, for describing a point on a route back to the pilot. */
+export function gridLatLon(grid, row, col) {
+  return {
+    latitude: grid.north - (row + 0.5) * grid.latStepDeg,
+    longitude: grid.west + (col + 0.5) * grid.lonStepDeg,
+  };
+}

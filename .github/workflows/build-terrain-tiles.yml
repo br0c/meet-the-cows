@@ -1,0 +1,138 @@
+# Build the terrain tiles the app routes glides over, and publish them beside the packs.
+#
+# Deliberately manual and deliberately separate from the nightly pack build. The ground does not
+# move: these tiles are rebuilt when the covered area changes or the DEM product does, not every
+# night, and a run downloads several GB from Copernicus to produce ~90 MB of tiles.
+name: Build terrain tiles
+
+on:
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "Bounding box as 'south west north east' in degrees"
+        type: string
+        default: "43 5 49 17"
+      dem:
+        description: "Copernicus product: glo30 (pooled 3x3, conservative) or glo90 (lighter)"
+        type: choice
+        options: [glo30, glo90]
+        default: glo30
+      publish:
+        description: "Upload to R2 when done"
+        type: boolean
+        default: true
+      force:
+        description: "Rebuild tiles even when a cached copy exists"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terrain-build
+  cancel-in-progress: false
+
+jobs:
+  build-terrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        # rasterio only exists for this job — it is a heavy wheel and nothing else in the repo
+        # reads a GeoTIFF.
+        run: python -m pip install --quiet numpy rasterio boto3
+
+      - name: Check the tile format
+        run: python scripts/test_terrain_format.py
+
+      # Tiles are keyed by geography, not by build, so a re-run after a network failure should
+      # resume rather than re-download the world.
+      - name: Restore previously built tiles
+        if: ${{ !inputs.force }}
+        uses: actions/cache/restore@v6
+        with:
+          path: data/packs/_terrain
+          key: terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-${{ inputs.bbox }}
+          restore-keys: |
+            terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-
+            terrain-${{ inputs.dem }}-
+
+      - name: Build tiles
+        run: |
+          python scripts/build_terrain_tiles.py \
+            --bbox ${{ inputs.bbox }} \
+            --dem "${{ inputs.dem }}" \
+            --out data/packs \
+            --jobs 6 \
+            ${{ inputs.force && '--force' || '' }}
+
+      - name: Verify the tiles decode
+        # A tile that the Python decoder cannot read is a tile no browser will read either, and
+        # publishing it would put a hole in someone's terrain coverage.
+        run: |
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts")
+          from terrain_format import decode, parse_tile_key
+
+          root = Path("data/packs/_terrain")
+          index = json.loads((root / "index.json").read_text())
+          bad = 0
+          for entry in index["tiles"]:
+              blob = (root / f"{entry['key']}.terr").read_bytes()
+              try:
+                  tile = decode(blob)
+              except ValueError as error:
+                  print(f"{entry['key']}: {error}", file=sys.stderr)
+                  bad += 1
+                  continue
+              lat0, lon0 = parse_tile_key(entry["key"])
+              if (tile.lat0, tile.lon0) != (lat0, lon0):
+                  print(f"{entry['key']}: header says {tile.lat0},{tile.lon0}", file=sys.stderr)
+                  bad += 1
+          print(f"{index['tileCount']} tiles, {index['totalBytes']:,} bytes, {bad} bad")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Save built tiles
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: data/packs/_terrain
+          key: terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-${{ inputs.bbox }}
+
+      - name: Publish to R2
+        if: ${{ inputs.publish && vars.PACKS_BASE_URL != '' }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python scripts/publish_packs_r2.py \
+            --dir data/packs/_terrain \
+            --prefix packs/_terrain \
+            --bucket "${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }}"
+
+      - name: Summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          index = json.loads(Path("data/packs/_terrain/index.json").read_text())
+          print("## Terrain tiles\n")
+          print(f"- source: {index['source']}")
+          print(f"- resolution: {index['resolutionArcSec']} arc-seconds ({index['samples']} samples per degree)")
+          print(f"- tiles: {index['tileCount']}")
+          print(f"- total: {index['totalBytes'] / 1024 / 1024:.1f} MB")
+          PY
