@@ -23,6 +23,8 @@ from pathlib import Path
 # Matches icons/next/ produced by scripts/render_icons.mjs. Kept in step by hand: the icons are
 # committed artefacts and change roughly never.
 CHANNEL_COLOUR = "#b45309"
+# Splash/composite ground. Dark enough for white text, warm enough to read as the amber build.
+CHANNEL_BACKGROUND = "#1c1207"
 ICON_FILES = ("icon.svg", "icon-192.png", "icon-512.png", "apple-touch-icon.png")
 
 
@@ -62,9 +64,14 @@ def main() -> None:
         manifest["name"] = f"Meet The Cows ({label})"
         manifest["short_name"] = f"MTC {label}"
         manifest["theme_color"] = CHANNEL_COLOUR
+        # background_color too, not just theme_color: it paints the splash screen and is what a
+        # platform composites an icon over. Leaving it at production's navy is how an amber icon
+        # ends up reading navy on an iOS home screen.
+        manifest["background_color"] = CHANNEL_BACKGROUND
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                                  encoding="utf-8")
-        print(f"manifest: {manifest['short_name']}, theme {CHANNEL_COLOUR}", file=sys.stderr)
+        print(f"manifest: {manifest['short_name']}, theme {CHANNEL_COLOUR}, background {CHANNEL_BACKGROUND}",
+              file=sys.stderr)
 
     index_path = site / "index.html"
     if index_path.is_file():

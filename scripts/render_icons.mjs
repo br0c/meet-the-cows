@@ -47,10 +47,17 @@ for (const { dir, colour } of VARIANTS) {
 
   for (const [name, size] of SIZES) {
     const page = await browser.newPage({ viewport: { width: size, height: size } });
+    // Fully opaque, edge to edge. iOS does not support alpha in a home-screen icon: it
+    // composites the transparent area over a background of its choosing, and its squircle mask
+    // is wider than this icon's own rounded corners — so transparent corners get filled with
+    // something that is not the icon's colour, right where the colour reads. Painting the page
+    // in the icon colour makes the corners the same colour instead of absent; nothing else about
+    // the design changes, because the rounded rect sits on a ground of its own colour.
     await page.setContent(
-      `<style>html,body{margin:0;padding:0}svg{display:block;width:${size}px;height:${size}px}</style>${svg}`,
+      `<style>html,body{margin:0;padding:0;background:${colour}}` +
+      `svg{display:block;width:${size}px;height:${size}px}</style>${svg}`,
       { waitUntil: 'load' });
-    await page.screenshot({ path: path.join(dir, name), omitBackground: true });
+    await page.screenshot({ path: path.join(dir, name) });
     await page.close();
     console.log(`${path.relative(path.join(here, '..'), path.join(dir, name))}  ${size}x${size}`);
   }
