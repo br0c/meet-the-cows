@@ -19,7 +19,9 @@ compatibility_date = "2026-07-01"
 
 [assets]
 directory = "../dist/site"
-# Matches what the Pages project did: an unknown path serves the shell rather than a 404. Pack
-# data and terrain live on data.meetthecows.org, so nothing that needs an honest 404 is served
-# from here.
-not_found_handling = "single-page-application"
+# An unknown path 404s. The Pages project answered such requests with the shell and a 200, which
+# is worse than it sounds here: loadPackIndex falls back to the app's own origin when the data
+# host cannot be reached, so a miss would hand it HTML with a 200, and the service worker caches
+# anything that reports ok — poisoning packs.json with an HTML page that then persists offline.
+# There is no client-side routing to protect: the app is one index.html at /.
+not_found_handling = "none"
