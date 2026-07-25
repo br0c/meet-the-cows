@@ -1,0 +1,49 @@
+# Freeze the DeepL translation cache into a private R2 bucket, on demand.
+#
+# The cache is the only record of translations already paid for out of a capped lifetime quota.
+# This archive is the copy that survives any future pruning of the live cache — notably if a
+# source is de-licensed and its entries are dropped, and then later re-licensed.
+#
+# Deliberately manual (workflow_dispatch): archiving is a decision, not something that should
+# happen silently on every build.
+name: Archive translation cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: "PRIVATE R2 bucket to archive into (must have no public custom domain)"
+        type: string
+        default: "mtc-data"
+      dry_run:
+        description: "Report what would be uploaded without uploading"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Archive to R2
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          python -m pip install --quiet boto3
+          python scripts/archive_translation_cache.py \
+            --bucket "${{ inputs.bucket }}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
