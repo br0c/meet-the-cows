@@ -29,6 +29,12 @@
     <!-- iOS ignores manifest SVG icons for Add to Home Screen; without this it invents
          one from a screenshot, which makes two installed builds indistinguishable. -->
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
+    <!-- iOS 18's Dark home-screen mode applies its own dark treatment to any icon that does not
+         declare a dark variant, which crushed this one to near-black: white survived, everything
+         else went to black. Declaring one stops that. It points at the SAME file on purpose —
+         the icon is already legible on a dark ground, and the whole point of the channel's colour
+         is that it stays recognisable however the home screen is set. -->
+    <link rel="apple-touch-icon" sizes="180x180" media="(prefers-color-scheme: dark)" href="icons/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
     <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
     <link rel="manifest" href="manifest.webmanifest" />
