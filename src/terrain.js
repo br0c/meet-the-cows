@@ -22,6 +22,7 @@ const METRES_PER_DEGREE_LAT = 111320;
 export const terrainPaths = {
   dir: 'packs/_terrain/',
   index: 'packs/_terrain/index.json',
+  cols: 'packs/_terrain/cols.json',
   tile: key => `packs/_terrain/${key}.terr`,
 };
 
@@ -135,6 +136,7 @@ export class TerrainStore {
     this.pending = new Map();     // key -> in-flight promise, so a burst asks the network once
     this.missing = new Set();     // keys the server does not have; never asked for twice
     this.index = null;
+    this.cols = undefined;        // undefined = not asked yet, null = asked and absent
   }
 
   url(path) { return new URL(path, this.baseUrl).toString(); }
@@ -151,6 +153,43 @@ export class TerrainStore {
       this.index = false;
     }
     return this.index || null;
+  }
+
+  /**
+   * Named cols and passes, for describing where a route is pinched. Optional: a deployment
+   * without them falls back to a geometric description, so this must never be a hard failure.
+   */
+  async loadCols() {
+    if (this.cols !== undefined) return this.cols;
+    try {
+      const response = await fetch(this.url(terrainPaths.cols), { cache: 'force-cache' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      this.cols = Array.isArray(data?.cols) ? data.cols : null;
+      this.colsAttribution = data?.attribution || '';
+    } catch (error) {
+      console.info('No col names available', error);
+      this.cols = null;
+    }
+    return this.cols;
+  }
+
+  /**
+   * The named col nearest a point, within maxMetres. Linear scan with a cheap bounding-box
+   * reject first: a few thousand entries, run once per solve, is not worth an index.
+   */
+  nearestCol(latitude, longitude, maxMetres = 1500) {
+    if (!this.cols || !this.cols.length) return null;
+    const latPad = maxMetres / METRES_PER_DEGREE_LAT;
+    const lonPad = latPad / Math.max(0.2, Math.cos(latitude * Math.PI / 180));
+    let best = null;
+    let bestMetres = maxMetres;
+    for (const col of this.cols) {
+      if (Math.abs(col.lat - latitude) > latPad || Math.abs(col.lon - longitude) > lonPad) continue;
+      const metres = haversineMetres(latitude, longitude, col.lat, col.lon);
+      if (metres < bestMetres) { bestMetres = metres; best = col; }
+    }
+    return best ? { ...best, distanceM: bestMetres } : null;
   }
 
   /** Tile keys the index actually offers, so callers never queue a download that 404s. */
@@ -284,6 +323,15 @@ export class TerrainStore {
       coverage: covered / (rows * cols),
     };
   }
+}
+
+function haversineMetres(lat1, lon1, lat2, lon2) {
+  const toRad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRad;
+  const dLon = (lon2 - lon1) * toRad;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(a));
 }
 
 /** Row/column of the cell holding a position within a routing grid, or null if outside it. */

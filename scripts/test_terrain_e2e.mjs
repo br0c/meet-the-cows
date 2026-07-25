@@ -174,8 +174,38 @@ console.log('\nroute block:\n  ' + routeText.split('\n').join('\n  '));
 check('the detail sheet shows a route block', routeText.length > 0);
 check('the route reports going around terrain', /Around terrain/.test(routeText));
 check('the route names the ground that limits the glide', /Tightest/.test(routeText));
+check('the route prose uses the col name', /Col de Saint-Pantal/.test(routeText), routeText.slice(0, 70));
+
+// The mockup's three list/detail additions.
+const profile = await page.$('.route-profile');
+check('the detail sheet draws a route profile', profile !== null);
+if (profile) {
+  const parts = await page.$eval('.route-profile', svg => ({
+    ground: !!svg.querySelector('.rp-ground'),
+    envelope: !!svg.querySelector('.rp-envelope'),
+    glide: !!svg.querySelector('.rp-glide'),
+    marker: !!svg.querySelector('.rp-dot'),
+  }));
+  check('the profile shows ground, clearance, glide and the deciding point',
+    parts.ground && parts.envelope && parts.glide && parts.marker, JSON.stringify(parts));
+}
+const routeCard = await page.$$eval('.detail-card', cards => cards
+  .map(c => c.innerText.replace(/\n/g, ' '))
+  .find(text => /^ROUTE/i.test(text)) || '');
+check('the detail grid carries the route length beside the direct distance',
+  /km/.test(routeCard), routeCard);
 
 await page.click('#closeDetail');
+await page.waitForSelector('.field-row');
+const chip = await page.$eval('.field-via', el => el.innerText).catch(() => '');
+// Named rather than geometric: cols load on a different path from the tiles, and the naming has
+// already been lost once to a guard that only ran on first look. This is that regression.
+check('the chip names the col rather than falling back to a compass point',
+  /Col de Saint-Pantal/.test(chip), chip);
+check('the list row carries a via chip for a real detour', chip.length > 0, chip);
+check('the chip leads with the route distance so truncation cannot eat it',
+  /^▲\s*\d/.test(chip), chip);
+
 await page.click('#settingsToggle');
 await page.waitForSelector('#terrainRouting');
 const card = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);

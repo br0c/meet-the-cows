@@ -229,6 +229,7 @@ const STRINGS = {
     terrainNote: 'With terrain on, the required glide follows a path that stays clear of the ground instead of a straight line. A field down a valley can become reachable; one behind a ridge can stop being.',
     terrainClearance: 'Terrain clearance, m',
     terrainClearanceNote: c => `Routed glides stay at least ${c} m above the ground. Raise it for more room to turn away from rising ground; lower it to reach further.`,
+    terrainAttribution: 'Elevation: Copernicus DEM (ESA). Col and pass names: © OpenStreetMap contributors.',
     terrainUnsupported: 'This browser cannot read terrain data. Glide stays straight-line.',
     terrainMissing: 'No terrain data is published for this deployment. Glide stays straight-line.',
     terrainCoverage: p => `${p}% of the working area has terrain data`,
@@ -238,6 +239,13 @@ const STRINGS = {
     terrainCachedCount: (done, total) => `${done} of ${total} tiles offline`,
     terrainSolving: 'working out routes…',
     route: 'Route',
+    routeLength: 'Route',
+    routeViaChip: name => `via ${name}`,
+    routeViaPlain: 'around terrain',
+    routeViaCompass: point => `${point} of track`,
+    routeLimitedByCol: (name, elev, dist) => `Tightest over ${name}, ${elev}, ${dist} away.`,
+    routeProfileKey: c => `Ground along the route, the ${c} m clearance line above it, and the glide at the ratio shown.`,
+    routeProfileAlt: (dist, ratio) => `Route profile over ${dist}, glide drawn at ${ratio} to 1`,
     routeStraight: 'Straight line — nothing in the way.',
     routeAround: (dist, legs) => `Around terrain: ${dist} in ${legs} leg${legs === 1 ? '' : 's'}.`,
     routeVersusDirect: d => `Direct line is ${d}.`,
@@ -373,6 +381,7 @@ const STRINGS = {
     terrainNote: "Avec le relief activé, la finesse requise suit un trajet qui reste dégagé du sol au lieu d'une ligne droite. Un terrain au fond d'une vallée peut devenir atteignable ; un terrain derrière une crête peut cesser de l'être.",
     terrainClearance: 'Garde au sol, m',
     terrainClearanceNote: c => `Les trajets calculés restent au moins ${c} m au-dessus du sol. Augmentez pour garder de la marge face au relief montant ; diminuez pour aller plus loin.`,
+    terrainAttribution: 'Altitudes : Copernicus DEM (ESA). Noms des cols : © contributeurs OpenStreetMap.',
     terrainUnsupported: 'Ce navigateur ne peut pas lire les données de relief. Finesse à vol d\'oiseau.',
     terrainMissing: "Aucune donnée de relief publiée pour ce déploiement. Finesse à vol d'oiseau.",
     terrainCoverage: p => `${p} % de la zone de travail dispose de données de relief`,
@@ -382,6 +391,13 @@ const STRINGS = {
     terrainCachedCount: (done, total) => `${done} sur ${total} tuiles hors ligne`,
     terrainSolving: 'calcul des trajets…',
     route: 'Trajet',
+    routeLength: 'Trajet',
+    routeViaChip: name => `par ${name}`,
+    routeViaPlain: 'contourne le relief',
+    routeViaCompass: point => `${point} de la route`,
+    routeLimitedByCol: (name, elev, dist) => `Point critique au-dessus de ${name}, ${elev}, à ${dist}.`,
+    routeProfileKey: c => `Le relief le long du trajet, la ligne de garde de ${c} m au-dessus, et la pente à la finesse affichée.`,
+    routeProfileAlt: (dist, ratio) => `Profil du trajet sur ${dist}, pente tracée à ${ratio} pour 1`,
     routeStraight: 'Ligne droite — rien sur le chemin.',
     routeAround: (dist, legs) => `Contournement du relief : ${dist} en ${legs} branche${legs === 1 ? '' : 's'}.`,
     routeVersusDirect: d => `Ligne directe : ${d}.`,
@@ -517,6 +533,7 @@ const STRINGS = {
     terrainNote: 'Mit eingeschaltetem Gelände folgt die erforderliche Gleitzahl einem Pfad, der vom Boden frei bleibt, statt einer Luftlinie. Ein Feld talabwärts kann erreichbar werden, eines hinter einem Grat nicht mehr.',
     terrainClearance: 'Geländefreiheit, m',
     terrainClearanceNote: c => `Berechnete Pfade bleiben mindestens ${c} m über Grund. Höher für mehr Spielraum zum Wegdrehen von steigendem Gelände, niedriger für mehr Reichweite.`,
+    terrainAttribution: 'Höhen: Copernicus DEM (ESA). Pass- und Sattelnamen: © OpenStreetMap-Mitwirkende.',
     terrainUnsupported: 'Dieser Browser kann keine Geländedaten lesen. Gleitzahl bleibt Luftlinie.',
     terrainMissing: 'Für diese Installation sind keine Geländedaten veröffentlicht. Gleitzahl bleibt Luftlinie.',
     terrainCoverage: p => `${p} % des Arbeitsbereichs haben Geländedaten`,
@@ -526,6 +543,13 @@ const STRINGS = {
     terrainCachedCount: (done, total) => `${done} von ${total} Kacheln offline`,
     terrainSolving: 'Pfade werden berechnet…',
     route: 'Pfad',
+    routeLength: 'Pfad',
+    routeViaChip: name => `über ${name}`,
+    routeViaPlain: 'um das Gelände',
+    routeViaCompass: point => `${point} des Kurses`,
+    routeLimitedByCol: (name, elev, dist) => `Engste Stelle über ${name}, ${elev}, ${dist} entfernt.`,
+    routeProfileKey: c => `Das Gelände entlang des Pfades, die ${c} m Freiheitslinie darüber und der Gleitpfad zur angezeigten Zahl.`,
+    routeProfileAlt: (dist, ratio) => `Pfadprofil über ${dist}, Gleitpfad bei ${ratio} zu 1`,
     routeStraight: 'Luftlinie — nichts im Weg.',
     routeAround: (dist, legs) => `Um das Gelände herum: ${dist} in ${legs} Schenkel${legs === 1 ? '' : 'n'}.`,
     routeVersusDirect: d => `Direkte Linie: ${d}.`,
@@ -979,7 +1003,7 @@ function startGps() {
   // Simulated position wins and the receiver stays off, so a real fix can never arrive and
   // quietly replace the position under test halfway through a comparison.
   if (state.settings.testMode) {
-    applyTestPosition();
+    if (applyTestPosition()) onSimulatedPositionChanged();
     return;
   }
   if (!('geolocation' in navigator)) {
@@ -1251,6 +1275,38 @@ function terrainStore() {
   return terrain.store;
 }
 
+// A routed path is only worth mentioning when it actually goes somewhere else. Below this it is
+// the straight line with grid noise on it, and a chip would be decoration.
+const ROUTE_DETOUR_RATIO = 1.1;
+
+function routeIsDetour(row) {
+  const route = row?.route;
+  if (!route || route.direct || !Number.isFinite(route.pathLengthM)) return false;
+  return route.pathLengthM > (row.distanceM || 0) * ROUTE_DETOUR_RATIO;
+}
+
+/**
+ * What to call the place a routed glide is pinched at. A named col if one is close enough —
+ * that is how pilots hold this — otherwise the direction it heads, which at least beats a
+ * bearing in degrees.
+ */
+function routeVia(row) {
+  const route = row?.route;
+  if (!route || !route.critical) return '';
+  if (route.critical.colName) return route.critical.colName;
+  if (!state.position) return '';
+  const bearing = bearingDegrees(
+    state.position.latitude, state.position.longitude,
+    route.critical.latitude, route.critical.longitude,
+  );
+  return t('routeViaCompass', compassPoint(bearing));
+}
+
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+function compassPoint(bearingDeg) {
+  return COMPASS[Math.round(((bearingDeg % 360) + 360) % 360 / 45) % 8];
+}
+
 /** Replace a row's straight-line glide with the routed one, or say why there isn't one. */
 function applyTerrainRoute(row) {
   const terrain = state.terrain;
@@ -1439,9 +1495,25 @@ function onGlideResult(event) {
     terrain.routes = new Map(Object.entries(message.results));
     terrain.status = 'ready';
     terrain.error = '';
+    nameRouteCols();
   }
   computeRows();
   scheduleRender();
+}
+
+/** Match each route's pinch point to a named col, if the deployment ships them. */
+function nameRouteCols() {
+  const store = state.terrain.store;
+  if (!store?.cols) return;
+  for (const route of state.terrain.routes.values()) {
+    if (!route.critical) continue;
+    const col = store.nearestCol(route.critical.latitude, route.critical.longitude);
+    if (col) {
+      route.critical.colName = col.name;
+      // The col's own surveyed height reads better than a max-pooled DEM cell, when we have it.
+      if (Number.isFinite(col.elevationM)) route.critical.colElevationM = col.elevationM;
+    }
+  }
 }
 
 /**
@@ -1476,6 +1548,16 @@ async function refreshTerrainRoutes() {
     }
   }
   if (!terrain.available) return;
+
+  // Not inside the availability check above: opening Settings calls refreshTerrainStatus, which
+  // sets `available` first, so anything guarded by "have we looked yet" is skipped on the path
+  // where a pilot switches terrain on by hand — which is every first use. loadCols returns
+  // immediately once it has an answer, so calling it before each solve costs nothing.
+  //
+  // Awaited rather than raced: it is a couple of hundred kilobytes against megabytes of tiles,
+  // and racing it meant the first routes came out labelled "S of track" and silently corrected
+  // themselves a second later, which reads as a glitch even though both answers were true.
+  await store.loadCols().catch(() => null);
 
   const clearanceM = terrainClearanceM();
   const safetyMarginM = Number(state.settings.safetyMarginM) || 0;
@@ -1584,6 +1666,7 @@ function scheduleRender() {
 // Lets a test fire the render path that used to eat the search box. Harmless in production:
 // scheduleRender is what a GPS tick or a finished terrain solve already calls.
 self.__mtcScheduleRenderProbe = scheduleRender;
+self.__mtcState = state;   // read-only diagnostics hook for the browser tests
 
 function updateStatusStrip() {
   const el = document.querySelector('#statusArea');
@@ -1951,6 +2034,7 @@ function renderTerrainCard() {
           <button id="downloadTerrain" ${disabled ? 'disabled' : ''}>${t('downloadTerrain')}</button>
         </div>` : ''}
         ${status ? `<p class="settings-note">${escapeHtml(status)}</p>` : ''}
+        <p class="settings-note">${escapeHtml(t('terrainAttribution'))}</p>
       </div>`;
 }
 
@@ -2070,15 +2154,26 @@ function renderSearchBox() {
   `;
 }
 
-function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason, terrainState }) {
+function renderFieldRow(row) {
+  const { field, distanceM, requiredGlideRatio, glideReason, terrainState } = row;
   // The number a pilot reads is the same size whatever produced it; only a small mark says the
   // glide had to go around something, and only when it actually did.
   const routed = terrainState === 'routed' ? ' routed' : '';
+  // The chip appears only for a real detour, so flat country sees no change at all — and it says
+  // where the route goes, which is the part you cannot get from the number.
+  const via = routeIsDetour(row) ? routeVia(row) : '';
+  // Distance first: a long col name is the part that can be cut without losing the point, and
+  // putting it last means the ellipsis eats the name's tail rather than the number.
+  // The glyph matches the marker on the glide figure, so the two read as the same statement.
+  const chip = routeIsDetour(row)
+    ? `<span class="field-via">▲ ${escapeHtml(fmtKm(row.route.pathLengthM))} ${escapeHtml(via ? t('routeViaChip', via) : t('routeViaPlain'))}</span>`
+    : '';
   return `
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
       <span class="field-main">
         <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
         <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? t('airfield') : t('field')].filter(Boolean).join(' · '))}</span>
+        ${chip}
       </span>
       <span class="field-distance">${Number.isFinite(distanceM) ? fmtKm(distanceM) : '—'}</span>
       <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}${routed}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
@@ -2142,6 +2237,7 @@ function renderDetail(field) {
         <div class="detail-grid">
           <div class="detail-card"><span class="status-label">${t('bearing')}</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('distance')}</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
+          ${routeIsDetour(row) ? `<div class="detail-card"><span class="status-label">${t('routeLength')}</span><strong>${fmtKm(row.route.pathLengthM)}</strong></div>` : ''}
           <div class="detail-card"><span class="status-label">${t('reqGlide')}</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('deltaSafe')}</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('elevation')}</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
@@ -2188,7 +2284,10 @@ function renderRouteBlock(row) {
         state.position.latitude, state.position.longitude,
         route.critical.latitude, route.critical.longitude,
       );
-      lines.push(t('routeLimitedBy', fmtM(route.critical.elevationM), fmtKm(distanceM), fmtDeg(bearingDeg)));
+      lines.push(route.critical.colName
+        ? t('routeLimitedByCol', route.critical.colName,
+            fmtM(route.critical.colElevationM ?? route.critical.elevationM), fmtKm(distanceM))
+        : t('routeLimitedBy', fmtM(route.critical.elevationM), fmtKm(distanceM), fmtDeg(bearingDeg)));
     } else {
       lines.push(t('routeLimitedArrival'));
     }
@@ -2205,7 +2304,85 @@ function renderRouteBlock(row) {
   return `
     <h3>${t('route')}</h3>
     <p class="route-summary">${lines.map(line => escapeHtml(line)).join('<br />')}</p>
+    ${renderRouteProfile(row)}
   `;
+}
+
+/**
+ * The route in profile: ground, the clearance envelope above it, and the glide line drawn at the
+ * ratio the app is reporting. The point where those two meet is the answer's whole justification,
+ * so it is marked.
+ *
+ * Hand-built SVG rather than a chart library — it is four paths, and this ships to a cockpit
+ * where every kilobyte is downloaded once over a phone connection and then flown with.
+ */
+function renderRouteProfile(row) {
+  const route = row?.route;
+  const profile = route?.profile;
+  if (!profile?.terrain?.length || !state.position) return '';
+  const altitude = activeAltitudeM();
+  if (altitude === null) return '';
+
+  const width = 320;
+  const height = 130;
+  const padLeft = 34;
+  const padBottom = 16;
+  const padTop = 8;
+  const plotWidth = width - padLeft - 6;
+  const plotHeight = height - padTop - padBottom;
+
+  const clearance = terrainClearanceM();
+  const terrain = profile.terrain.map(v => (Number.isFinite(v) ? v : null));
+  const known = terrain.filter(v => v !== null);
+  if (!known.length) return '';
+  const arrival = Number.isFinite(row.field.elevationM) ? row.field.elevationM : known[known.length - 1];
+
+  const top = Math.max(altitude, ...known.map(v => v + clearance)) + 100;
+  const bottom = Math.min(arrival, ...known) - 80;
+  const span = Math.max(1, top - bottom);
+  const x = i => padLeft + (i / (terrain.length - 1)) * plotWidth;
+  const y = metres => padTop + (1 - (metres - bottom) / span) * plotHeight;
+
+  const line = values => values
+    .map((v, i) => (v === null ? null : `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`))
+    .filter(Boolean).join(' ');
+  const groundPath = `${line(terrain)} L${x(terrain.length - 1).toFixed(1)},${y(bottom).toFixed(1)} L${x(0).toFixed(1)},${y(bottom).toFixed(1)} Z`;
+  const envelopePath = line(terrain.map(v => (v === null ? null : v + clearance)));
+
+  // The glide line: altitude falls by one metre per `ratio` metres flown.
+  const ratio = route.requiredGlideRatio;
+  const glideEnd = altitude - profile.lengthM / ratio;
+  const glidePath = `M${x(0).toFixed(1)},${y(altitude).toFixed(1)} L${x(terrain.length - 1).toFixed(1)},${y(glideEnd).toFixed(1)}`;
+
+  let marker = '';
+  if (route.critical && Number.isFinite(route.critical.atM)) {
+    const at = Math.min(1, Math.max(0, route.critical.atM / profile.lengthM));
+    const markerX = padLeft + at * plotWidth;
+    const markerY = y(altitude - route.critical.atM / ratio);
+    const label = route.critical.colName || fmtM(route.critical.colElevationM ?? route.critical.elevationM);
+    marker = `
+      <line x1="${markerX.toFixed(1)}" y1="${padTop}" x2="${markerX.toFixed(1)}" y2="${(padTop + plotHeight).toFixed(1)}" class="rp-mark" />
+      <circle cx="${markerX.toFixed(1)}" cy="${markerY.toFixed(1)}" r="3.5" class="rp-dot" />
+      <text x="${Math.min(markerX + 5, width - 4).toFixed(1)}" y="${(padTop + 10).toFixed(1)}"
+            class="rp-label" text-anchor="${markerX > width * 0.6 ? 'end' : 'start'}">${escapeHtml(label)}</text>`;
+  }
+
+  const ticks = [bottom + span, bottom + span / 2, bottom]
+    .map(v => `<text x="${padLeft - 5}" y="${(y(v) + 3).toFixed(1)}" class="rp-axis" text-anchor="end">${Math.round(v / 100) * 100}</text>`)
+    .join('');
+
+  return `
+    <svg class="route-profile" viewBox="0 0 ${width} ${height}" role="img"
+         aria-label="${escapeHtml(t('routeProfileAlt', fmtKm(profile.lengthM), Math.round(ratio)))}">
+      <path d="${groundPath}" class="rp-ground" />
+      <path d="${envelopePath}" class="rp-envelope" />
+      <path d="${glidePath}" class="rp-glide" />
+      ${marker}
+      ${ticks}
+      <text x="${padLeft}" y="${height - 4}" class="rp-axis">0</text>
+      <text x="${width - 6}" y="${height - 4}" class="rp-axis" text-anchor="end">${escapeHtml(fmtKm(profile.lengthM))}</text>
+    </svg>
+    <p class="route-profile-key">${escapeHtml(t('routeProfileKey', clearance))}</p>`;
 }
 
 function formatRunwayDimensions(field) {

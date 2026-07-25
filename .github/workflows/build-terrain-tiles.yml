@@ -76,6 +76,15 @@ jobs:
             --jobs 6 \
             ${{ inputs.force && '--force' || '' }}
 
+      # Named cols come from a different source on a different schedule, and a failure here must
+      # not cost the tile build — the app falls back to a geometric description without them.
+      - name: Fetch named cols and passes
+        continue-on-error: true
+        run: |
+          python scripts/fetch_cols.py \
+            --bbox ${{ inputs.bbox }} \
+            --out data/packs
+
       - name: Verify the tiles decode
         # A tile that the Python decoder cannot read is a tile no browser will read either, and
         # publishing it would put a hole in someone's terrain coverage.
@@ -135,4 +144,10 @@ jobs:
           print(f"- resolution: {index['resolutionArcSec']} arc-seconds ({index['samples']} samples per degree)")
           print(f"- tiles: {index['tileCount']}")
           print(f"- total: {index['totalBytes'] / 1024 / 1024:.1f} MB")
+          cols = Path("data/packs/_terrain/cols.json")
+          if cols.is_file():
+              data = json.loads(cols.read_text())
+              print(f"- named cols: {data['count']} ({cols.stat().st_size / 1024:.0f} KB)")
+          else:
+              print("- named cols: none (routes will be described geometrically)")
           PY

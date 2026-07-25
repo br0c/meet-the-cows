@@ -176,6 +176,13 @@ a { color: var(--accent); }
   text-overflow: ellipsis;
 }
 .field-sub { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* "Via" chip: only present when the route genuinely differs from the direct line, so its absence
+   is information too. Sits under the name rather than in a column — it is a sentence, not a
+   number, and the four-column grid has no room for prose. */
+.field-via { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(56,189,248,.12); border: 1px solid rgba(56,189,248,.35); color: #bae6fd;
+  font-size: 10px; font-weight: 700; white-space: nowrap; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; }
 .field-distance,
 .field-glide { text-align: right; font-weight: 800; font-size: 14px; white-space: nowrap; }
 /* A glide that had to go around terrain rather than straight at it. Deliberately quiet: the
@@ -189,6 +196,19 @@ a { color: var(--accent); }
   vertical-align: 0.35em;
 }
 .route-summary { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+/* Route profile. Deliberately flat colours and no animation: it is read once, at a glance,
+   possibly while turning. */
+.route-profile { display: block; width: 100%; height: auto; margin: 8px 0 2px;
+  background: #030712; border: 1px solid var(--line); border-radius: 10px; }
+.rp-ground { fill: #1f2937; stroke: #475569; stroke-width: 1; }
+.rp-envelope { fill: none; stroke: #64748b; stroke-width: 1; stroke-dasharray: 3 3; }
+.rp-glide { fill: none; stroke: var(--accent); stroke-width: 2; }
+.rp-mark { stroke: #f59e0b; stroke-width: 1; stroke-dasharray: 2 3; }
+.rp-dot { fill: #f59e0b; stroke: #030712; stroke-width: 1.5; }
+.rp-label { fill: #fcd34d; font-size: 9px; font-weight: 700; }
+.rp-axis { fill: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
+.route-profile-key { margin: 0 0 2px; color: var(--muted); font-size: 11px; line-height: 1.35; }
 
 /* Testing mode. Red rather than amber: an amber notice is an update or a migration, this one is
    "the position on screen is invented", which is a different category of thing entirely. */
