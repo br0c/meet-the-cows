@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Stamp the app version onto icon URLs in an assembled site.
+"""Stamp a content hash onto icon URLs in an assembled site.
 
-iOS caches a home-screen icon per URL, in a system cache that deleting the home-screen icon does
-NOT clear. Re-installing from the same address therefore reuses whatever it rasterised the first
-time — so a corrected icon can be served correctly, verified byte for byte, and still not appear
-on the phone of the person who reported the problem.
+Caches key on the URL — Cloudflare's edge, the browser's, and iOS's home-screen icon cache, which
+deleting the icon does not clear. An icon corrected in place therefore keeps its old address and
+nobody sees the correction.
 
-Changing the URL is the only reliable way to make it look again. The version is enough: icons
-only ever change alongside a release, and re-fetching a 6 KB PNG on upgrade costs nothing.
+The hash is of the icon's own bytes, not the app version. Versions are deliberately not bumped for
+every change, so a version stamp is exactly the wrong key: it would sit still across the icon edits
+that most need busting — which is precisely what happened here. A content hash moves when, and only
+when, the picture actually changes.
 
-  python scripts/stamp_icon_urls.py --dir dist/site --version 0.9.0-beta
+  python scripts/stamp_icon_urls.py --dir dist/site
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -25,26 +27,31 @@ from pathlib import Path
 ICON_PATTERN = re.compile(r'(icons/(?:[\w-]+/)?(?:apple-touch-icon(?:-dark)?|icon-\d+|icon)\.(?:png|svg))(\?v=[^"\']*)?')
 
 
-def stamp(value: str, version: str) -> str:
-    return ICON_PATTERN.sub(lambda m: f"{m.group(1)}?v={version}", value)
+def _digest(site: Path, relative: str, cache: dict[str, str]) -> str:
+    """Short content hash of an icon file, or 'missing' so a broken reference is visible."""
+    if relative not in cache:
+        path = site / relative
+        cache[relative] = (hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+                           if path.is_file() else "missing")
+    return cache[relative]
+
+
+def stamp(value: str, site: Path, cache: dict[str, str]) -> str:
+    return ICON_PATTERN.sub(lambda m: f"{m.group(1)}?v={_digest(site, m.group(1), cache)}", value)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", required=True, help="Assembled site directory")
-    parser.add_argument("--version", required=True, help="App version to stamp")
     args = parser.parse_args()
 
     site = Path(args.dir)
-    version = args.version.strip()
-    if not version:
-        print("--version must not be empty", file=sys.stderr)
-        sys.exit(1)
+    cache: dict[str, str] = {}
 
     index_path = site / "index.html"
     if index_path.is_file():
         html = index_path.read_text(encoding="utf-8")
-        stamped = stamp(html, version)
+        stamped = stamp(html, site, cache)
         index_path.write_text(stamped, encoding="utf-8")
         print(f"index.html: {len(ICON_PATTERN.findall(html))} icon reference(s) stamped", file=sys.stderr)
 
@@ -53,10 +60,12 @@ def main() -> None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         for icon in manifest.get("icons", []):
             if "src" in icon:
-                icon["src"] = stamp(icon["src"], version)
+                icon["src"] = stamp(icon["src"], site, cache)
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                                  encoding="utf-8")
         print(f"manifest: {len(manifest.get('icons', []))} icon src(s) stamped", file=sys.stderr)
+    for relative, digest in sorted(cache.items()):
+        print(f"  {relative} -> {digest}", file=sys.stderr)
 
 
 if __name__ == "__main__":

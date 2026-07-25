@@ -116,11 +116,11 @@ jobs:
           # from this origin; otherwise the app reads them from the data host.
           if [ -d data/packs ]; then mkdir -p dist/site/packs && cp -R data/packs/. dist/site/packs/; fi
 
-          # iOS caches a home-screen icon per URL in a system cache that surviving a delete and
-          # reinstall, so a corrected icon at an unchanged URL never reaches the phone that
-          # reported it. Stamping the version makes the URL move whenever the shell does.
-          version=$(grep -o "APP_VERSION = '[^']*'" src/app.js | head -1 | sed "s/.*'\(.*\)'/\1/")
-          python3 scripts/stamp_icon_urls.py --dir dist/site --version "${version}"
+          # Every cache in the chain keys on the URL, including the iOS home-screen icon cache
+          # that a delete-and-reinstall does not clear. Stamping the icon's own content hash makes
+          # the address move when the picture changes — and only then, which matters because
+          # versions are deliberately not bumped for every fix.
+          python3 scripts/stamp_icon_urls.py --dir dist/site
 
           find dist/site -maxdepth 3 -type f | sort | head -80
           du -sh dist/site
