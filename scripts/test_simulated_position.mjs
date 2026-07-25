@@ -93,9 +93,27 @@ await page.click('#toggleTesting');
 await page.waitForSelector('#testPlace');
 check('testing section expands', true);
 
-await page.fill('#testPlace','Cervinia');
-await page.click('#testSearch');
+// Type-ahead: no submit button, results appear from typing alone.
+check('there is no submit button to click', await page.$('#testSearch') === null);
+await page.click('#testPlace');
+await page.type('#testPlace','Ce',{delay:40});
+await page.waitForTimeout(500);
+check('under three characters asks nothing', await page.$('.test-result') === null);
+await page.type('#testPlace','rvinia',{delay:40});
 await page.waitForSelector('.test-result');
+check('results appear from typing alone', true);
+check('the input keeps focus while results arrive',
+  await page.evaluate(() => document.activeElement?.id) === 'testPlace');
+check('what was typed is still there',
+  await page.inputValue('#testPlace') === 'Cervinia', await page.inputValue('#testPlace'));
+
+// The bug that started this: a scheduled render landing mid-typing used to rebuild Settings and
+// wipe the box. It must now leave a focused place input alone.
+await page.evaluate(() => window.__mtcScheduleRenderProbe && window.__mtcScheduleRenderProbe());
+await page.waitForTimeout(1400);
+check('a scheduled render does not wipe the box',
+  await page.inputValue('#testPlace') === 'Cervinia' && await page.$('.test-result') !== null,
+  await page.inputValue('#testPlace'));
 const results=await page.$$eval('.test-result',rs=>rs.map(r=>r.innerText.replace(/\n/g,' | ')));
 console.log('  results:'); results.forEach(r=>console.log('    '+r));
 check('search returns places', results.length===2);

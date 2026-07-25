@@ -266,7 +266,7 @@ const STRINGS = {
     testNote: 'Puts the app at a chosen place and altitude so glide figures can be checked on the ground. Needs a connection, stores nothing, and overrides GPS until you stop it.',
     testPlace: 'Place',
     testPlacePlaceholder: 'Search a town, airfield, peak…',
-    testSearchGo: 'Search',
+    testSearching: 'Searching…',
     testAltitude: 'Altitude, m',
     testStop: 'Stop testing',
     testNoResults: 'Nothing found for that.',
@@ -410,7 +410,7 @@ const STRINGS = {
     testNote: "Place l'application à un lieu et une altitude choisis pour vérifier les finesses au sol. Nécessite une connexion, n'enregistre rien et remplace le GPS jusqu'à l'arrêt.",
     testPlace: 'Lieu',
     testPlacePlaceholder: 'Chercher une ville, un terrain, un sommet…',
-    testSearchGo: 'Chercher',
+    testSearching: 'Recherche…',
     testAltitude: 'Altitude, m',
     testStop: 'Arrêter le test',
     testNoResults: 'Aucun résultat.',
@@ -554,7 +554,7 @@ const STRINGS = {
     testNote: 'Versetzt die App an einen gewählten Ort und eine gewählte Höhe, um Gleitzahlen am Boden zu prüfen. Braucht eine Verbindung, speichert nichts und ersetzt das GPS bis zum Beenden.',
     testPlace: 'Ort',
     testPlacePlaceholder: 'Ort, Flugplatz, Gipfel suchen…',
-    testSearchGo: 'Suchen',
+    testSearching: 'Suche…',
     testAltitude: 'Höhe, m',
     testStop: 'Test beenden',
     testNoResults: 'Nichts gefunden.',
@@ -718,6 +718,7 @@ let state = {
   dataUpdateAvailable: false,
   showTesting: false,
   testSearch: null,
+  testQuery: '',
   activePacks: [],
   // Terrain-routed glide. `routes` holds one entry per field the last solve answered; fields
   // absent from it were either out of the working area or have no route clear of the ground,
@@ -1127,23 +1128,75 @@ async function searchPlaces(query) {
   }).filter(place => Number.isFinite(place.latitude) && Number.isFinite(place.longitude));
 }
 
-async function runPlaceSearch() {
-  const query = String(document.querySelector('#testPlace')?.value || '').trim();
-  if (query.length < 2) return;
+// Long enough that a pause reads as "done typing", short enough not to feel like waiting. Below
+// three characters there is nothing worth asking about, and it keeps the request count civil.
+const PLACE_SEARCH_DEBOUNCE_MS = 300;
+const PLACE_SEARCH_MIN_CHARS = 3;
+let placeSearchTimer = null;
+let placeSearchSeq = 0;
+
+function queuePlaceSearch(query) {
+  window.clearTimeout(placeSearchTimer);
+  const text = String(query || '').trim();
+  state.testQuery = text;
+  if (text.length < PLACE_SEARCH_MIN_CHARS) {
+    state.testSearch = null;
+    updateTestResults();
+    return;
+  }
+  placeSearchTimer = window.setTimeout(() => runPlaceSearch(text), PLACE_SEARCH_DEBOUNCE_MS);
+}
+
+async function runPlaceSearch(query) {
+  const text = String(query || '').trim();
+  if (text.length < PLACE_SEARCH_MIN_CHARS) return;
+  // Typing outruns the network, so replies can land out of order. Only the newest one may write.
+  const seq = ++placeSearchSeq;
   state.testSearch = { status: 'searching', results: [], error: '' };
-  render();
+  updateTestResults();
   try {
-    const results = await searchPlaces(query);
+    const results = await searchPlaces(text);
+    if (seq !== placeSearchSeq) return;
     state.testSearch = { status: 'done', results, error: results.length ? '' : t('testNoResults') };
   } catch (error) {
+    if (seq !== placeSearchSeq) return;
     console.warn('Place search failed', error);
     state.testSearch = { status: 'done', results: [], error: t('testSearchFailed') };
   }
-  render();
+  updateTestResults();
+}
+
+/** The results markup on its own, so it can be patched in without touching the input. */
+function renderTestResults() {
+  const search = state.testSearch;
+  if (!search) return '';
+  if (search.status === 'searching') return `<p class="settings-note">${escapeHtml(t('testSearching'))}</p>`;
+  if (search.error) return `<p class="settings-note">${escapeHtml(search.error)}</p>`;
+  return search.results.map((place, index) => `
+      <button class="test-result" data-test-index="${index}">
+        <span class="test-result-name">${escapeHtml(place.label)}</span>
+        <span class="test-result-meta">${escapeHtml(place.kind)} · ${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}</span>
+      </button>`).join('');
+}
+
+function updateTestResults() {
+  const container = document.querySelector('#testResults');
+  if (!container) return;
+  container.innerHTML = renderTestResults();
+  attachTestResultEvents();
+}
+
+function attachTestResultEvents() {
+  document.querySelectorAll('.test-result').forEach(button => button.addEventListener('click', () => {
+    const place = state.testSearch?.results?.[Number(button.dataset.testIndex)];
+    if (place) startTestMode(place);
+  }));
 }
 
 /** Adopt a searched place as the simulated position. */
 function startTestMode(place) {
+  state.testSearch = null;
+  state.testQuery = '';
   state.settings.testMode = true;
   state.settings.testLatitude = place.latitude;
   state.settings.testLongitude = place.longitude;
@@ -1516,9 +1569,21 @@ function scheduleRender() {
       updateSearchResults();
       return;
     }
+    // Likewise the place search in Settings. This one bites harder: the thing most likely to
+    // schedule a render while it is being typed into is a terrain solve finishing, which is
+    // precisely what the pilot is in the middle of setting up.
+    const place = document.querySelector('#testPlace');
+    if (place && document.activeElement === place) {
+      updateStatusStrip();
+      return;
+    }
     render();
   }, 1000);
 }
+
+// Lets a test fire the render path that used to eat the search box. Harmless in production:
+// scheduleRender is what a GPS tick or a finished terrain solve already calls.
+self.__mtcScheduleRenderProbe = scheduleRender;
 
 function updateStatusStrip() {
   const el = document.querySelector('#statusArea');
@@ -1892,13 +1957,7 @@ function renderTerrainCard() {
 // Last in Settings and collapsed by default: useful on the ground, never wanted in the air.
 function renderTestingCard() {
   const settings = state.settings;
-  const search = state.testSearch;
   const active = testModeActive();
-  const results = (search?.results || []).map((place, index) => `
-      <button class="test-result" data-test-index="${index}">
-        <span class="test-result-name">${escapeHtml(place.label)}</span>
-        <span class="test-result-meta">${escapeHtml(place.kind)} · ${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}</span>
-      </button>`).join('');
 
   return `
       <div class="settings-card">
@@ -1914,13 +1973,10 @@ function renderTestingCard() {
           <div class="test-active-meta">${settings.testLatitude.toFixed(4)}, ${settings.testLongitude.toFixed(4)} · ${fmtM(settings.testAltitudeM)}</div>
         </div>` : ''}
         <label for="testPlace">${t('testPlace')}</label>
-        <div class="test-search-row">
-          <input id="testPlace" type="search" inputmode="search" autocomplete="off"
-                 placeholder="${escapeHtml(t('testPlacePlaceholder'))}" />
-          <button id="testSearch">${search?.status === 'searching' ? '…' : t('testSearchGo')}</button>
-        </div>
-        ${search?.error ? `<p class="settings-note">${escapeHtml(search.error)}</p>` : ''}
-        ${results ? `<div class="test-results">${results}</div>` : ''}
+        <input id="testPlace" type="search" inputmode="search" autocomplete="off"
+               value="${escapeHtml(state.testQuery || '')}"
+               placeholder="${escapeHtml(t('testPlacePlaceholder'))}" />
+        <div class="test-results" id="testResults">${renderTestResults()}</div>
         <label for="testAltitudeM">${t('testAltitude')}</label>
         <div class="range-row">
           <input id="testAltitudeM" type="range" min="0" max="6000" step="100" value="${Number(settings.testAltitudeM) || 0}" />
@@ -2958,14 +3014,16 @@ function attachEvents() {
     state.showTesting = !state.showTesting;
     render();
   });
-  document.querySelector('#testSearch')?.addEventListener('click', runPlaceSearch);
+  document.querySelector('#testPlace')?.addEventListener('input', e => queuePlaceSearch(e.target.value));
   document.querySelector('#testPlace')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); runPlaceSearch(); }
+    // Enter only skips the wait; it is not required to get results.
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      window.clearTimeout(placeSearchTimer);
+      runPlaceSearch(e.target.value);
+    }
   });
-  document.querySelectorAll('.test-result').forEach(button => button.addEventListener('click', () => {
-    const place = state.testSearch?.results?.[Number(button.dataset.testIndex)];
-    if (place) startTestMode(place);
-  }));
+  attachTestResultEvents();
   // Dragging updates the readout only; the position is re-adopted on release, same reasoning as
   // the terrain clearance slider.
   document.querySelector('#testAltitudeM')?.addEventListener('input', e => {

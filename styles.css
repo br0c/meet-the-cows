@@ -203,10 +203,7 @@ a { color: var(--accent); }
   width: 100%; background: transparent; border: 0; padding: 2px 0; color: var(--text);
   font-size: 15px; font-weight: 700; }
 .disclosure-mark { color: var(--muted); font-weight: 400; }
-.test-search-row { display: flex; gap: 8px; align-items: center; margin: 4px 0 8px; }
-.settings-card .test-search-row input { flex: 1; min-width: 0; }
-.test-search-row button { white-space: nowrap; }
-.test-results { display: grid; gap: 6px; margin: 0 0 10px; }
+.test-results { display: grid; gap: 6px; margin: 6px 0 10px; }
 .settings-card .test-result { display: grid; gap: 2px; width: 100%; text-align: left;
   padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
 .test-result-name { font-size: 14px; font-weight: 700; }
