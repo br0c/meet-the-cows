@@ -158,8 +158,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          PROJECT="${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}"
+          # Self-provisioning: newer Cloudflare accounts have no "Pages" option in the dashboard
+          # (Pages is being folded into Workers), so create the direct-upload project here on
+          # first run. Expected to fail harmlessly on every later run — hence the guard.
+          npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main \
+            || echo "project '$PROJECT' already exists — continuing"
           npx --yes wrangler@latest pages deploy dist/site \
-            --project-name "${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}" \
+            --project-name "$PROJECT" \
             --branch "${{ github.ref_name }}" \
             --commit-dirty=true
 

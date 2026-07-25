@@ -336,8 +336,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           if [ -n "${{ vars.PACKS_BASE_URL }}" ]; then rm -rf dist/site/packs; fi
+          PROJECT="${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}"
+          # See deploy-app.yml: creates the direct-upload project on first run, no-ops after.
+          npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main \
+            || echo "project '$PROJECT' already exists — continuing"
           npx --yes wrangler@latest pages deploy dist/site \
-            --project-name "${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}" \
+            --project-name "$PROJECT" \
             --branch "${{ github.ref_name }}" \
             --commit-dirty=true
 
