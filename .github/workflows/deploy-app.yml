@@ -149,25 +149,35 @@ jobs:
           PY
           cat dist/site/config.js
 
-          # The app shell must never be answered from a stale browser cache: an update would sit
-          # unseen, and a freshly installing service worker would fill its brand-new versioned
-          # cache with the previous build's bytes. The shell is a few hundred KB and revalidates
-          # to a 304, so there is nothing to save by caching it.
+          # The app shell must never be answered from a stale cache: an update would sit unseen,
+          # and a freshly installing service worker would fill its brand-new versioned cache with
+          # the previous build's bytes. The shell is a few hundred KB and revalidates to a 304,
+          # so there is nothing to save by caching it.
+          #
+          # The three files that decide the app's IDENTITY — the page, the manifest and the
+          # worker — are no-store rather than must-revalidate. max-age=0 was not enough: the edge
+          # kept answering HIT anyway, and served index.html and manifest.webmanifest from
+          # DIFFERENT deployments at the same moment. An installed app revalidates through its
+          # service worker and would have survived that, but a first install has no service
+          # worker and reads exactly these files to decide what the app is called and which icon
+          # it wears.
           # These rules do apply — meet-the-cows.pages.dev returns max-age=0 — but a Cloudflare
           # cache/page rule scoped to the app.meetthecows.org hostname currently rewrites them to
           # max-age=14400 at the edge, so the service worker's own 'reload' and 'no-cache' fetches
           # are what actually guarantee freshness there. Both belong here: the rules are correct
           # and host-independent, the worker is the one that cannot be overridden from a dashboard.
           cat > dist/site/_headers <<'HEADERS'
+          /
+            Cache-Control: no-store
           /index.html
-            Cache-Control: public, max-age=0, must-revalidate
+            Cache-Control: no-store
+          /manifest.webmanifest
+            Cache-Control: no-store
           /service-worker.js
-            Cache-Control: public, max-age=0, must-revalidate
+            Cache-Control: no-store
           /config.js
             Cache-Control: public, max-age=0, must-revalidate
           /styles.css
-            Cache-Control: public, max-age=0, must-revalidate
-          /manifest.webmanifest
             Cache-Control: public, max-age=0, must-revalidate
           /release-notes.json
             Cache-Control: public, max-age=0, must-revalidate
