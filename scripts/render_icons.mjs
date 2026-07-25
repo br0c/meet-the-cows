@@ -23,11 +23,20 @@ const icons = path.join(here, '..', 'icons');
 // is a single substitution and the design stays coherent instead of orange-on-navy.
 export const BASE_COLOUR = '#111827';
 
-// Deliberately not another dark shade: at home-screen size two dark tiles are the same tile.
-// Amber reads as "not the real one" at a glance and keeps white legible on it.
+// The production ink, swapped with the ground for the channel variant.
+const LIGHT = '#f8fafc';
+const CHANNEL = '#b45309';
+
+// The channel icon is INVERTED, not merely a different colour, and that is forced by iOS.
+// In its Dark home-screen mode iOS recolours any web-clip icon — it cannot be opted out of, the
+// media attribute on apple-touch-icon is ignored — and that treatment keeps white while crushing
+// everything mid-luminance to black. An amber ground therefore rendered identically to the navy
+// one, which is the whole problem. A LIGHT ground survives the treatment, so the two builds stay
+// apart in both modes: production is a dark tile with a white cow, the channel a light tile with
+// an amber one.
 const VARIANTS = [
-  { dir: icons, colour: BASE_COLOUR },
-  { dir: path.join(icons, 'next'), colour: '#b45309' },
+  { dir: icons, ground: BASE_COLOUR, ink: LIGHT },
+  { dir: path.join(icons, 'next'), ground: LIGHT, ink: CHANNEL },
 ];
 const SIZES = [
   ['icon-192.png', 192],
@@ -40,9 +49,14 @@ const source = await readFile(path.join(icons, 'icon.svg'), 'utf8');
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 
-for (const { dir, colour } of VARIANTS) {
+for (const { dir, ground, ink } of VARIANTS) {
   await mkdir(dir, { recursive: true });
-  const svg = source.split(BASE_COLOUR).join(colour);
+  // Two-way swap, so it goes via a placeholder rather than clobbering itself.
+  const svg = source
+    .split(BASE_COLOUR).join('__GROUND__')
+    .split(LIGHT).join('__INK__')
+    .split('__GROUND__').join(ground)
+    .split('__INK__').join(ink);
   if (dir !== icons) await writeFile(path.join(dir, 'icon.svg'), svg);
 
   for (const [name, size] of SIZES) {
@@ -54,7 +68,7 @@ for (const { dir, colour } of VARIANTS) {
     // in the icon colour makes the corners the same colour instead of absent; nothing else about
     // the design changes, because the rounded rect sits on a ground of its own colour.
     await page.setContent(
-      `<style>html,body{margin:0;padding:0;background:${colour}}` +
+      `<style>html,body{margin:0;padding:0;background:${ground}}` +
       `svg{display:block;width:${size}px;height:${size}px}</style>${svg}`,
       { waitUntil: 'load' });
     await page.screenshot({ path: path.join(dir, name) });

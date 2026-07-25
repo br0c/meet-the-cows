@@ -22,11 +22,9 @@ from pathlib import Path
 # Matches icons/next/ produced by scripts/render_icons.mjs. Kept in step by hand: the icons are
 # committed artefacts and change roughly never.
 CHANNEL_COLOUR = "#b45309"
-# The SAME amber, not a dark shade of it. iOS paints the home-screen icon's ground with
-# background_color, so a near-black value here produces a near-black icon no matter what colour
-# the PNG is — which is exactly what happened: the install sheet reads apple-touch-icon directly
-# and showed amber, then the installed icon read the manifest and came out black.
-CHANNEL_BACKGROUND = CHANNEL_COLOUR
+# Matches the channel icon's ground, which is LIGHT rather than amber — see scripts/render_icons.mjs
+# for why iOS forces that. Splash and icon should not disagree about what this build looks like.
+CHANNEL_BACKGROUND = "#f8fafc"
 ICON_FILES = ("icon.svg", "icon-192.png", "icon-512.png", "apple-touch-icon.png")
 
 
