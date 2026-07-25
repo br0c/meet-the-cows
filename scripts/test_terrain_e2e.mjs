@@ -106,20 +106,17 @@ const base = `http://127.0.0.1:${server.address().port}/`;
 
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const context = await browser.newContext({
-  permissions: ['geolocation'],
-  geolocation: { latitude: 45.9360, longitude: 7.6310, accuracy: 10 },  // Cervinia
-  locale: 'en-GB',
-});
-// Playwright's geolocation carries no altitude, so drive the manual-altitude path the app
-// already has for ground testing.
+// No geolocation permission at all: the simulated position replaces it, which is both the point
+// of that mode and the only way to get an altitude — Playwright's geolocation carries none.
+const context = await browser.newContext({ locale: 'en-GB' });
 // Terrain starts OFF so the straight-line baseline can be read without racing the solver: with a
 // cached tile the first wavefront lands in a few milliseconds, easily before the first assertion.
 await context.addInitScript(altitude => {
   localStorage.setItem('mtc-settings-v2', JSON.stringify({
     packIds: ['alps-test'], language: 'en', safetyMarginM: 250,
     hideC: false, hideD: false, sortMode: 'glide',
-    useManualAltitude: true, manualAltitudeM: altitude,
+    testMode: true, testLatitude: 45.9360, testLongitude: 7.6310,   // Cervinia
+    testAltitudeM: altitude, testLabel: 'Cervinia (test)',
     terrainRouting: false, terrainClearanceM: 200,
   }));
 }, 3000);
@@ -220,6 +217,7 @@ check('turning terrain off restores the straight-line glide',
   `${off.find(row => row.name.startsWith('Aosta'))?.glide} vs ${before?.glide}`);
 check('turning terrain off removes the routed marker', off.every(row => !row.routed));
 
+check('the simulated-position banner stays visible throughout', (await page.$('.test-banner')) !== null);
 check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 
 await browser.close();

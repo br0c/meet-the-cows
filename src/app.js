@@ -1886,6 +1886,8 @@ function renderTerrainCard() {
           <button id="downloadTerrain" ${disabled ? 'disabled' : ''}>${t('downloadTerrain')}</button>
         </div>` : ''}
         ${status ? `<p class="settings-note">${escapeHtml(status)}</p>` : ''}
+      </div>`;
+}
 
 // Last in Settings and collapsed by default: useful on the ground, never wanted in the air.
 function renderTestingCard() {

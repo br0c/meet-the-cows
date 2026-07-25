@@ -189,6 +189,32 @@ a { color: var(--accent); }
   vertical-align: 0.35em;
 }
 .route-summary { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+/* Testing mode. Red rather than amber: an amber notice is an update or a migration, this one is
+   "the position on screen is invented", which is a different category of thing entirely. */
+.test-banner { margin: 8px 8px 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: #450a0a; color: #fecaca; border: 1px solid #b91c1c; border-radius: 12px;
+  padding: 10px; font-weight: 600; }
+.test-banner button { white-space: nowrap; background: #b91c1c; border-color: #ef4444; color: #fff5f5; }
+
+/* Collapsed section header. A button rather than <details> so it renders identically to the rest
+   of the settings cards and survives the app's full re-render. */
+.settings-card .disclosure { display: flex; align-items: center; justify-content: space-between;
+  width: 100%; background: transparent; border: 0; padding: 2px 0; color: var(--text);
+  font-size: 15px; font-weight: 700; }
+.disclosure-mark { color: var(--muted); font-weight: 400; }
+.test-search-row { display: flex; gap: 8px; align-items: center; margin: 4px 0 8px; }
+.settings-card .test-search-row input { flex: 1; min-width: 0; }
+.test-search-row button { white-space: nowrap; }
+.test-results { display: grid; gap: 6px; margin: 0 0 10px; }
+.settings-card .test-result { display: grid; gap: 2px; width: 100%; text-align: left;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.test-result-name { font-size: 14px; font-weight: 700; }
+.test-result-meta { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.test-active { border: 1px solid #b91c1c; background: #2a0a0a; border-radius: 10px;
+  padding: 9px 11px; margin: 4px 0 10px; }
+.test-active-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); font-weight: 900; justify-self: end; }
 .badge-a {
   color: #000;
