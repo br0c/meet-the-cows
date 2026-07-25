@@ -276,8 +276,18 @@ jobs:
           PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
           CANONICAL_APP_URL: ${{ vars.CANONICAL_APP_URL }}
           SITE_URL: ${{ vars.SITE_URL }}
-          CHANNEL: ${{ github.ref_name == 'main' && '' || github.ref_name }}
+          # NB: `x == 'main' && '' || x` does NOT work — '' is falsy, so the || arm always
+          # wins and every deployment is labelled with its branch. Test the negative instead.
+          CHANNEL: ${{ github.ref_name != 'main' && github.ref_name || '' }}
         run: |
+          # The migration notice must never send pilots to an address that does not serve yet
+          # (the custom domain is attached after the project's first deploy, so there is a real
+          # window where it 404s). Probe it; drop it from this deploy if it is not live. The
+          # next deploy picks it up automatically once it is.
+          if [ -n "${CANONICAL_APP_URL}" ] && ! curl -fsS -o /dev/null --max-time 10 "${CANONICAL_APP_URL}"; then
+            echo "::warning::${CANONICAL_APP_URL} is not reachable — omitting the migration notice from this deployment"
+            CANONICAL_APP_URL=""
+          fi
           python - <<'PY' > dist/site/config.js
           import json, os
           cfg = {
