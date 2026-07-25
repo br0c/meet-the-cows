@@ -197,13 +197,19 @@ carries the few things that differ per deployment:
 | Field | Meaning |
 |---|---|
 | `packsBase` | Base that `packs/…` paths resolve against. Empty = same origin as the app; set it to serve pack data from a separate host so the shell and the ~300 MB of packs deploy independently. |
-| `canonicalAppUrl` | The production app URL. A copy served from any *other* origin understands itself to be retired and shows the migration notice; on the canonical origin it stays silent. |
-| `siteUrl` | Landing site, linked from that notice. |
 | `channel` | Label for a non-production deployment. Any non-empty value also suppresses the migration notice, because an experimental build is a deliberate destination, not a retired one. |
 
 The committed values are all empty, so a plain checkout behaves exactly like the original
-single-origin site. Both workflows overwrite the file at deploy time from repository variables
-(`PACKS_BASE_URL`, `CANONICAL_APP_URL`, `SITE_URL`), so no URL is hardcoded anywhere.
+single-origin site. Both workflows overwrite the file at deploy time from the `PACKS_BASE_URL`
+repository variable.
+
+The app's own address and the landing site are deliberately *not* config: they are constants at
+the top of `src/app.js`. A copy served from any other origin understands itself to be retired and
+offers a guided move — silent on the canonical origin, on a labelled channel, and on localhost.
+They live in the shell rather than in deploy-time config because the copy that most needs them is
+the retired one, which by definition stops being deployed to and would never receive them. Once a
+retired origin has been handed a shell that knows this, it keeps saying so with nothing left
+switched on anywhere; `deploy-app.yml`'s `deploy_retired_origin` input does that one deploy.
 
 ### Deploy target
 

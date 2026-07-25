@@ -19,6 +19,11 @@ on:
       - ".github/workflows/deploy-app.yml"
       - ".github/workflows/build-data-pack.yml"
   workflow_dispatch:
+    inputs:
+      deploy_retired_origin:
+        description: "Also deploy to GitHub Pages (br0c.github.io), the retired origin, so its frozen copy learns the app has moved"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -111,41 +116,22 @@ jobs:
           du -sh dist/site
 
       # Deployment config is written per environment, overwriting the committed defaults (which
-      # stay empty so a local checkout behaves like a plain single-origin site). Everything is
-      # driven by repository variables, so no URL is hardcoded in the workflow.
+      # stay empty so a local checkout behaves like a plain single-origin site).
       #   PACKS_BASE_URL      data origin for packs, e.g. https://data.meetthecows.org/ ('' = self)
-      #   CANONICAL_APP_URL   production app URL; any other origin shows the migration notice
-      #   SITE_URL            landing site, linked from that notice
+      # The app's own address and the landing site are NOT here — they are constants in
+      # src/app.js. A retired origin stops being deployed to, so anything it needs in order to
+      # know it is retired has to already be in the shell it is serving.
       - name: Write deployment config
         env:
           PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
-          CANONICAL_APP_URL: ${{ vars.CANONICAL_APP_URL }}
-          SITE_URL: ${{ vars.SITE_URL }}
-          # Explicit opt-in for the "the app has moved" notice on retired origins. Kept separate
-          # from CANONICAL_APP_URL so the new domain can be live, tested and used for a while
-          # before any pilot is nudged off the old one. Set MIGRATION_ENABLED=true to start it.
-          MIGRATION_ENABLED: ${{ vars.MIGRATION_ENABLED }}
           # NB: `x == 'main' && '' || x` does NOT work — '' is falsy, so the || arm always
           # wins and every deployment is labelled with its branch. Test the negative instead.
           CHANNEL: ${{ github.ref_name != 'main' && github.ref_name || '' }}
         run: |
-          # Two independent conditions must both hold before a retired origin nags anyone:
-          #   1. MIGRATION_ENABLED=true — the deliberate decision that it is time.
-          #   2. the URL actually serves — so the notice can never point at a dead address
-          #      (the custom domain is attached only after the project's first deploy).
-          if [ "${MIGRATION_ENABLED}" != "true" ]; then
-            [ -n "${CANONICAL_APP_URL}" ] && echo "MIGRATION_ENABLED is not 'true' — migration notice stays off"
-            CANONICAL_APP_URL=""
-          elif [ -n "${CANONICAL_APP_URL}" ] && ! curl -fsS -o /dev/null --max-time 10 "${CANONICAL_APP_URL}"; then
-            echo "::warning::${CANONICAL_APP_URL} is not reachable — omitting the migration notice from this deployment"
-            CANONICAL_APP_URL=""
-          fi
           python - <<'PY' > dist/site/config.js
           import json, os
           cfg = {
               "packsBase": os.environ.get("PACKS_BASE_URL", ""),
-              "canonicalAppUrl": os.environ.get("CANONICAL_APP_URL", ""),
-              "siteUrl": os.environ.get("SITE_URL", ""),
               "channel": os.environ.get("CHANNEL", ""),
           }
           print("// Generated at deploy time — see config.js in the repo for the field docs.")
@@ -160,13 +146,21 @@ jobs:
             echo "channel '${CHANNEL}': marked noindex"
           fi
 
-      # --- GitHub Pages (default) ------------------------------------------------------------
+      # --- GitHub Pages ------------------------------------------------------------------------
+      # The default target, and — once DEPLOY_TARGET is 'cloudflare' — also the retired origin.
+      # A retired origin still needs one last deploy: its copy of the shell is frozen at whatever
+      # was published when the move happened, so it can only learn that the app has moved by being
+      # handed a shell that already knows. deploy_retired_origin does exactly that, once, without
+      # touching DEPLOY_TARGET and risking it being left pointed at the wrong host.
+      # This replaces the whole site there, dropping any packs it still carries. That is intended:
+      # the app reads packs from PACKS_BASE_URL now, and a retired origin should stop serving
+      # 300 MB it no longer owns.
       - name: Setup Pages
-        if: vars.DEPLOY_TARGET != 'cloudflare'
+        if: vars.DEPLOY_TARGET != 'cloudflare' || inputs.deploy_retired_origin
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
-        if: vars.DEPLOY_TARGET != 'cloudflare'
+        if: vars.DEPLOY_TARGET != 'cloudflare' || inputs.deploy_retired_origin
         uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages-${{ github.run_attempt }}
@@ -174,7 +168,7 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
-        if: vars.DEPLOY_TARGET != 'cloudflare'
+        if: vars.DEPLOY_TARGET != 'cloudflare' || inputs.deploy_retired_origin
         uses: actions/deploy-pages@v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}

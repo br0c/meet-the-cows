@@ -1,4 +1,4 @@
-const APP_VERSION = '0.8.0-beta';
+const APP_VERSION = '0.8.1-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -18,23 +18,38 @@ const withTrailingSlash = value => {
 // downstream follows. A pilot must never lose their field list because a data host is down.
 let dataBase = CONFIG.packsBase ? new URL(withTrailingSlash(CONFIG.packsBase)) : BASE_URL;
 const packIndexUrl = () => new URL('packs/packs.json', dataBase).toString();
-// A copy served from anywhere other than the canonical app URL understands itself to be a
-// retired deployment and offers a guided move. One config value is correct on both sides: on
-// the canonical origin the origins match and nothing is shown. null = nothing to migrate to.
+// The app's permanent addresses. Hardcoded rather than configured, because moving house is a
+// one-way trip and not a setting — and because the copy that most needs to know it has been
+// retired is the frozen one on the old origin, which by definition stops receiving deploy-time
+// configuration. Baking it into the shell means a single deploy to that origin is enough,
+// forever, with no variable left switched on somewhere waiting to be forgotten.
+const CANONICAL_APP_URL = 'https://app.meetthecows.org/';
+const SITE_URL = 'https://meetthecows.org/';
+
+// A copy served from anywhere other than CANONICAL_APP_URL understands itself to be a retired
+// deployment and offers a guided move. null = say nothing.
 const MIGRATION = (() => {
-  const target = String(CONFIG.canonicalAppUrl || '').trim();
-  if (!target) return null;
-  // A labelled channel (next, a branch preview) is a deliberate alternate deployment, not a
-  // retired one: testers are there on purpose and must not be told the app has moved.
-  if (String(CONFIG.channel || '').trim()) return null;
   try {
-    const url = new URL(target);
+    const url = new URL(CANONICAL_APP_URL);
     if (url.origin === self.location.origin) return null;
-    return { url: url.toString(), host: url.host, site: String(CONFIG.siteUrl || '').trim() };
+    // A labelled channel (next, a branch preview) is a deliberate alternate deployment, not a
+    // retired one: testers are there on purpose and must not be told the app has moved.
+    if (String(CONFIG.channel || '').trim()) return null;
+    // Nor is somebody's own machine. Without this every local checkout would nag its developer
+    // to go and use production instead.
+    if (isLocalOrigin(self.location)) return null;
+    return { url: url.toString(), host: url.host, site: SITE_URL };
   } catch {
-    return null;  // a malformed config must never break the app
+    return null;  // a malformed constant must never break the app
   }
 })();
+
+function isLocalOrigin(location) {
+  const host = location.hostname;
+  return location.protocol === 'file:'
+    || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+    || host.endsWith('.local') || host.endsWith('.localhost');
+}
 const MIGRATION_SNOOZE_KEY = 'mtc-migration-snoozed-until';
 // Deliberately short: the user base is small, so a daily reminder moves everyone across in
 // days rather than months. Long enough that it never nags twice in one flying day.

@@ -17,15 +17,10 @@ self.MTC_CONFIG = {
   // headers (Access-Control-Allow-Origin) for the app origins that read it.
   packsBase: '',
 
-  // Canonical home of the production app, e.g. 'https://app.meetthecows.org/'. When this is
-  // set and the app is being served from a DIFFERENT origin, that copy understands itself to
-  // be a retired deployment and shows the migration notice. One value, correct on both sides:
-  // on the canonical origin it matches and nothing is shown; anywhere else it does not and
-  // the notice appears. Empty disables the notice entirely.
-  canonicalAppUrl: '',
-
-  // Marketing / landing site, linked from the migration notice ("Why the move?").
-  siteUrl: '',
+  // The app's own address and the landing site are NOT here: they are constants in src/app.js
+  // (CANONICAL_APP_URL, SITE_URL). They belong in the shell rather than in deploy-time config
+  // because the copy that needs them most is the retired one on the old origin, which stops
+  // being deployed to and would therefore never receive them.
 
   // Label for non-production deployments, shown in Settings and beside the version so a
   // tester can never confuse an experimental build with the real one. '' = production.

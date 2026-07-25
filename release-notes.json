@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.1-beta",
+    "date": "2026-07-25",
+    "en": [
+      "Housekeeping: this copy now knows where the app really lives, so an old bookmark can tell you how to move across"
+    ],
+    "fr": [
+      "Maintenance : cette copie sait désormais où se trouve réellement l'application, afin qu'un ancien favori puisse vous expliquer comment migrer"
+    ],
+    "de": [
+      "Wartung: Diese Kopie weiß jetzt, wo die App wirklich liegt, damit ein altes Lesezeichen dir den Wechsel erklären kann"
+    ]
+  },
+  {
     "version": "0.8.0-beta",
     "date": "2026-07-24",
     "en": [
