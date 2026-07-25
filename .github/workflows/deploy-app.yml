@@ -116,12 +116,6 @@ jobs:
           # from this origin; otherwise the app reads them from the data host.
           if [ -d data/packs ]; then mkdir -p dist/site/packs && cp -R data/packs/. dist/site/packs/; fi
 
-          # Every cache in the chain keys on the URL, including the iOS home-screen icon cache
-          # that a delete-and-reinstall does not clear. Stamping the icon's own content hash makes
-          # the address move when the picture changes — and only then, which matters because
-          # versions are deliberately not bumped for every fix.
-          python3 scripts/stamp_icon_urls.py --dir dist/site
-
           find dist/site -maxdepth 3 -type f | sort | head -80
           du -sh dist/site
 
@@ -200,6 +194,13 @@ jobs:
             python3 scripts/apply_channel_branding.py --dir dist/site --channel "${LABEL}"
           fi
           cat dist/site/_headers
+
+          # LAST, and after the channel rewrite on purpose. Every cache in the chain keys on the
+          # URL, including the iOS home-screen icon cache that a delete-and-reinstall does not
+          # clear, so each icon carries its own content hash. Stamping before the rewrite gave the
+          # channel production's hash — a URL that then sat still while the channel icon changed
+          # underneath it, which is the exact failure this is meant to prevent.
+          python3 scripts/stamp_icon_urls.py --dir dist/site
 
       # --- GitHub Pages ------------------------------------------------------------------------
       # The default target, and — once DEPLOY_TARGET is 'cloudflare' — also the retired origin.
