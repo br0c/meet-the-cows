@@ -13,8 +13,11 @@ const withTrailingSlash = value => {
 // Pack paths ("packs/…") resolve against the app by default, or against a separate data
 // origin (R2) when configured — the app shell and the ~300 MB of pack data are deployed
 // independently, so an experimental build can read the production packs without copying them.
-const DATA_BASE = CONFIG.packsBase ? new URL(withTrailingSlash(CONFIG.packsBase)) : BASE_URL;
-const PACK_INDEX_URL = new URL('packs/packs.json', DATA_BASE).toString();
+// Mutable: if the configured data origin cannot be reached (misconfiguration, an outage, or
+// simply not populated yet) loadPackIndex falls back to the app's own origin and everything
+// downstream follows. A pilot must never lose their field list because a data host is down.
+let dataBase = CONFIG.packsBase ? new URL(withTrailingSlash(CONFIG.packsBase)) : BASE_URL;
+const packIndexUrl = () => new URL('packs/packs.json', dataBase).toString();
 // A copy served from anywhere other than the canonical app URL understands itself to be a
 // retired deployment and offers a guided move. One config value is correct on both sides: on
 // the canonical origin the origins match and nothing is shown. null = nothing to migrate to.
@@ -634,16 +637,31 @@ function saveSettings() {
 }
 
 async function loadPackIndex({ cacheMode = 'no-cache' } = {}) {
-  try {
-    const res = await fetch(PACK_INDEX_URL, { cache: cacheMode });
-    if (!res.ok) throw new Error(`Pack index HTTP ${res.status}`);
-    const index = await res.json();
-    state.packs = Array.isArray(index) ? index : (Array.isArray(index.packs) ? index.packs : []);
-    if (!state.packs.length) throw new Error('Pack index contained no packs');
-  } catch (error) {
-    console.error(error);
-    state.packs = [{ id: 'fr-alps', name: 'France / Alps', manifestUrl: 'packs/fr-alps/manifest.json' }];
+  // Try the configured data origin first, then the app's own origin. The second attempt only
+  // exists when they differ, and covers the data host being unreachable, misconfigured, or not
+  // yet populated — in which case the app keeps working from whatever the app origin serves
+  // (and, offline, from the service-worker cache) instead of showing an empty field list.
+  const candidates = [dataBase];
+  if (dataBase.toString() !== BASE_URL.toString()) candidates.push(BASE_URL);
+
+  for (const base of candidates) {
+    try {
+      const res = await fetch(new URL('packs/packs.json', base).toString(), { cache: cacheMode });
+      if (!res.ok) throw new Error(`Pack index HTTP ${res.status}`);
+      const index = await res.json();
+      const packs = Array.isArray(index) ? index : (Array.isArray(index.packs) ? index.packs : []);
+      if (!packs.length) throw new Error('Pack index contained no packs');
+      if (base !== dataBase) {
+        console.warn(`Pack data unavailable at ${dataBase}; falling back to ${base}`);
+        dataBase = base;  // every later manifest/media URL follows the base that worked
+      }
+      state.packs = packs;
+      return;
+    } catch (error) {
+      console.error(error);
+    }
   }
+  state.packs = [{ id: 'fr-alps', name: 'France / Alps', manifestUrl: 'packs/fr-alps/manifest.json' }];
 }
 
 function activePackIds() {
@@ -673,7 +691,7 @@ function selectedPack() {  // legacy single-pack callers use the first active pa
 }
 
 function manifestUrlForPack(pack) {
-  return new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, DATA_BASE).toString();
+  return new URL(pack.manifestUrl || `packs/${pack.id}/manifest.json`, dataBase).toString();
 }
 
 // Load every selected pack, merge their fields and de-duplicate by id (a field shared by, e.g.,
@@ -2193,11 +2211,11 @@ async function registerServiceWorker() {
 
 async function clearPackCache(packId) {
   if (!('caches' in window) || !packId) return 0;
-  const packRootUrl = new URL(`packs/${packId}/`, BASE_URL).toString();
+  const packRootUrl = new URL(`packs/${packId}/`, dataBase).toString();
   const cache = await caches.open(DATA_CACHE);
   let deleted = 0;
   for (const request of await cache.keys()) {
-    if (request.url === PACK_INDEX_URL || request.url.startsWith(packRootUrl)) {
+    if (request.url === packIndexUrl() || request.url.startsWith(packRootUrl)) {
       if (await cache.delete(request)) deleted += 1;
     }
   }
