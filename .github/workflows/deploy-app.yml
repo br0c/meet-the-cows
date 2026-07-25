@@ -192,11 +192,18 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           PROJECT="${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}"
-          # Self-provisioning: newer Cloudflare accounts have no "Pages" option in the dashboard
-          # (Pages is being folded into Workers), so create the direct-upload project here on
-          # first run. Expected to fail harmlessly on every later run — hence the guard.
-          npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main \
-            || echo "project '$PROJECT' already exists — continuing"
+          # Create the direct-upload project on first run. A create failure is NOT automatically
+          # harmless: on accounts where Pages project creation is disabled (Pages is being folded
+          # into Workers) it fails with API error 8000000, and blindly continuing produced a
+          # confusing "project does not exist" error two steps later. Distinguish the cases.
+          if ! npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main; then
+            if npx --yes wrangler@latest pages project list 2>/dev/null | grep -q "$PROJECT"; then
+              echo "project '$PROJECT' already exists — continuing"
+            else
+              echo "::error::Pages project '$PROJECT' does not exist and could not be created."
+              exit 1
+            fi
+          fi
           npx --yes wrangler@latest pages deploy dist/site \
             --project-name "$PROJECT" \
             --branch "${{ github.ref_name }}" \

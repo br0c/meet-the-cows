@@ -1,7 +1,7 @@
-# Landing site (meetthecows.org) — deliberately a SEPARATE Cloudflare Pages project from the
-# app. Different origin means it can never share a service-worker scope, cache or localStorage
-# with the PWA at app.meetthecows.org, which is the whole reason the app and the marketing page
-# are not just two paths on one host.
+# Landing site (meetthecows.org). Deployed as a Worker serving static assets rather than a
+# Pages project — see site/wrangler.toml for why — but still its own deployment, so the page
+# and the PWA at app.meetthecows.org stay on different origins and cannot share a
+# service-worker scope, cache or localStorage.
 name: Deploy landing site
 
 on:
@@ -23,26 +23,21 @@ jobs:
   deploy-site:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Static files only; nothing to deploy until Cloudflare is the target.
     if: vars.DEPLOY_TARGET == 'cloudflare'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Deploy to Cloudflare Pages
+      - name: Deploy to Cloudflare
+        working-directory: site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          PROJECT="${{ vars.CF_SITE_PROJECT || 'meet-the-cows-site' }}"
-          # Created on first run, as for the app project (the dashboard offers no Pages option).
-          npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main \
-            || echo "project '$PROJECT' already exists — continuing"
-          npx --yes wrangler@latest pages deploy site \
-            --project-name "$PROJECT" \
-            --branch "${{ github.ref_name }}" \
-            --commit-dirty=true
+        run: npx --yes wrangler@latest deploy
 
       - name: Show URL
-        run: echo "Landing site deployed (branch ${{ github.ref_name }})"
+        run: |
+          echo "Landing site deployed."
+          echo "Attach meetthecows.org to the 'meet-the-cows-site' Worker:"
+          echo "  Cloudflare dashboard -> Compute (Workers) -> meet-the-cows-site -> Settings -> Domains & Routes -> Add custom domain"

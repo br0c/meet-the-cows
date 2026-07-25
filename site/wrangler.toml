@@ -1,0 +1,14 @@
+# Landing site for meetthecows.org, deployed as a Worker serving static assets.
+#
+# Not a Pages project, on purpose: this Cloudflare account cannot create Pages projects (the
+# dashboard offers no Pages option and the API returns error 8000000), because Pages is being
+# folded into Workers. A static-asset Worker is the supported path and needs no entry script.
+#
+# Still a SEPARATE deployment from the app: meetthecows.org and app.meetthecows.org must stay
+# different origins so the landing page can never share a service-worker scope, cache or
+# localStorage with the PWA.
+name = "meet-the-cows-site"
+compatibility_date = "2026-07-01"
+
+[assets]
+directory = "./public"

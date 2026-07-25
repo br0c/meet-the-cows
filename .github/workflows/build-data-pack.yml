@@ -354,9 +354,18 @@ jobs:
         run: |
           if [ -n "${{ vars.PACKS_BASE_URL }}" ]; then rm -rf dist/site/packs; fi
           PROJECT="${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}"
-          # See deploy-app.yml: creates the direct-upload project on first run, no-ops after.
-          npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main \
-            || echo "project '$PROJECT' already exists — continuing"
+          # Create the direct-upload project on first run. A create failure is NOT automatically
+          # harmless: on accounts where Pages project creation is disabled (Pages is being folded
+          # into Workers) it fails with API error 8000000, and blindly continuing produced a
+          # confusing "project does not exist" error two steps later. Distinguish the cases.
+          if ! npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main; then
+            if npx --yes wrangler@latest pages project list 2>/dev/null | grep -q "$PROJECT"; then
+              echo "project '$PROJECT' already exists — continuing"
+            else
+              echo "::error::Pages project '$PROJECT' does not exist and could not be created."
+              exit 1
+            fi
+          fi
           npx --yes wrangler@latest pages deploy dist/site \
             --project-name "$PROJECT" \
             --branch "${{ github.ref_name }}" \
