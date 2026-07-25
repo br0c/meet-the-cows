@@ -2,7 +2,12 @@
 
 Meet the Cows is an offline-friendly landing-field viewer for glider pilots, designed to run as a phone web app in the cockpit.
 
-**Live app: <https://br0c.github.io/meet-the-cows/>** — open it on your phone and add it to your home screen.
+**Live app: <https://app.meetthecows.org>** — open it on your phone and add it to your home screen.
+Project site: <https://meetthecows.org>.
+
+The app used to live at `br0c.github.io/meet-the-cows`. That address still works for now, but it is
+retired: a browser keeps its offline packs, cache and settings per address, so nothing carries
+across on its own. Install from the new one and download the pack again.
 
 Install it on your phone, open it before or during a flight, allow location access, and it shows nearby outlanding fields and airfields with distance, bearing, required glide ratio, notes, photos, and available documents such as VAC PDFs.
 
@@ -32,7 +37,7 @@ Difficulty `C` and `D` fields are highly contraindicated. Treat them as hazardou
 
 ## Install on a Phone
 
-1. Open <https://br0c.github.io/meet-the-cows/> in your phone browser.
+1. Open <https://app.meetthecows.org> in your phone browser.
 2. On iPhone, use Safari's share button, then choose `Add to Home Screen`.
 3. On Android, use the browser menu, then choose `Install app` or `Add to Home screen`.
 4. Launch Meet the Cows from the home-screen icon.
@@ -110,7 +115,9 @@ originals live on the `contrib-originals` release.
 
 ## Data
 
-The public app loads static data packs from same-origin GitHub Pages paths. One build produces
+The public app loads static data packs from `data.meetthecows.org`, an R2 bucket whose layout
+mirrors the site; a plain checkout with no deployment config falls back to same-origin `packs/…`
+paths and behaves identically. One build produces
 the country packs (`fr`, `ch`, `de`, `it`, `at`) and two geofenced Alps packs, all sliced from
 one merged field set with their media shared in `_shared/`:
 
@@ -166,7 +173,17 @@ The exact sources used by a deployed pack are listed in that pack's `manifest.js
 
 ## Deployment
 
-GitHub Pages deployment is split so app-only changes do not rebuild the data pack:
+Three separate origins, on purpose — a browser scopes service workers, caches and local storage
+per origin, so the app, the landing page and any experimental build can never disturb each other:
+
+| Origin | What it is | Workflow |
+|---|---|---|
+| `app.meetthecows.org` | the PWA | `deploy-app.yml` (branch `main`) |
+| `meetthecows.org` | landing page | `deploy-site.yml` (`site/`) |
+| `data.meetthecows.org` | pack data in R2 | `build-data-pack.yml` |
+| `next.meetthecows.org` | experimental build, shared by hand and marked `noindex` | `deploy-app.yml` (branch `dev`) |
+
+Deployment is split so app-only changes do not rebuild the data pack:
 
 - `.github/workflows/deploy-app.yml` deploys app-shell changes using the latest already-built pack.
 - `.github/workflows/build-data-pack.yml` rebuilds the data pack, assembles the full static site, and deploys it. It runs manually, on schedule, and when the data-build scripts change.
