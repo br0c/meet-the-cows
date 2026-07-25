@@ -1,0 +1,20 @@
+# The experimental build at next.meetthecows.org, deployed as a Worker serving static assets.
+#
+# Why not just point the domain at the Pages project: a Pages custom domain always serves the
+# PRODUCTION branch, so attaching next.meetthecows.org there would have served main — the exact
+# opposite of the point. A second Pages project would work, but this account cannot create one
+# (Pages is being folded into Workers; the API returns error 8000000), which is the same reason
+# the landing site is a Worker.
+#
+# And pointing a bare CNAME at dev.meet-the-cows.pages.dev does not work either: Cloudflare
+# refuses to route a custom hostname it has not been told about and answers 522. The hostname has
+# to belong to something, so here it belongs to this Worker.
+#
+# The assets are whatever .github/workflows/deploy-app.yml has just assembled — the same bytes
+# the Pages branch deployment gets, already carrying the channel's amber icon, its "MTC next"
+# name and its noindex header.
+name = "meet-the-cows-next"
+compatibility_date = "2026-07-01"
+
+[assets]
+directory = "../dist/site"
