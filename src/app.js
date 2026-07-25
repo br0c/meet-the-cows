@@ -1,4 +1,4 @@
-const APP_VERSION = '0.7.7-beta';
+const APP_VERSION = '0.7.8-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -1109,7 +1109,9 @@ function difficultyLabel(field) {
   if (['c', 'difficile', 'hard'].includes(normalized)) return 'C';
   if (['d', 'tresdifficile', 'trèsdifficile', 'veryhard', 'verydifficult'].includes(normalized)) return 'D';
   if (['altiport', 'velisurface', 'vélisurface'].includes(normalized)) return value || '?';
-  return value || '?';
+  // Anything else (notably UNKNOWN) renders as a compact "?" so the badge never
+  // stretches over the glide-ratio column — and needs no localization.
+  return '?';
 }
 
 function difficultyBadgeClass(field) {

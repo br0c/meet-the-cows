@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.7.8-beta",
+    "date": "2026-07-24",
+    "en": [
+      "Changed: Fields without a difficulty rating now show a compact grey \"?\" badge instead of the word \"unknown\" overflowing into the glide-ratio column"
+    ],
+    "fr": [
+      "Modifié : Les terrains sans niveau de difficulté affichent désormais un badge gris compact « ? » au lieu du mot « inconnu » qui débordait sur la colonne de finesse"
+    ],
+    "de": [
+      "Geändert: Felder ohne Schwierigkeitsbewertung zeigen jetzt ein kompaktes graues \"?\"-Abzeichen statt des Worts \"unbekannt\", das in die Gleitzahl-Spalte hineinragte"
+    ]
+  },
+  {
     "version": "0.7.7-beta",
     "date": "2026-07-23",
     "en": [

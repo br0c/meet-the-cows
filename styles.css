@@ -180,7 +180,11 @@ a { color: var(--accent); }
   background: #ef4444;
   border-color: transparent;
 }
-.badge-unknown { color: var(--muted); background: transparent; }
+.badge-unknown {
+  color: #000;
+  background: #9ca3af;
+  border-color: transparent;
+}
 
 .settings-page { display: grid; gap: 12px; }
 .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
