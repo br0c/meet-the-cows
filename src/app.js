@@ -242,7 +242,6 @@ const STRINGS = {
     routeLength: 'Route',
     routeViaChip: name => `via ${name}`,
     routeViaPlain: 'around terrain',
-    routeViaCompass: point => `${point} of track`,
     routeLimitedByCol: (name, elev, dist) => `Tightest over ${name}, ${elev}, ${dist} away.`,
     routeCrossing: (above, clears) => `${above} below you now; the glide clears it by ${clears}.`,
     routeAbove: above => `${above} below you now.`,
@@ -396,7 +395,6 @@ const STRINGS = {
     routeLength: 'Trajet',
     routeViaChip: name => `par ${name}`,
     routeViaPlain: 'contourne le relief',
-    routeViaCompass: point => `${point} de la route`,
     routeLimitedByCol: (name, elev, dist) => `Point critique au-dessus de ${name}, ${elev}, à ${dist}.`,
     routeCrossing: (above, clears) => `${above} sous vous ; le trajet passe ${clears} au-dessus.`,
     routeAbove: above => `${above} sous vous.`,
@@ -550,7 +548,6 @@ const STRINGS = {
     routeLength: 'Pfad',
     routeViaChip: name => `über ${name}`,
     routeViaPlain: 'um das Gelände',
-    routeViaCompass: point => `${point} des Kurses`,
     routeLimitedByCol: (name, elev, dist) => `Engste Stelle über ${name}, ${elev}, ${dist} entfernt.`,
     routeCrossing: (above, clears) => `${above} unter dir; der Pfad bleibt ${clears} darüber.`,
     routeAbove: above => `${above} unter dir.`,
@@ -1292,25 +1289,17 @@ function routeIsDetour(row) {
 }
 
 /**
- * What to call the place a routed glide is pinched at. A named col if one is close enough —
- * that is how pilots hold this — otherwise the direction it heads, which at least beats a
- * bearing in degrees.
+ * What to call the place a routed glide is pinched at — a named col, or nothing.
+ *
+ * There used to be a fallback to the compass point the route heads for, and it was the wrong
+ * shape of answer: "west of track" reads as an instruction to fly west, and this app does not
+ * navigate. It reports what a glide costs; the pilot flies it on whatever they navigate with.
+ * A named col escapes that because it is a place a pilot already knows, not a heading. With no
+ * name the chip says only that the glide goes around terrain, which is the whole of what the app
+ * is entitled to claim.
  */
 function routeVia(row) {
-  const route = row?.route;
-  if (!route || !route.critical) return '';
-  if (route.critical.colName) return route.critical.colName;
-  if (!state.position) return '';
-  const bearing = bearingDegrees(
-    state.position.latitude, state.position.longitude,
-    route.critical.latitude, route.critical.longitude,
-  );
-  return t('routeViaCompass', compassPoint(bearing));
-}
-
-const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-function compassPoint(bearingDeg) {
-  return COMPASS[Math.round(((bearingDeg % 360) + 360) % 360 / 45) % 8];
+  return row?.route?.critical?.colName || '';
 }
 
 /** Replace a row's straight-line glide with the routed one, or say why there isn't one. */

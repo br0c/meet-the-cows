@@ -225,11 +225,26 @@ await page.waitForSelector('.field-row');
 const chip = await page.$eval('.field-via', el => el.innerText).catch(() => '');
 // Named rather than geometric: cols load on a different path from the tiles, and the naming has
 // already been lost once to a guard that only ran on first look. This is that regression.
-check('the chip names the col rather than falling back to a compass point',
-  /Col de Saint-Pantal/.test(chip), chip);
+check('the chip names the col when one is close enough', /Col de Saint-Pantal/.test(chip), chip);
 check('the list row carries a via chip for a real detour', chip.length > 0, chip);
 check('the chip leads with the route distance so truncation cannot eat it',
   /^▲\s*\d/.test(chip), chip);
+
+// With no name for the pinch point the chip must say only that the glide goes around terrain.
+// It used to offer the compass point the route headed for, which reads as an instruction to fly
+// that way — this app reports what a glide costs and never tells anyone where to point the nose.
+await page.evaluate(() => {
+  for (const route of window.__mtcState.terrain.routes.values()) delete route.critical?.colName;
+  window.__mtcScheduleRenderProbe();
+});
+// scheduleRender debounces by a second, so this has to outwait it rather than the usual tick.
+await page.waitForFunction(() => !/Col de/.test(document.querySelector('.field-via')?.innerText || 'Col de'),
+  null, { timeout: 5000 }).catch(() => {});
+const unnamedChip = await page.$eval('.field-via', el => el.innerText).catch(() => '');
+check('an unnamed pinch point falls back to plain "around terrain"',
+  /around terrain/i.test(unnamedChip), unnamedChip);
+check('the fallback never points a direction', !/of track|\bN[EW]?\b|\bS[EW]?\b|\bW\b|\bE\b/.test(
+  unnamedChip.replace(/^▲\s*[\d.]+\s*km\s*/, '')), unnamedChip);
 
 await page.click('#settingsToggle');
 await page.waitForSelector('#terrainRouting');
