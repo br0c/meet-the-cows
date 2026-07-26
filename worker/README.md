@@ -3,7 +3,7 @@
 A Cloudflare Worker that turns an in-app field contribution (a dated note and/or up to 5 photos —
 an update to an existing field, or a proposed **new field** with its own metadata) into a
 reviewable **GitHub pull request**, with a **geolocation pre-approval** step from each photo's
-EXIF GPS. The app stays on GitHub Pages and just POSTs here.
+EXIF GPS. The app (app.meetthecows.org, plus the retired GitHub Pages copy) just POSTs here.
 
 > **Status: live.** Deployed via CI (`.github/workflows/deploy-worker.yml`) at
 > `https://mtc-contrib-intake.br0c.workers.dev`. The in-app submission → GitHub PR flow has been
@@ -88,7 +88,7 @@ Put the resulting URL in the app's `CONTRIB_ENDPOINT` constant (Phase 2).
 > (legacy keys stay supported). The reverse is not safe: a new shell posting to an old Worker
 > gets its unknown keys silently ignored (e.g. a Worker predating multi-photo reads only
 > `photo` and would drop every `photos` entry while still reporting success). The same applies
-> to rollbacks: rolling back the Worker without rolling back Pages reintroduces that window.
+> to rollbacks: rolling back the Worker without rolling back the app reintroduces that window.
 
 ### Continuous deployment (GitHub Actions)
 

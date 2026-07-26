@@ -52,12 +52,22 @@ async function handleBugReport(request, env, origin) {
   const body = [
     description,
     contact ? `\n**Contact:** ${contact}` : '',
-    diagnostics ? `\n---\n\`\`\`\n${diagnostics}\n\`\`\`` : '',
+    diagnostics ? `\n---\n${fencedBlock(diagnostics)}` : '',
     '\n_Submitted anonymously via the in-app bug report._',
   ].filter(Boolean).join('\n');
 
   const issue = await gh(env, '/issues', 'POST', { title, body, labels: ['bug', 'from-app'] });
   return json(origin, 200, { ok: true, issueUrl: issue.html_url, issueNumber: issue.number });
+}
+
+// A markdown code block whose fence is guaranteed longer than any backtick run inside it —
+// otherwise diagnostics containing ``` would close the block early and the rest would render as
+// markdown in the issue body (links, images, headings), presented as though the reporter wrote
+// prose there. Untrusted text stays visibly quoted, whatever it contains.
+function fencedBlock(text) {
+  const longest = (String(text).match(/`+/g) || []).reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${fence}\n${text}\n${fence}`;
 }
 
 const NEW_FIELD_COUNTRIES = ['FR', 'CH', 'DE', 'IT', 'AT'];
@@ -396,7 +406,7 @@ async function backupRepo(env) {
 }
 
 // Exported for tests only; Workers ignores extra named exports.
-export { uploadOriginal, serveOriginal, backupRepo, handleBugReport };
+export { uploadOriginal, serveOriginal, backupRepo, handleBugReport, fencedBlock };
 
 // ---------- GitHub ----------
 

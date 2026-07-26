@@ -46,8 +46,6 @@ jobs:
     timeout-minutes: 45
 
     env:
-      PACK_ID: fr-alps
-      PACK_NAME: France / Alps
       PAGES_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
 
     steps:

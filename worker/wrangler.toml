@@ -15,6 +15,7 @@ ALLOWED_ORIGIN = "https://app.meetthecows.org,https://next.meetthecows.org,https
 GEO_RADIUS_M = "1000"                # within this of the field ⇒ geo-verified
 MAX_PHOTO_BYTES = "15728640"         # 15 MB
 MIN_PHOTO_LONG_EDGE = "2560"         # matches the pack image resize target
+MAX_PHOTOS = "5"                     # per submission; the app's picker enforces the same limit
 RELEASE_TAG = "contrib-originals"    # legacy release with pre-R2 photo originals (fallback path)
 BACKUP_BRANCHES = "main,dev"         # branches the nightly repo snapshot covers
 
