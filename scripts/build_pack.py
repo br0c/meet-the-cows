@@ -184,7 +184,11 @@ _DEEPL_LOCK = threading.Lock()
 # v15: second chart-attach pass so late-added airfields get their AT/DE/IT charts.
 # v16: dropped the third-party landout source; packs rebuild without its fields/photos.
 # v17: extra planeur-net CUPs (Champs des Alpes, BASULM terrains) merged in to broaden coverage.
-PACK_SCHEMA_VERSION = 17
+# v18: OpenAIP join keys no longer published as airfield codes, and one landing strip described
+#      by two sources is merged on runway heading + elevation + position. Both change what the
+#      pack contains, so the fingerprint has to move or the incremental check would decide
+#      nothing had happened and keep serving the old pack.
+PACK_SCHEMA_VERSION = 18
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
