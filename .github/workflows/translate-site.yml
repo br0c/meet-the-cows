@@ -62,6 +62,14 @@ jobs:
         run: |
           python3 scripts/translate_site.py --lang "${{ inputs.lang }}" --report /tmp/report.md
 
+      # Also to stdout: a job summary cannot be read back through the API, and the whole point of
+      # this workflow is that somebody gets to read the translation before it goes anywhere.
+      - name: Print the pairs
+        run: |
+          echo "----- BEGIN TRANSLATION REPORT -----"
+          cat /tmp/report.md
+          echo "----- END TRANSLATION REPORT -----"
+
       - name: Show the result
         run: |
           {
