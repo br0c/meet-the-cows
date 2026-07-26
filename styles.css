@@ -185,16 +185,30 @@ a { color: var(--accent); }
   overflow: hidden; text-overflow: ellipsis; }
 .field-distance,
 .field-glide { text-align: right; font-weight: 800; font-size: 14px; white-space: nowrap; }
-/* A glide that had to go around terrain rather than straight at it. Deliberately quiet: the
-   number is the message, this only says where it came from, and it must not widen the column. */
-.field-glide.routed::after {
-  content: '▲';
-  font-size: 0.6em;
-  font-weight: 400;
-  opacity: 0.5;
-  margin-left: 2px;
-  vertical-align: 0.35em;
+
+/* The mountain mark, once. Both places that carry it — the "via" chip and the marker beside a
+   routed glide figure — mask this same shape, so they can never drift into two different
+   drawings of the same idea. A mask rather than a background image because the fill then comes
+   from currentColor: the chip's blue and the figure's dimmed grey, with no second asset. */
+:root {
+  --mark-mountain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 16'%3E%3Cpath d='M0,15 L4.8,8.5 L8.4,12 L13.2,4.5 L17.4,10 L20.4,7.5 L24,15 Z' fill='%23000'/%3E%3C/svg%3E");
 }
+.field-via::before,
+.field-glide.routed::after {
+  content: '';
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask-image: var(--mark-mountain);
+  mask-image: var(--mark-mountain);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+.field-via::before { width: 11px; height: 7.5px; margin-right: 3px; vertical-align: -0.5px; }
+/* Bigger than the chip's copy on purpose: this one sits alone beside a number rather than at the
+   head of a sentence, with no words around it to say what it means. */
+.field-glide.routed::after { width: 16px; height: 11px; margin-left: 3px; opacity: .5; vertical-align: 0; }
 /* Boxed like the notes panel below it, because it is the same kind of thing: prose about this
    field that the pilot reads rather than scans. A point larger than the other secondary text —
    these are the sentences the routed number has to be justified by, so they get read properly. */

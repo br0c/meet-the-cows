@@ -268,8 +268,13 @@ const chip = await page.$eval('.field-via', el => el.innerText).catch(() => '');
 // already been lost once to a guard that only ran on first look. This is that regression.
 check('the chip names the col when one is close enough', /Col de Saint-Pantal/.test(chip), chip);
 check('the list row carries a via chip for a real detour', chip.length > 0, chip);
+// The mountain mark is a CSS ::before, so it is not in the text — the distance is what leads,
+// which is the point: ellipsis has to eat the col name and never the number.
 check('the chip leads with the route distance so truncation cannot eat it',
-  /^▲\s*\d/.test(chip), chip);
+  /^\s*[\d.]+\s*km/.test(chip), chip);
+check('the mountain mark is drawn, and not as text',
+  await page.$eval('.field-via', el => getComputedStyle(el, '::before').maskImage !== 'none'
+    && !/[▲⛰]/.test(el.innerText)));
 
 // With no name for the pinch point the chip must say only that the glide goes around terrain.
 // It used to offer the compass point the route headed for, which reads as an instruction to fly
@@ -285,7 +290,7 @@ const unnamedChip = await page.$eval('.field-via', el => el.innerText).catch(() 
 check('an unnamed pinch point falls back to plain "around terrain"',
   /around terrain/i.test(unnamedChip), unnamedChip);
 check('the fallback never points a direction', !/of track|\bN[EW]?\b|\bS[EW]?\b|\bW\b|\bE\b/.test(
-  unnamedChip.replace(/^▲\s*[\d.]+\s*km\s*/, '')), unnamedChip);
+  unnamedChip.replace(/^\s*[\d.]+\s*km\s*/, '')), unnamedChip);
 
 await page.click('#settingsToggle');
 await page.waitForSelector('#terrainRouting');

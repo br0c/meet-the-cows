@@ -2270,9 +2270,10 @@ function renderFieldRow(row) {
   const via = routeIsDetour(row) ? routeVia(row) : '';
   // Distance first: a long col name is the part that can be cut without losing the point, and
   // putting it last means the ellipsis eats the name's tail rather than the number.
-  // The glyph matches the marker on the glide figure, so the two read as the same statement.
+  // The mountain mark is drawn by CSS (::before here, ::after on the glide figure) from one
+  // shared definition, so the two cannot drift apart — they are the same statement twice.
   const chip = routeIsDetour(row)
-    ? `<span class="field-via">▲ ${escapeHtml(fmtKm(row.route.pathLengthM))} ${escapeHtml(via ? t('routeViaChip', via) : t('routeViaPlain'))}</span>`
+    ? `<span class="field-via">${escapeHtml(fmtKm(row.route.pathLengthM))} ${escapeHtml(via ? t('routeViaChip', via) : t('routeViaPlain'))}</span>`
     : '';
   return `
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
