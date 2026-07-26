@@ -1,0 +1,23 @@
+# Never translated. One per line; longest match wins so multi-word entries beat their parts.
+# Product, hosts and proper nouns, plus the aviation acronyms that are the same in every language.
+Meet the Cows
+app.meetthecows.org
+meetthecows.org
+planeur-net
+Guide des Aires de Sécurité
+Guide des Aires
+OpenAIP
+Austro Control
+AIRAC
+Wi-Fi
+Safari
+Chrome
+iPhone
+iPad
+Android
+GPS
+VAC
+AIP
+SIA
+DFS
+ENAV
