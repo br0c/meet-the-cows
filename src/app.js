@@ -223,8 +223,8 @@ const STRINGS = {
     fieldsCount: 'Fields', offline: 'Offline', noPackLoaded: 'No pack loaded',
     noPackSelected: 'No pack selected', noPackSelectedHint: 'No pack selected — choose one in Settings (⚙).',
     downloadMedia: 'Download / verify media & docs', reloadPack: 'Reload pack',
-    exportCup: n => `Export CUP for SeeYou (${n} fields)`,
-    cupNote: 'Waypoint file for SeeYou Navigator and other nav apps. Brief a field here, then navigate to it in SeeYou.',
+    exportCup: n => `Export CUP (${n} fields)`,
+    cupNote: 'Waypoints file for your preferred navigation app. Brief a field here and route to it with your preferred navigation app.',
     nearestList: 'Nearest list',
     safetyMargin: 'Safety arrival margin, m',
     showC: 'Show C fields', showD: 'Show D fields',
@@ -389,8 +389,8 @@ const STRINGS = {
     fieldsCount: 'Terrains', offline: 'Hors ligne', noPackLoaded: 'Aucun pack chargé',
     noPackSelected: 'Aucun pack sélectionné', noPackSelectedHint: 'Aucun pack sélectionné — choisissez-en un dans les Réglages (⚙).',
     downloadMedia: 'Télécharger / vérifier médias & docs', reloadPack: 'Recharger le pack',
-    exportCup: n => `Exporter CUP pour SeeYou (${n} terrains)`,
-    cupNote: 'Fichier de points de virage pour SeeYou Navigator et autres apps de nav. Consultez un terrain ici, puis naviguez-y dans SeeYou.',
+    exportCup: n => `Exporter CUP (${n} terrains)`,
+    cupNote: "Fichier de points de virage pour l'application de navigation de votre choix. Consultez un terrain ici, puis rejoignez-le avec l'application de navigation de votre choix.",
     nearestList: 'Liste des plus proches',
     safetyMargin: "Marge d'arrivée de sécurité, m",
     showC: 'Afficher les terrains C', showD: 'Afficher les terrains D',
@@ -556,8 +556,8 @@ const STRINGS = {
     fieldsCount: 'Felder', offline: 'Offline', noPackLoaded: 'Kein Paket geladen',
     noPackSelected: 'Kein Paket ausgewählt', noPackSelectedHint: 'Kein Paket ausgewählt — wähle eines in den Einstellungen (⚙).',
     downloadMedia: 'Medien & Dokumente laden / prüfen', reloadPack: 'Paket neu laden',
-    exportCup: n => `CUP für SeeYou exportieren (${n} Felder)`,
-    cupNote: 'Wegpunktdatei für SeeYou Navigator und andere Navi-Apps. Feld hier briefen, dann in SeeYou anfliegen.',
+    exportCup: n => `CUP exportieren (${n} Felder)`,
+    cupNote: 'Wegpunktdatei für die Navigations-App Ihrer Wahl. Feld hier briefen und mit der Navigations-App Ihrer Wahl anfliegen.',
     nearestList: 'Nächstgelegene Felder',
     safetyMargin: 'Sicherheits-Ankunftsreserve, m',
     showC: 'C-Felder anzeigen', showD: 'D-Felder anzeigen',
@@ -3758,7 +3758,10 @@ async function syncPackDelta() {
   }
 }
 
-// --- SeeYou CUP export, generated in-app from the loaded fields (offline, always in sync) ---
+// --- CUP export, generated in-app from the loaded fields (offline, always in sync) ---
+//
+// CUP is the de-facto waypoint interchange format for soaring — SeeYou, XCSoar, LK8000, the
+// LX and Naviter instruments all read it — so nothing here is written for one vendor.
 
 function cupCoord(value, isLat) {
   const hemi = value >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W');
@@ -3854,7 +3857,7 @@ async function exportCup() {
   const packLabel = ids.length === 1 ? ids[0] : 'selection';
   const filename = `meet-the-cows-${packLabel}-${resolveLang()}.cup`;
   const text = generateCupText();
-  // Prefer the share sheet on phones (Save to Files, or open straight into SeeYou).
+  // Prefer the share sheet on phones (Save to Files, or open straight into a nav app).
   try {
     const file = new File([text], filename, { type: 'text/plain' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {

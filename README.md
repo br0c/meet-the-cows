@@ -189,7 +189,7 @@ device language and falls back to English for anything else. You can override it
 Settings → App → Language; the choice is stored on the device.
 
 Localization covers the whole app: menus and status text, field detail labels, warnings, and
-the field notes themselves. The exported SeeYou CUP file is generated in the language you have
+the field notes themselves. The exported CUP waypoints file is generated in the language you have
 selected (its filename is suffixed with the language code).
 
 The landing page at [meetthecows.org](https://meetthecows.org) is English and French, each on its
