@@ -42,9 +42,10 @@
           <h1>Les vaches, classées selon que vous pouvez vraiment les atteindre.</h1>
           <p class="sub">
             Une aide cockpit pour les vélivoles des Alpes. Les terrains et aérodromes proches,
-            classés par la finesse qu’il vous faudrait depuis là où vous êtes — avec les fiches,
-            les photos et les cartes officielles qui disent à quoi vous vous engagez. Tout tient
-            dans le téléphone, donc ça marche sans réseau.
+            classés par la finesse qu’il vous faudrait depuis là où vous êtes, avec au choix un
+            trajet qui contourne le relief plutôt que de le traverser. Avec les fiches, les photos
+            et les cartes officielles qui disent à quoi vous vous engagez — tout tient dans le
+            téléphone, donc ça marche sans réseau.
           </p>
           <div class="cta-row">
             <a class="cta" href="https://app.meetthecows.org">Ouvrir l’application<small class="mono">app.meetthecows.org</small></a>
@@ -53,10 +54,10 @@
         </div>
         <div class="shots">
           <figure class="shot" style="margin:0">
-            <img src="../screen-list.jpg" width="750" height="1500" alt="Liste des terrains proches avec distance, finesse requise et pastille de difficulté" />
+            <img src="../screen-list.jpg" width="750" height="1500" alt="Liste des terrains depuis 3700 m au-dessus de la Haute-Maurienne. Trois aérodromes classés A sont épinglés au-dessus d’un séparateur, à finesse requise 13, 15 et 16 ; en dessous figurent des terrains classés C à finesse 8 et 10 — des chiffres plus faciles, mais moins bien classés. Un repère de montagne à côté d’une finesse signale un trajet calculé en contournant le relief." />
           </figure>
           <figure class="shot" style="margin:0">
-            <img src="../screen-detail.jpg" width="750" height="1500" alt="Fiche d’un terrain : cap, distance, finesse requise, piste, notes de pilotes et photo aérienne annotée" />
+            <img src="../screen-detail.jpg" width="750" height="1500" alt="Fiche de LFKD Sollières-Sardières : cap, distance, finesse requise, hauteur d’arrivée, piste et fréquence, puis un profil du trajet montrant le relief, la ligne de garde au-dessus et la pente de plané, qui se rejoignent au col du Fréjus — suivi des notes de pilotes et d’une photo aérienne annotée." />
           </figure>
         </div>
       </div>
@@ -67,6 +68,10 @@
           <div class="item">
             <h3>Classé par finesse requise</h3>
             <p>Chaque terrain affiche la finesse qu’il vous faudrait depuis votre position et votre altitude du moment — pas seulement la distance.</p>
+          </div>
+          <div class="item">
+            <h3>Une finesse qui tient compte du relief</h3>
+            <p>Avec le relief activé, la finesse requise suit un trajet qui reste dégagé du sol au lieu d’une ligne droite, en gardant une marge que vous choisissez. Un terrain au fond d’une vallée peut devenir atteignable ; un terrain derrière une crête peut cesser de l’être. Fonction expérimentale, désactivée tant que vous ne l’activez pas.</p>
           </div>
           <div class="item">
             <h3>Une difficulté honnête</h3>
@@ -154,10 +159,14 @@
           relu avant publication, et les données s’en portent mieux.
         </p>
         <div class="notice">
-          <strong>Pas pour la navigation principale.</strong> Distances et finesses sont à vol
-          d’oiseau uniquement — ni vent, ni descendance, ni garde au relief, ni espace aérien.
-          Vérifiez toujours les documents officiels à jour et votre connaissance du terrain avant
-          le vol.
+          <strong>Pas pour la navigation principale.</strong> La distance reste toujours à vol
+          d’oiseau, et la finesse aussi tant que vous n’activez pas le calcul en contournant le
+          relief. Cette fonction est expérimentale, peut être erronée, et reste désactivée tant que
+          vous ne l’activez pas : elle garde une marge que vous choisissez au-dessus du sol, mais
+          elle ignore le vent, les descendances, les obstacles et l’espace aérien, et ce n’est pas
+          une route à suivre. Le choix de votre trajectoire et de votre terrain d’atterrissage
+          reste le vôtre seul. Vérifiez toujours les documents officiels à jour et votre
+          connaissance du terrain avant le vol.
         </div>
       </section>
     </div>

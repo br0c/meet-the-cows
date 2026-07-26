@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Meet the Cows — outlanding fields for glider pilots</title>
-    <meta name="description" content="A free offline cockpit aid for glider pilots in the Alps: nearby outlanding fields and airfields sorted by the glide ratio you would actually need, with notes, photos and official VAC charts. Works with no signal." />
+    <meta name="description" content="A free offline cockpit aid for glider pilots in the Alps: nearby outlanding fields and airfields sorted by the glide ratio you would actually need — optionally routed around the terrain in between — with notes, photos and official VAC charts. Works with no signal." />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="canonical" href="https://meetthecows.org/" />
     <!-- The French page at /fr/ is drafted but not finished, so nothing here points at it: no
@@ -16,7 +16,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="en_GB" />
     <meta property="og:title" content="Meet the Cows — outlanding fields for glider pilots" />
-    <meta property="og:description" content="Nearby outlanding fields sorted by the glide ratio you would actually need. Free, offline, no account." />
+    <meta property="og:description" content="Nearby outlanding fields sorted by the glide ratio you would actually need, routed around terrain if you want it. Free, offline, no account." />
     <meta property="og:url" content="https://meetthecows.org/" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -40,9 +40,10 @@
           <h1>Outlanding fields, ranked by whether you can actually reach them.</h1>
           <p class="sub">
             A cockpit aid for glider pilots in the Alps. Nearby fields and airfields sorted by the
-            glide ratio you would need from where you are — with the notes, photos and official
-            charts that tell you what you are committing to. All stored on your phone, so it works
-            with no signal.
+            glide ratio you would need from where you are, optionally routed around the terrain in
+            between rather than straight through it. With the notes, photos and official charts
+            that tell you what you are committing to — all stored on your phone, so it works with
+            no signal.
           </p>
           <div class="cta-row">
             <a class="cta" href="https://app.meetthecows.org">Open the app<small class="mono">app.meetthecows.org</small></a>
@@ -51,10 +52,10 @@
         </div>
         <div class="shots">
           <figure class="shot" style="margin:0">
-            <img src="screen-list.jpg" width="750" height="1500" alt="Field list showing nearby airfields with distance, required glide ratio and a difficulty badge" />
+            <img src="screen-list.jpg" width="750" height="1500" alt="Field list from 3700 m over the Haute-Maurienne. Three A-rated airfields are pinned above a divider at required glide 13, 15 and 16; below it sit fields rated C at glide 8 and 10 — easier numbers, lower rank. A mountain mark beside a ratio means the glide was routed around terrain." />
           </figure>
           <figure class="shot" style="margin:0">
-            <img src="screen-detail.jpg" width="750" height="1500" alt="Field detail showing bearing, distance, required glide, runway, pilot notes and an annotated aerial photo" />
+            <img src="screen-detail.jpg" width="750" height="1500" alt="Detail for LFKD Sollières-Sardières: bearing, distance, required glide, arrival height, runway and frequency, then a route profile drawing the ground, the clearance line above it and the glide, meeting at Col du Fréjus — followed by pilot notes and an annotated aerial photo." />
           </figure>
         </div>
       </div>
@@ -65,6 +66,10 @@
           <div class="item">
             <h3>Sorted by required glide</h3>
             <p>Every field shows the glide ratio you would need from your current position and altitude — not just how far away it is.</p>
+          </div>
+          <div class="item">
+            <h3>Glide that considers terrain elevation</h3>
+            <p>Turn terrain on and the required glide follows a path that stays clear of the ground instead of a straight line. A field down a valley can become reachable; one behind a ridge can stop being. Experimental, and off until you enable it.</p>
           </div>
           <div class="item">
             <h3>Honest difficulty</h3>
@@ -152,9 +157,12 @@
           the data is better for it.
         </p>
         <div class="notice">
-          <strong>Not for primary navigation.</strong> Distances and glide ratios are straight-line
-          only — no wind, no sink, no terrain clearance, no airspace. Always check current official
-          documents and local knowledge before flight.
+          <strong>Not for primary navigation.</strong> Distance is always straight-line, and so is
+          the glide ratio unless you switch terrain routing on. That feature is experimental, can
+          be wrong, and is off until you enable it: it clears the ground by a margin you set, but
+          still knows nothing of wind, sink, obstacles or airspace, and it is not a route to fly.
+          The choice of trajectory and of landing site remains yours alone. Always check current
+          official documents and local knowledge before flight.
         </div>
       </section>
     </div>
