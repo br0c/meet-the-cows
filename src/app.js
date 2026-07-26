@@ -334,6 +334,7 @@ const STRINGS = {
     migStep4: 'Delete the old icon', migStep4Note: 'once the new one works offline.',
     migWarnLead: 'Do this at home, on Wi-Fi.', migWarnBody: 'Re-downloading your packs uses a few hundred MB. Don’t start it at the airfield or before a flight.',
     migOpen: h => `Open ${h}`, migSnooze: 'Remind me tomorrow', migWhy: 'Why the move?',
+    migSettingsAction: 'How to move',
     licenceLabel: 'Licence', licenceValue: 'Personal use · data reuse on request',
     noNotesFile: 'Release notes are unavailable offline.',
     contribute: 'Contribute an update', contribTitle: 'Contribute an update',
@@ -499,6 +500,7 @@ const STRINGS = {
     migStep4: 'Supprimez l’ancienne icône', migStep4Note: 'une fois que la nouvelle fonctionne hors ligne.',
     migWarnLead: 'Faites-le chez vous, en Wi-Fi.', migWarnBody: 'Retélécharger vos packs représente quelques centaines de Mo. Ne le lancez pas sur le terrain ni avant un vol.',
     migOpen: h => `Ouvrir ${h}`, migSnooze: 'Me le rappeler demain', migWhy: 'Pourquoi ce changement ?',
+    migSettingsAction: 'Comment déménager',
     licenceLabel: 'Licence', licenceValue: 'Usage personnel · réutilisation des données sur demande',
     noNotesFile: 'Notes de version indisponibles hors ligne.',
     contribute: 'Proposer une mise à jour', contribTitle: 'Proposer une mise à jour',
@@ -663,6 +665,7 @@ const STRINGS = {
     migStep4: 'Altes Symbol löschen', migStep4Note: 'sobald das neue offline funktioniert.',
     migWarnLead: 'Mach das zu Hause, im WLAN.', migWarnBody: 'Das erneute Laden der Pakete kostet einige hundert MB. Nicht am Flugplatz oder vor dem Start starten.',
     migOpen: h => `${h} öffnen`, migSnooze: 'Morgen erinnern', migWhy: 'Warum der Umzug?',
+    migSettingsAction: 'Wie du umziehst',
     licenceLabel: 'Lizenz', licenceValue: 'Private Nutzung · Datenweiterverwendung auf Anfrage',
     noNotesFile: 'Versionshinweise offline nicht verfügbar.',
     contribute: 'Update beitragen', contribTitle: 'Update beitragen',
@@ -1863,6 +1866,29 @@ function migrationSnoozed() {
   }
 }
 
+/**
+ * The permanent way back to the move instructions, in Settings.
+ *
+ * Dismissing the banner used to close the only door to them: a pilot who reads "the app has
+ * moved", thinks "not now", and comes back an hour later ready to do it found nothing at all,
+ * and had to wait for the reminder to come round again. A move is exactly the kind of thing
+ * people choose their own moment for, so the instructions have to keep still.
+ *
+ * Only exists on a retired deployment — MIGRATION is null on the canonical origin, on a labelled
+ * channel and on localhost, and this renders nothing there.
+ */
+function renderMigrationCard() {
+  if (!MIGRATION) return '';
+  return `
+      <div class="settings-card">
+        <h3>${escapeHtml(t('migTitle'))}</h3>
+        <p class="settings-note">${escapeHtml(t('migIntro'))}</p>
+        <div class="button-row single">
+          <button class="primary" id="migrationSettingsBtn">${escapeHtml(t('migSettingsAction'))}</button>
+        </div>
+      </div>`;
+}
+
 function renderMigrationBanner() {
   if (!MIGRATION || migrationSnoozed()) return '';
   return `
@@ -2030,6 +2056,8 @@ function renderSettingsPage() {
         <h2>${t('settings')}</h2>
         <button id="closeSettings">${t('done')}</button>
       </div>
+
+      ${renderMigrationCard()}
 
       <div class="settings-card">
         <h3>${t('app')}</h3>
@@ -3259,6 +3287,7 @@ function attachEvents() {
     if (e.target.id === 'notesBackdrop') { state.showReleaseNotes = false; render(); }
   });
   document.querySelector('#migrationBannerBtn')?.addEventListener('click', () => { state.showMigrationSheet = true; render(); });
+  document.querySelector('#migrationSettingsBtn')?.addEventListener('click', () => { state.showMigrationSheet = true; render(); });
   document.querySelector('#closeMigration')?.addEventListener('click', () => { state.showMigrationSheet = false; render(); });
   document.querySelector('#migrationBackdrop')?.addEventListener('click', e => {
     if (e.target.id === 'migrationBackdrop') { state.showMigrationSheet = false; render(); }

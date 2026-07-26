@@ -9,7 +9,8 @@
       "Terrain has to be downloaded before it works offline — Settings → Terrain shows the size",
       "New: the detail sheet gives the height the routed glide arrives over the field with, and how far below you the limiting point sits — a glide sized for a col reaches the field with far more than the safety margin, which a bare ratio hides",
       "Settings now uses switches for its on/off options, and shows each setting's value beside its name",
-      "Terrain routing ships switched off, and turning it on asks first: it is experimental, it can be wrong, and the choice of trajectory and landing site stays yours. The Route block and the Terrain settings carry an Experimental tag wherever its figures are read"
+      "Terrain routing ships switched off, and turning it on asks first: it is experimental, it can be wrong, and the choice of trajectory and landing site stays yours. The Route block and the Terrain settings carry an Experimental tag wherever its figures are read",
+      "On the old address, Settings now keeps a permanent “How to move” entry. Dismissing the banner used to hide the instructions until the next reminder, which was no help to anyone who meant “not right now”"
     ],
     "fr": [
       "Nouveau : la finesse requise suit désormais un trajet dégagé du sol au lieu d'une ligne droite — un terrain au fond d'une vallée peut devenir atteignable, un terrain derrière une crête peut cesser de l'être",
@@ -18,7 +19,8 @@
       "Le relief doit être téléchargé pour fonctionner hors ligne — Réglages → Relief indique la taille",
       "Nouveau : la fiche indique la hauteur d'arrivée du trajet au-dessus du terrain, et de combien le point limitant se trouve sous vous — un trajet calé sur un col arrive bien au-dessus de la marge de sécurité, ce qu'une simple finesse masque",
       "Les réglages utilisent désormais des interrupteurs pour les options oui/non, et affichent la valeur de chaque réglage à côté de son nom",
-      "Le calcul en contournant le relief est désactivé par défaut, et l'activer demande confirmation : c'est expérimental, cela peut être faux, et le choix de la trajectoire et du terrain reste le vôtre. Le bloc Trajet et les réglages Relief portent une étiquette Expérimental partout où ces chiffres sont lus"
+      "Le calcul en contournant le relief est désactivé par défaut, et l'activer demande confirmation : c'est expérimental, cela peut être faux, et le choix de la trajectoire et du terrain reste le vôtre. Le bloc Trajet et les réglages Relief portent une étiquette Expérimental partout où ces chiffres sont lus",
+      "Sur l'ancienne adresse, les réglages gardent désormais une entrée permanente « Comment déménager ». Fermer le bandeau masquait les instructions jusqu'au rappel suivant, ce qui n'aidait personne ayant simplement voulu dire « pas maintenant »"
     ],
     "de": [
       "Neu: Die erforderliche Gleitzahl folgt jetzt einem vom Boden freien Pfad statt einer Luftlinie — ein Feld talabwärts kann erreichbar werden, eines hinter einem Grat nicht mehr",
@@ -27,7 +29,8 @@
       "Gelände muss heruntergeladen werden, damit es offline funktioniert — Einstellungen → Gelände zeigt die Größe",
       "Neu: Das Felddetail nennt die Ankunftshöhe des Pfades über dem Feld und wie weit die begrenzende Stelle unter dir liegt — ein auf einen Col ausgelegter Gleitpfad kommt weit über der Sicherheitsreserve an, was eine blosse Gleitzahl verbirgt",
       "Die Einstellungen verwenden jetzt Schalter für Ja/Nein-Optionen und zeigen den Wert jeder Einstellung neben ihrem Namen",
-      "Geländeführung ist ab Werk aus, und das Einschalten fragt vorher: sie ist experimentell, sie kann falsch sein, und die Wahl von Flugweg und Landefeld bleibt bei dir. Der Pfad-Block und die Gelände-Einstellungen tragen überall dort ein Experimentell-Etikett, wo diese Zahlen gelesen werden"
+      "Geländeführung ist ab Werk aus, und das Einschalten fragt vorher: sie ist experimentell, sie kann falsch sein, und die Wahl von Flugweg und Landefeld bleibt bei dir. Der Pfad-Block und die Gelände-Einstellungen tragen überall dort ein Experimentell-Etikett, wo diese Zahlen gelesen werden",
+      "Unter der alten Adresse behalten die Einstellungen jetzt dauerhaft einen Eintrag „Wie du umziehst“. Das Wegklicken des Banners versteckte die Anleitung bis zur nächsten Erinnerung, was niemandem half, der nur „nicht jetzt“ meinte"
     ]
   },
   {
