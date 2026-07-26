@@ -16,7 +16,7 @@
 
 import { chromium } from 'playwright';
 import http from 'node:http';
-import { readFile, mkdir, writeFile, cp, rm } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, cp, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -60,6 +60,17 @@ async function buildFixture() {
   }
   await cp(path.join(repo, 'icons'), path.join(ROOT, 'icons'), { recursive: true });
   await cp(terrainDir, path.join(ROOT, 'packs', '_terrain'), { recursive: true });
+  // The published index lists every tile in the Alps; a local build, or a partial download, has
+  // a handful. The app trusts the index and asks for what it names, so an index describing tiles
+  // this fixture does not serve produces 404s that look like app errors. Trim it to what is here.
+  const indexPath = path.join(ROOT, 'packs', '_terrain', 'index.json');
+  const index = JSON.parse(await readFile(indexPath, 'utf8'));
+  const present = new Set((await readdir(path.join(ROOT, 'packs', '_terrain')))
+    .filter(name => name.endsWith('.terr')).map(name => name.replace(/\.terr$/, '')));
+  index.tiles = index.tiles.filter(tile => present.has(tile.key));
+  index.tileCount = index.tiles.length;
+  index.totalBytes = index.tiles.reduce((sum, tile) => sum + (tile.bytes || 0), 0);
+  await writeFile(indexPath, JSON.stringify(index));
   // The browser asks for this unprompted; without it the page-error check reports a phantom 404.
   await writeFile(path.join(ROOT, 'favicon.ico'), Buffer.from([0, 0, 1, 0, 0, 0]));
 
@@ -141,7 +152,37 @@ check('terrain starts off, so the baseline is the straight line',
 
 await page.click('#settingsToggle');
 await page.waitForSelector('#terrainRouting');
-await page.check('#terrainRouting');
+
+// Switching it on is gated: the feature changes which fields the app calls reachable, so the
+// pilot is told what it is and what remains theirs before any of it takes effect.
+await page.click('#terrainRouting');
+await page.waitForSelector('#terrainConsentBackdrop', { timeout: 3000 });
+const consent = await page.$eval('#terrainConsentBackdrop', el => el.innerText);
+check('enabling terrain asks first', consent.length > 0);
+check('the warning says it is experimental and can be wrong',
+  /experimental/i.test(consent) && /wrong/i.test(consent));
+check('the warning leaves trajectory and landing choice with the pilot',
+  /solely responsible/i.test(consent) && /trajectory/i.test(consent) && /landing site/i.test(consent));
+check('the switch does not show "on" while the warning is up',
+  (await page.$eval('#terrainRouting', el => el.checked)) === false);
+check('nothing is routed until the warning is accepted',
+  (await page.evaluate(() => window.__mtcState.settings.terrainRouting)) === false);
+
+// Declining leaves it exactly as it was.
+await page.click('#terrainConsentCancel');
+await page.waitForTimeout(300);
+check('declining the warning leaves terrain off',
+  (await page.evaluate(() => window.__mtcState.settings.terrainRouting)) === false);
+
+await page.click('#terrainRouting');
+await page.waitForSelector('#terrainConsentAccept', { timeout: 3000 });
+await page.click('#terrainConsentAccept');
+await page.waitForTimeout(300);
+check('accepting the warning turns terrain on',
+  (await page.evaluate(() => window.__mtcState.settings.terrainRouting)) === true);
+check('the acknowledgement is remembered so the old default cannot come back silently',
+  (await page.evaluate(() => JSON.parse(localStorage.getItem('mtc-settings-v2')).terrainAcknowledged)) === true);
+
 await page.click('#settingsToggle');
 await page.waitForSelector('.field-row');
 await page.waitForFunction(() => document.querySelector('.field-glide.routed') !== null,

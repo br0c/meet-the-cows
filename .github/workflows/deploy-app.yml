@@ -18,6 +18,7 @@ on:
       # sits in the repo describing something the live site is not doing.
       - "deploy/**"
       - "scripts/apply_channel_branding.py"
+      - "scripts/hash_assets.py"
       - "scripts/fetch_pages_pack.py"
       - "scripts/make_pages_pack_index.py"
       - ".github/workflows/deploy-app.yml"
@@ -169,13 +170,16 @@ jobs:
             Cache-Control: no-store
           /service-worker.js
             Cache-Control: no-store
-          /config.js
-            Cache-Control: public, max-age=0, must-revalidate
-          /styles.css
-            Cache-Control: public, max-age=0, must-revalidate
-          /release-notes.json
-            Cache-Control: public, max-age=0, must-revalidate
+          # Everything below carries a content hash in its filename (scripts/hash_assets.py), so
+          # the URL cannot outlive the bytes and there is nothing to revalidate: a change ships a
+          # new address, and the old one is simply never asked for again.
+          /config.*.js
+            Cache-Control: public, max-age=31536000, immutable
+          /styles.*.css
+            Cache-Control: public, max-age=31536000, immutable
           /src/*
+            Cache-Control: public, max-age=31536000, immutable
+          /release-notes.json
             Cache-Control: public, max-age=0, must-revalidate
           HEADERS
 
@@ -201,6 +205,14 @@ jobs:
           # channel production's hash — a URL that then sat still while the channel icon changed
           # underneath it, which is the exact failure this is meant to prevent.
           python3 scripts/stamp_icon_urls.py --dir dist/site
+
+          # And after that, because hashing seals a file's bytes. The shell is no-store and always
+          # fresh; its code was not, and `max-age=0, must-revalidate` is revalidated by whichever
+          # edge node the request lands on. For minutes after a deploy those nodes disagree — the
+          # same URL returned two different bodies on alternating fetches — so a pilot could load
+          # a new index.html against the previous build's app.js, a pairing nothing detects at
+          # runtime. Content-addressed names make that combination unaskable rather than unlikely.
+          python3 scripts/hash_assets.py --dir dist/site
 
       # --- GitHub Pages ------------------------------------------------------------------------
       # The default target, and — once DEPLOY_TARGET is 'cloudflare' — also the retired origin.
