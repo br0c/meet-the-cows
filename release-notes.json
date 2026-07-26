@@ -8,7 +8,8 @@
       "Faster start on a weak connection: the app now waits at most a few seconds for the network before answering from what is already on the phone, and files that cannot have changed are not re-checked at all",
       "Terrain updates now reach the phone: rebuilt tiles are recognised by content, downloaded individually, and tiles fetched before this version are kept without re-downloading them",
       "New in Settings: Remove terrain, to free the space the tiles occupy",
-      "Settings now says “Show C fields” and “Show D fields”, both off, instead of “Hide C/D fields”, both on — the same behaviour, phrased like every other switch. Whatever you had chosen is kept"
+      "Settings now says “Show C fields” and “Show D fields”, both off, instead of “Hide C/D fields”, both on — the same behaviour, phrased like every other switch. Whatever you had chosen is kept",
+      "Removed the “Nearest distance” sort. The list is always ordered by the glide you would need, because proximity ranks a field you cannot reach above one you can; distance still has its own column on every row, and when there is no altitude to work from the list falls back to nearest first on its own"
     ],
     "fr": [
       "Correction : les aérodromes importés sans code publié affichaient une clé interne du type IT_ANDREA_BOZZO_44P864_7P407 à la place d'un identifiant. Ils n'affichent désormais aucun code, dans la liste, sur la fiche du terrain et dans le fichier de points de virage exporté",
@@ -16,7 +17,8 @@
       "Démarrage plus rapide avec une connexion faible : l'application n'attend plus le réseau que quelques secondes avant de répondre avec ce qui est déjà dans le téléphone, et les fichiers qui ne peuvent pas avoir changé ne sont plus revérifiés",
       "Les mises à jour du relief atteignent désormais le téléphone : les tuiles reconstruites sont reconnues à leur contenu, téléchargées individuellement, et les tuiles récupérées avant cette version sont conservées sans nouveau téléchargement",
       "Nouveau dans les Réglages : Supprimer le relief, pour libérer l'espace occupé par les tuiles",
-      "Les Réglages proposent désormais « Afficher les terrains C » et « Afficher les terrains D », tous deux désactivés, au lieu de « Masquer les terrains C/D », tous deux activés — même comportement, formulé comme les autres options. Votre choix précédent est conservé"
+      "Les Réglages proposent désormais « Afficher les terrains C » et « Afficher les terrains D », tous deux désactivés, au lieu de « Masquer les terrains C/D », tous deux activés — même comportement, formulé comme les autres options. Votre choix précédent est conservé",
+      "Le tri « Distance la plus courte » a été retiré. La liste est toujours classée par la finesse qu'il vous faudrait, car la proximité place un terrain inatteignable au-dessus d'un terrain atteignable ; la distance conserve sa colonne sur chaque ligne, et sans altitude connue la liste revient d'elle-même au plus proche d'abord"
     ],
     "de": [
       "Behoben: Ohne veröffentlichten Code importierte Flugplätze zeigten dort, wo eine Kennung stehen sollte, einen internen Schlüssel wie IT_ANDREA_BOZZO_44P864_7P407. Sie zeigen nun gar keinen Code mehr – in der Liste, auf der Platzseite und in der exportierten Wegpunktdatei",
@@ -24,7 +26,8 @@
       "Schnellerer Start bei schwacher Verbindung: Die App wartet höchstens ein paar Sekunden auf das Netz, bevor sie mit dem antwortet, was schon auf dem Telefon liegt — und Dateien, die sich nicht geändert haben können, werden gar nicht mehr nachgeprüft",
       "Gelände-Updates erreichen jetzt das Telefon: Neu gebaute Kacheln werden am Inhalt erkannt und einzeln geladen; vor dieser Version geladene Kacheln bleiben ohne erneuten Download erhalten",
       "Neu in den Einstellungen: Gelände entfernen, um den belegten Speicher freizugeben",
-      "Die Einstellungen zeigen jetzt „C-Felder anzeigen“ und „D-Felder anzeigen“, beide aus, statt „C-/D-Felder ausblenden“, beide ein — gleiches Verhalten, formuliert wie jeder andere Schalter. Ihre bisherige Wahl bleibt erhalten"
+      "Die Einstellungen zeigen jetzt „C-Felder anzeigen“ und „D-Felder anzeigen“, beide aus, statt „C-/D-Felder ausblenden“, beide ein — gleiches Verhalten, formuliert wie jeder andere Schalter. Ihre bisherige Wahl bleibt erhalten",
+      "Die Sortierung „Kürzeste Entfernung“ entfällt. Die Liste ist immer nach der erforderlichen Gleitzahl geordnet, denn Nähe stellt ein unerreichbares Feld über ein erreichbares; die Entfernung behält ihre eigene Spalte in jeder Zeile, und ohne bekannte Höhe fällt die Liste von selbst auf „nächstes zuerst“ zurück"
     ]
   },
   {

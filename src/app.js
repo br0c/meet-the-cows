@@ -68,7 +68,6 @@ const DEFAULT_SETTINGS = {
   safetyMarginM: 250,
   showC: false,
   showD: false,
-  sortMode: 'glide',
   // Simulated position for testing on the ground. Deliberately not persisted as "manual
   // altitude" any more: with terrain routing, a plausible altitude at the wrong place tells you
   // nothing, and every interesting case is somewhere you are not standing.
@@ -226,8 +225,7 @@ const STRINGS = {
     downloadMedia: 'Download / verify media & docs', reloadPack: 'Reload pack',
     exportCup: n => `Export CUP for SeeYou (${n} fields)`,
     cupNote: 'Waypoint file for SeeYou Navigator and other nav apps. Brief a field here, then navigate to it in SeeYou.',
-    nearestList: 'Nearest list', sort: 'Sort',
-    sortGlide: 'Best glide ratio', sortDistance: 'Nearest distance',
+    nearestList: 'Nearest list',
     safetyMargin: 'Safety arrival margin, m',
     showC: 'Show C fields', showD: 'Show D fields',
     cdNote: 'C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.',
@@ -393,8 +391,7 @@ const STRINGS = {
     downloadMedia: 'Télécharger / vérifier médias & docs', reloadPack: 'Recharger le pack',
     exportCup: n => `Exporter CUP pour SeeYou (${n} terrains)`,
     cupNote: 'Fichier de points de virage pour SeeYou Navigator et autres apps de nav. Consultez un terrain ici, puis naviguez-y dans SeeYou.',
-    nearestList: 'Liste des plus proches', sort: 'Tri',
-    sortGlide: 'Meilleure finesse requise', sortDistance: 'Distance la plus courte',
+    nearestList: 'Liste des plus proches',
     safetyMargin: "Marge d'arrivée de sécurité, m",
     showC: 'Afficher les terrains C', showD: 'Afficher les terrains D',
     cdNote: "Les terrains C et D sont masqués par défaut. Ils sont difficiles et potentiellement dangereux — recommandés uniquement en dernier recours d'urgence.",
@@ -561,8 +558,7 @@ const STRINGS = {
     downloadMedia: 'Medien & Dokumente laden / prüfen', reloadPack: 'Paket neu laden',
     exportCup: n => `CUP für SeeYou exportieren (${n} Felder)`,
     cupNote: 'Wegpunktdatei für SeeYou Navigator und andere Navi-Apps. Feld hier briefen, dann in SeeYou anfliegen.',
-    nearestList: 'Nächstgelegene Felder', sort: 'Sortierung',
-    sortGlide: 'Beste erforderliche Gleitzahl', sortDistance: 'Kürzeste Entfernung',
+    nearestList: 'Nächstgelegene Felder',
     safetyMargin: 'Sicherheits-Ankunftsreserve, m',
     showC: 'C-Felder anzeigen', showD: 'D-Felder anzeigen',
     cdNote: 'C- und D-Felder sind standardmäßig ausgeblendet. Sie sind schwierig und möglicherweise gefährlich — nur als letzte Notfalloption empfohlen.',
@@ -1176,14 +1172,19 @@ function computeRows() {
     return true;
   });
   rows = rows.map(applyTerrainRoute);
+  // One order, because there is one question: what can you reach, best first. A "nearest
+  // distance" mode used to sit beside this and was retired — sorting by proximity puts a field
+  // 2 km away needing a glide of 80 above one 20 km away you can actually make, which is the
+  // wrong end of the list to be reading when it matters. Distance still has its own column on
+  // every row, so nothing is hidden; it just stops deciding the order.
+  //
+  // Fields with no answer — no altitude yet, or below the safety margin — sink to the bottom and
+  // fall back to distance among themselves, which is what the retired mode degenerated to anyway.
   rows.sort((a, b) => {
-    if (state.settings.sortMode === 'glide') {
-      if (a.requiredGlideRatio === null && b.requiredGlideRatio === null) return a.distanceM - b.distanceM;
-      if (a.requiredGlideRatio === null) return 1;
-      if (b.requiredGlideRatio === null) return -1;
-      return a.requiredGlideRatio - b.requiredGlideRatio;
-    }
-    return a.distanceM - b.distanceM;
+    if (a.requiredGlideRatio === null && b.requiredGlideRatio === null) return a.distanceM - b.distanceM;
+    if (a.requiredGlideRatio === null) return 1;
+    if (b.requiredGlideRatio === null) return -1;
+    return a.requiredGlideRatio - b.requiredGlideRatio;
   });
   state.computedRows = rows;
 }
@@ -2221,15 +2222,6 @@ function renderSettingsPage() {
 
       <div class="settings-card">
         <h3>${t('nearestList')}</h3>
-        <div class="set-row">
-          <div class="set-top">
-            <label for="sortMode">${t('sort')}</label>
-            <select id="sortMode" class="set-control">
-              <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>${t('sortGlide')}</option>
-              <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>${t('sortDistance')}</option>
-            </select>
-          </div>
-        </div>
         <div class="set-row">
           <div class="set-top">
             <label for="safetyMarginM">${t('safetyMargin')}</label>
@@ -3448,11 +3440,6 @@ function attachEvents() {
     await loadSelectedPacks();
     render();
   }));
-  document.querySelector('#sortMode')?.addEventListener('change', e => {
-    state.settings.sortMode = e.target.value;
-    saveSettings();
-    render();
-  });
   document.querySelector('#safetyMarginM')?.addEventListener('change', e => {
     state.settings.safetyMarginM = Number(e.target.value);
     saveSettings();

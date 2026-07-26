@@ -95,7 +95,7 @@ await context.addInitScript(([ids, scene, version]) => {
   localStorage.setItem('mtc-last-seen-version', version);
   localStorage.setItem('mtc-settings-v2', JSON.stringify({
     packIds: ids, language: 'en', safetyMarginM: 250, showC: true, showD: true,
-    sortMode: 'glide', testMode: false,
+    testMode: false,
     terrainRouting: true, terrainAcknowledged: true, terrainClearanceM: 200,
   }));
 

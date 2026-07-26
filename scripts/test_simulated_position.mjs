@@ -59,7 +59,7 @@ const browser=await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath
 const ctx=await browser.newContext({locale:'en-GB'});
 // No geolocation permission at all: test mode must work with no GPS whatsoever.
 await ctx.addInitScript(()=>localStorage.setItem('mtc-settings-v2',JSON.stringify({
-  packIds:['alps-test'],language:'en',safetyMarginM:250,showC:true,showD:true,sortMode:'glide',
+  packIds:['alps-test'],language:'en',safetyMarginM:250,showC:true,showD:true,
   testMode:false,testLatitude:null,testLongitude:null,testAltitudeM:2500,testLabel:'',
 })));
 // Stub the geocoder so the test does not depend on a third party being up.

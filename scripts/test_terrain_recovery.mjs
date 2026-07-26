@@ -140,7 +140,7 @@ async function open() {
   const context = await browser.newContext({ locale: 'en-GB' });
   await context.addInitScript(() => localStorage.setItem('mtc-settings-v2', JSON.stringify({
     packIds: ['alps-test'], language: 'en', safetyMarginM: 250, showC: true, showD: true,
-    sortMode: 'glide', testMode: true, testLatitude: 45.9356, testLongitude: 7.6304,
+    testMode: true, testLatitude: 45.9356, testLongitude: 7.6304,
     testAltitudeM: 2800, testLabel: 'Cervinia', terrainRouting: false,
     terrainAcknowledged: false, terrainClearanceM: 200,
   })));
