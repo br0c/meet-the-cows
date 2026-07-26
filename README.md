@@ -192,6 +192,12 @@ Localization covers the whole app: menus and status text, field detail labels, w
 the field notes themselves. The exported SeeYou CUP file is generated in the language you have
 selected (its filename is suffixed with the language code).
 
+The landing page at [meetthecows.org](https://meetthecows.org) is English and French, each on its
+own URL (`/` and `/fr/`) with `hreflang` alternates and a switcher in the header. A browser asking
+for French is *offered* the French page rather than sent to it: `Accept-Language` is set for the
+browser's reasons, not the reader's, and a page that moves under someone who deliberately opened
+the English one is a bug they cannot undo.
+
 ## Community contributions
 
 Pilots can crowd-source field updates from inside the app: search for a field, open it, and

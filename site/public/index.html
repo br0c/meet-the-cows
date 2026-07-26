@@ -7,7 +7,12 @@
     <meta name="description" content="A free offline cockpit aid for glider pilots in the Alps: nearby outlanding fields and airfields sorted by the glide ratio you would actually need, with notes, photos and official VAC charts. Works with no signal." />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="canonical" href="https://meetthecows.org/" />
+    <link rel="alternate" hreflang="en" href="https://meetthecows.org/" />
+    <link rel="alternate" hreflang="fr" href="https://meetthecows.org/fr/" />
+    <link rel="alternate" hreflang="x-default" href="https://meetthecows.org/" />
     <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:locale:alternate" content="fr_FR" />
     <meta property="og:title" content="Meet the Cows — outlanding fields for glider pilots" />
     <meta property="og:description" content="Nearby outlanding fields sorted by the glide ratio you would actually need. Free, offline, no account." />
     <meta property="og:url" content="https://meetthecows.org/" />
@@ -22,9 +27,15 @@
           <a href="#install">Install</a>
           <a href="#data">Data</a>
           <a href="#contribute">Contribute</a>
+          <a class="lang" href="fr/" hreflang="fr" lang="fr">Français</a>
         </nav>
       </div>
     </header>
+
+    <p class="langbar" id="langbar" hidden>
+      <span>Cette page existe aussi en français.</span>
+      <a href="fr/" hreflang="fr" lang="fr">Lire en français →</a>
+    </p>
 
     <div class="wrap">
       <div class="hero">
@@ -158,9 +169,18 @@
           <a href="https://app.meetthecows.org">Open the app</a>
           <a href="https://github.com/br0c/meet-the-cows">Source code</a>
           <a href="https://github.com/br0c/meet-the-cows/blob/main/DATA-LICENCE.md">Data licence</a>
+          <a href="fr/" hreflang="fr" lang="fr">Français</a>
         </div>
         <div>Free for pilots and clubs. Data © its respective sources.</div>
       </div>
     </footer>
+    <script>
+      // Offer the French page to browsers that ask for French, and only offer it. No redirect:
+      // Accept-Language is set for the browser's reasons, not the reader's, and a page that
+      // moves under someone who deliberately opened the English one is a bug they cannot undo.
+      if (navigator.languages && navigator.languages.some(l => l.toLowerCase().startsWith('fr'))) {
+        document.getElementById('langbar').hidden = false;
+      }
+    </script>
   </body>
 </html>

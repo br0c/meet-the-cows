@@ -1,6 +1,6 @@
 [
   {
-    "version": "0.9.0-beta",
+    "version": "0.8.4-beta",
     "date": "2026-07-25",
     "en": [
       "New: the required glide ratio now follows a path that stays clear of the ground instead of a straight line — a field down a valley can become reachable, and one behind a ridge can stop being",

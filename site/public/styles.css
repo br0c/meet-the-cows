@@ -50,9 +50,26 @@ header.bar { border-bottom: 1px solid var(--line); background: var(--surface); }
 .bar-in { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; flex-wrap: wrap; }
 .logo { display: flex; align-items: center; gap: 9px; font-weight: 750; font-size: 17px; letter-spacing: -.01em; }
 .logo img { width: 24px; height: 24px; }
-.bar nav { display: flex; gap: 18px; font-size: 14.5px; flex-wrap: wrap; }
+.bar nav { display: flex; gap: 18px; font-size: 14.5px; flex-wrap: wrap; align-items: center; }
 .bar nav a { color: var(--ink-2); text-decoration: none; }
 .bar nav a:hover { color: var(--accent); }
+/* The other language, boxed so it reads as a switch rather than another section link. */
+.bar nav a.lang {
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px;
+  font-size: 13.5px; font-weight: 650;
+}
+.bar nav a.lang:hover { border-color: var(--accent); }
+
+/* Shown by script only to browsers that ask for French. An offer, never a redirect: a page that
+   moves under someone who deliberately opened the English one is a bug they cannot undo. */
+.langbar {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline;
+  max-width: 1060px; margin: 14px auto 0; padding: 10px 22px;
+  font-size: 14.5px; color: var(--ink-2);
+}
+.langbar a { font-weight: 650; text-decoration: none; }
+.langbar a:hover { text-decoration: underline; }
+.langbar[hidden] { display: none; }
 
 .hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: 46px; align-items: center; padding: 52px 0 44px; }
 @media (max-width: 860px) { .hero { grid-template-columns: 1fr; gap: 30px; padding: 34px 0 30px; } }
