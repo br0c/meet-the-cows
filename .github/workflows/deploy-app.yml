@@ -1,4 +1,4 @@
-name: Deploy app to Pages
+name: Deploy app
 
 on:
   push:
@@ -18,6 +18,7 @@ on:
       # sits in the repo describing something the live site is not doing.
       - "deploy/**"
       - "scripts/apply_channel_branding.py"
+      - "scripts/hash_assets.py"
       - "scripts/fetch_pages_pack.py"
       - "scripts/make_pages_pack_index.py"
       - ".github/workflows/deploy-app.yml"
@@ -103,14 +104,14 @@ jobs:
             --base-url "${PAGES_BASE_URL}" \
             --output data/packs
 
-      - name: Assemble Pages site
+      - name: Assemble site
         run: |
           mkdir -p dist/site
 
           cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json config.js dist/site/
           if [ -d icons ]; then cp -R icons dist/site/icons; fi
           mkdir -p dist/site/src
-          cp src/app.js dist/site/src/app.js
+          cp src/app.js src/terrain.js src/glide-worker.js dist/site/src/
 
           # All pack dirs + shared media (_shared) + packs.json — only when packs are served
           # from this origin; otherwise the app reads them from the data host.
@@ -155,11 +156,12 @@ jobs:
           # service worker and would have survived that, but a first install has no service
           # worker and reads exactly these files to decide what the app is called and which icon
           # it wears.
-          # These rules do apply — meet-the-cows.pages.dev returns max-age=0 — but a Cloudflare
-          # cache/page rule scoped to the app.meetthecows.org hostname currently rewrites them to
-          # max-age=14400 at the edge, so the service worker's own 'reload' and 'no-cache' fetches
-          # are what actually guarantee freshness there. Both belong here: the rules are correct
-          # and host-independent, the worker is the one that cannot be overridden from a dashboard.
+          # These rules reach the edge now — app.meetthecows.org answers no-store for / and for the
+          # manifest. For a while it did not: a zone cache rule on that hostname rewrote them to
+          # max-age=14400, which is why the service worker also fetches the shell with 'reload' and
+          # revalidates with 'no-cache'. That belt stays whatever the braces are doing: these
+          # headers are host-independent and correct, and the worker is the half that cannot be
+          # overridden from a dashboard by someone who has forgotten this file exists.
           cat > dist/site/_headers <<'HEADERS'
           /
             Cache-Control: no-store
@@ -169,13 +171,16 @@ jobs:
             Cache-Control: no-store
           /service-worker.js
             Cache-Control: no-store
-          /config.js
-            Cache-Control: public, max-age=0, must-revalidate
-          /styles.css
-            Cache-Control: public, max-age=0, must-revalidate
-          /release-notes.json
-            Cache-Control: public, max-age=0, must-revalidate
+          # Everything below carries a content hash in its filename (scripts/hash_assets.py), so
+          # the URL cannot outlive the bytes and there is nothing to revalidate: a change ships a
+          # new address, and the old one is simply never asked for again.
+          /config.*.js
+            Cache-Control: public, max-age=31536000, immutable
+          /styles.*.css
+            Cache-Control: public, max-age=31536000, immutable
           /src/*
+            Cache-Control: public, max-age=31536000, immutable
+          /release-notes.json
             Cache-Control: public, max-age=0, must-revalidate
           HEADERS
 
@@ -201,6 +206,14 @@ jobs:
           # channel production's hash — a URL that then sat still while the channel icon changed
           # underneath it, which is the exact failure this is meant to prevent.
           python3 scripts/stamp_icon_urls.py --dir dist/site
+
+          # And after that, because hashing seals a file's bytes. The shell is no-store and always
+          # fresh; its code was not, and `max-age=0, must-revalidate` is revalidated by whichever
+          # edge node the request lands on. For minutes after a deploy those nodes disagree — the
+          # same URL returned two different bodies on alternating fetches — so a pilot could load
+          # a new index.html against the previous build's app.js, a pairing nothing detects at
+          # runtime. Content-addressed names make that combination unaskable rather than unlikely.
+          python3 scripts/hash_assets.py --dir dist/site
 
       # --- GitHub Pages ------------------------------------------------------------------------
       # The default target, and — once DEPLOY_TARGET is 'cloudflare' — also the retired origin.
@@ -229,43 +242,16 @@ jobs:
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 
-      # --- Cloudflare Pages (set repo variable DEPLOY_TARGET=cloudflare to switch over) -------
-      # Direct upload, not a git-connected build: the heavy pack build stays here in Actions
-      # with its caches and secrets, and Cloudflare only receives the finished directory.
-      # --branch drives the URL: the production branch serves the custom domain, every other
-      # branch gets its own <branch>.<project>.pages.dev alias — the experimental deployments.
-      - name: Deploy to Cloudflare Pages
-        id: cf
-        if: vars.DEPLOY_TARGET == 'cloudflare'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          PROJECT="${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}"
-          # Create the direct-upload project on first run. A create failure is NOT automatically
-          # harmless: on accounts where Pages project creation is disabled (Pages is being folded
-          # into Workers) it fails with API error 8000000, and blindly continuing produced a
-          # confusing "project does not exist" error two steps later. Distinguish the cases.
-          if ! npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main; then
-            if npx --yes wrangler@latest pages project list 2>/dev/null | grep -q "$PROJECT"; then
-              echo "project '$PROJECT' already exists — continuing"
-            else
-              echo "::error::Pages project '$PROJECT' does not exist and could not be created."
-              exit 1
-            fi
-          fi
-          npx --yes wrangler@latest pages deploy dist/site \
-            --project-name "$PROJECT" \
-            --branch "${{ github.ref_name }}" \
-            --commit-dirty=true
-
       # --- Cloudflare Workers (static assets) --------------------------------------------------
       # Both branches, one config, name chosen per branch — see deploy/wrangler.toml for why they
       # must not diverge. main -> meet-the-cows-app (app.meetthecows.org),
       # dev -> meet-the-cows-next (next.meetthecows.org).
       #
-      # The Pages deploy below still runs for main while app.meetthecows.org is attached to the
-      # Pages project. Once the custom domain moves to the Worker, the Pages step goes.
+      # There was a Cloudflare Pages deploy here too, from the period when app.meetthecows.org was
+      # still attached to a Pages project and the Worker only served next. Both custom domains are
+      # on Workers now — app.meetthecows.org answers 404 for an unknown path, which is the
+      # Worker's not_found_handling, where the Pages project returned the shell with a 200 — so
+      # uploading the same directory to Pages as well only produced a second copy nothing served.
       - name: Deploy to Cloudflare Workers
         if: vars.DEPLOY_TARGET == 'cloudflare'
         env:

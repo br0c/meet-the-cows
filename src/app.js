@@ -1,4 +1,6 @@
-const APP_VERSION = '0.8.3-beta';
+import { TerrainStore, terrainSupported, terrainPaths, tileKeysForBounds } from './terrain.js';
+
+const APP_VERSION = '0.8.4-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -67,9 +69,40 @@ const DEFAULT_SETTINGS = {
   hideC: true,
   hideD: true,
   sortMode: 'glide',
-  useManualAltitude: false,
-  manualAltitudeM: 2500,
+  // Simulated position for testing on the ground. Deliberately not persisted as "manual
+  // altitude" any more: with terrain routing, a plausible altitude at the wrong place tells you
+  // nothing, and every interesting case is somewhere you are not standing.
+  testMode: false,
+  testLatitude: null,
+  testLongitude: null,
+  testAltitudeM: 2500,
+  testLabel: '',
+  // Off until the pilot turns it on and accepts what it is. Terrain routing changes which fields
+  // the app calls reachable, from data that is coarse and a solver that is new — that is not a
+  // thing to switch on for someone while they are not looking.
+  terrainRouting: false,
+  terrainAcknowledged: false,
+  terrainClearanceM: 200,
 };
+
+// How far above the ground a routed glide is required to stay. 200 m is the default because it
+// is roughly what it takes to turn away from rising ground and still have a decision left; the
+// floor is 100 m because below that the DEM's own error and the grid's 280 m cells are the
+// bigger number, and a clearance the data cannot support is a false promise.
+const TERRAIN_CLEARANCE_MIN_M = 100;
+const TERRAIN_CLEARANCE_MAX_M = 500;
+const TERRAIN_CLEARANCE_STEP_M = 50;
+// Fields to route per solve. Beyond the nearest ~80 the answer is academic — nobody is choosing
+// their 81st-nearest option — and every extra target costs a path reconstruction.
+const TERRAIN_MAX_TARGETS = 80;
+// Re-solve when the glider has moved this far or climbed/descended this much. A wavefront per
+// GPS tick would be pointless: neither the terrain nor the answer changes over 300 m.
+const TERRAIN_RESOLVE_DISTANCE_M = 400;
+const TERRAIN_RESOLVE_ALTITUDE_M = 75;
+// Below this fraction of the working area covered by tiles, routed answers are treated as
+// advisory: a field with no route is reported as un-checked rather than as unreachable, because
+// the missing route may only mean missing ground data.
+const TERRAIN_TRUST_COVERAGE = 0.98;
 
 // Languages the app UI and pack notes are translated into. 'auto' follows the device.
 const SUPPORTED_LANGS = ['en', 'fr', 'de'];
@@ -193,30 +226,85 @@ const STRINGS = {
     nearestList: 'Nearest list', sort: 'Sort',
     sortGlide: 'Best glide ratio', sortDistance: 'Nearest distance',
     safetyMargin: 'Safety arrival margin, m',
-    useManualAlt: 'Use manual altitude for testing', manualAlt: 'Manual altitude, m',
-    manualAltNote: 'Manual altitude is only for ground testing. In flight, leave it off and use phone GPS altitude.',
     hideC: 'Hide C fields', hideD: 'Hide D fields',
     cdNote: 'C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.',
+    terrain: 'Terrain',
+    terrainRouting: 'Fly the glide around terrain',
+    terrainNote: 'With terrain on, the required glide follows a path that stays clear of the ground instead of a straight line. A field down a valley can become reachable; one behind a ridge can stop being.',
+    terrainClearance: 'Terrain clearance',
+    terrainClearanceNote: c => `Routed glides stay at least ${c} m above the ground. Raise it for more room to turn away from rising ground; lower it to reach further.`,
+    terrainAttribution: 'Elevation: Copernicus DEM (ESA). Col and pass names: © OpenStreetMap contributors.',
+    terrainUnsupported: 'This browser cannot read terrain data. Glide stays straight-line.',
+    terrainMissing: 'No terrain data is published for this deployment. Glide stays straight-line.',
+    terrainCoverage: p => `${p}% of the working area has terrain data`,
+    terrainPartial: 'Terrain data is incomplete here, so fields without a route keep their straight-line glide.',
+    downloadTerrain: 'Download terrain',
+    terrainTiles: (n, size) => `${n} tiles · ${size}`,
+    terrainCachedCount: (done, total) => `${done} of ${total} tiles offline`,
+    terrainSolving: 'working out routes…',
+    route: 'Route',
+    routeLength: 'Route',
+    routeViaChip: name => `via ${name}`,
+    routeViaPlain: 'around terrain',
+    routeLimitedByCol: (name, elev, dist) => `Tightest over ${name}, ${elev}, ${dist} away.`,
+    cancel: 'Cancel',
+    terrainExperimental: 'Experimental',
+    terrainConsentTitle: 'Experimental feature',
+    terrainConsentBody: 'Terrain-routed glide is experimental and can be wrong. It changes which '
+      + 'fields this app calls reachable. You remain solely responsible for your choice of '
+      + 'trajectory and of landing site.',
+    terrainConsentDetail: 'The path is arithmetic on a coarse elevation grid — about 92 m per '
+      + 'cell — and knows nothing of wind, sink, airspace, obstacles or your aircraft. It is not '
+      + 'a route to fly and not a clearance to fly it. Cross-check every figure against your own '
+      + 'judgement, your navigation tools and what you can see.',
+    terrainConsentAccept: 'I understand — enable',
+    routeCrossing: (above, clears) => `${above} below you now; the glide clears it by ${clears}.`,
+    routeAbove: above => `${above} below you now.`,
+    routeProfileKey: c => `Ground along the route, the ${c} m clearance line above it, and the glide at the ratio shown — the two meet at the marked point.`,
+    routeProfileAlt: (dist, ratio) => `Route profile over ${dist}, glide drawn at ${ratio} to 1`,
+    routeStraight: 'Straight line — nothing in the way.',
+    routeAround: (dist, legs) => `Around terrain: ${dist} in ${legs} leg${legs === 1 ? '' : 's'}.`,
+    routeVersusDirect: d => `Direct line is ${d}.`,
+    routeLimitedBy: (elev, dist, bearing) => `Tightest over ground at ${elev}, ${dist} away on ${bearing}.`,
+    routeLimitedArrival: 'Tightest on arrival at the field.',
+    routeUnchecked: 'Not terrain-checked — straight-line glide shown.',
+    routeBlocked: 'No route clear of terrain from this altitude.',
     colName: 'Name', colDist: 'Dist', colGlide: 'Glide', colDiff: 'Diff',
     fieldsLoaded: 'Fields', noFields: 'No fields loaded.',
     waitingGps: 'Waiting for GPS. Enable location permission.',
     airfield: 'Airfield', field: 'Field', outlanding: 'Outlanding',
     footerNote: 'Not for primary navigation. Straight-line distance/glide only: no wind, sink, terrain clearance or airspace.',
+    footerNoteTerrain: 'Not for primary navigation. Glide is routed over terrain with a clearance margin; distance is straight-line. No wind, sink or airspace.',
     updateBanner: '🔄 New field data available.', update: 'Update',
     sampleWarning: 'Sample data only — do not use this pack in flight. Run the importer to build the real Guide des Aires pack.',
     gpsError: e => `GPS error: ${e}.`,
-    altMissingWarning: 'GPS altitude is missing, so required glide ratio cannot be computed. Add a manual altitude in Settings for ground testing.',
+    altMissingWarning: 'GPS altitude is missing, so required glide ratio cannot be computed. Settings has a testing mode for checking figures on the ground.',
     close: 'Close', bearing: 'Bearing', distance: 'Distance', reqGlide: 'Req glide',
-    deltaSafe: 'Δsafe', elevation: 'Elevation', runway: 'Runway', frequency: 'Frequency',
+    arrivalHeight: 'Arrival', deltaSafe: 'Δsafe', elevation: 'Elevation', runway: 'Runway', frequency: 'Frequency',
     glideNotShown: r => `Glide not shown: ${r}.`,
     notes: 'Notes', noNotes: 'No notes.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'No media attached.', openPdf: 'Open PDF',
     source: 'Source', imported: 'imported', unknown: 'unknown',
-    altMissing: 'missing', altManual: 'manual',
+    gpsSimulated: 'Simulated position — GPS is off',
+    testing: 'Testing',
+    testNote: 'Puts the app at a chosen place and altitude so glide figures can be checked on the ground. Needs a connection, stores nothing, and overrides GPS until you stop it.',
+    testPlace: 'Place',
+    testPlacePlaceholder: 'Search a town, airfield, peak…',
+    testSearching: 'Searching…',
+    testAltitude: 'Altitude',
+    testStop: 'Stop testing',
+    testNoResults: 'Nothing found for that.',
+    testSearchFailed: 'Search failed — this needs a connection.',
+    testUnnamed: 'Chosen position',
+    testAttribution: 'Place search by Photon, using OpenStreetMap data.',
+    testBanner: (where, altitude) => `⚠︎ Simulated position: ${where}, ${altitude}. Not your real position.`,
+    altSimulated: 'simulated',
+    altMissing: 'missing',
     gpsOk: acc => `OK ±${acc}m`, gpsErr: 'Error',
     gpsIdle: 'idle', gpsRequesting: 'requesting', gpsUnavailable: 'unavailable',
     reasonGpsAlt: 'GPS altitude missing', reasonFieldElev: 'Field elevation missing',
     reasonBelowSafe: m => `Below safe arrival by ${m} m`,
+    reasonTerrainBlocked: 'No route clear of terrain',
     revealConfirm: (label, severity) => `Difficulty ${label} fields are ${severity} and possibly dangerous — last-resort emergency options only, not recommended. Show them in the nearest list anyway?`,
     sevDifficult: 'difficult', sevVeryDifficult: 'very difficult',
     noPackYet: 'No pack loaded yet.', noCacheApi: 'Cache Storage is not available in this browser.',
@@ -303,30 +391,86 @@ const STRINGS = {
     nearestList: 'Liste des plus proches', sort: 'Tri',
     sortGlide: 'Meilleure finesse requise', sortDistance: 'Distance la plus courte',
     safetyMargin: "Marge d'arrivée de sécurité, m",
-    useManualAlt: 'Altitude manuelle (test au sol)', manualAlt: 'Altitude manuelle, m',
-    manualAltNote: "L'altitude manuelle sert uniquement aux tests au sol. En vol, désactivez-la et utilisez l'altitude GPS du téléphone.",
     hideC: 'Masquer les terrains C', hideD: 'Masquer les terrains D',
     cdNote: "Les terrains C et D sont masqués par défaut. Ils sont difficiles et potentiellement dangereux — recommandés uniquement en dernier recours d'urgence.",
+    terrain: 'Relief',
+    terrainRouting: 'Calculer la finesse en contournant le relief',
+    terrainNote: "Avec le relief activé, la finesse requise suit un trajet qui reste dégagé du sol au lieu d'une ligne droite. Un terrain au fond d'une vallée peut devenir atteignable ; un terrain derrière une crête peut cesser de l'être.",
+    terrainClearance: 'Garde au sol',
+    terrainClearanceNote: c => `Les trajets calculés restent au moins ${c} m au-dessus du sol. Augmentez pour garder de la marge face au relief montant ; diminuez pour aller plus loin.`,
+    terrainAttribution: 'Altitudes : Copernicus DEM (ESA). Noms des cols : © contributeurs OpenStreetMap.',
+    terrainUnsupported: 'Ce navigateur ne peut pas lire les données de relief. Finesse à vol d\'oiseau.',
+    terrainMissing: "Aucune donnée de relief publiée pour ce déploiement. Finesse à vol d'oiseau.",
+    terrainCoverage: p => `${p} % de la zone de travail dispose de données de relief`,
+    terrainPartial: "Les données de relief sont incomplètes ici : les terrains sans trajet gardent leur finesse à vol d'oiseau.",
+    downloadTerrain: 'Télécharger le relief',
+    terrainTiles: (n, size) => `${n} tuiles · ${size}`,
+    terrainCachedCount: (done, total) => `${done} sur ${total} tuiles hors ligne`,
+    terrainSolving: 'calcul des trajets…',
+    route: 'Trajet',
+    routeLength: 'Trajet',
+    routeViaChip: name => `par ${name}`,
+    routeViaPlain: 'contourne le relief',
+    routeLimitedByCol: (name, elev, dist) => `Point critique au-dessus de ${name}, ${elev}, à ${dist}.`,
+    cancel: 'Annuler',
+    terrainExperimental: 'Expérimental',
+    terrainConsentTitle: 'Fonction expérimentale',
+    terrainConsentBody: 'Le calcul de finesse en contournant le relief est expérimental et peut '
+      + 'être erroné. Il change les terrains que cette application déclare atteignables. Vous '
+      + 'restez seul responsable du choix de votre trajectoire et de votre terrain d\'atterrissage.',
+    terrainConsentDetail: "Le trajet n'est qu'un calcul sur une grille d'altitudes grossière — "
+      + "environ 92 m par maille — qui ignore le vent, les descendances, l'espace aérien, les "
+      + "obstacles et votre planeur. Ce n'est ni une route à suivre ni une autorisation de la "
+      + 'suivre. Recoupez chaque chiffre avec votre propre jugement, vos moyens de navigation et '
+      + 'ce que vous voyez.',
+    terrainConsentAccept: "J'ai compris — activer",
+    routeCrossing: (above, clears) => `${above} sous vous ; le trajet passe ${clears} au-dessus.`,
+    routeAbove: above => `${above} sous vous.`,
+    routeProfileKey: c => `Le relief le long du trajet, la ligne de garde de ${c} m au-dessus, et la pente à la finesse affichée — les deux se rejoignent au point marqué.`,
+    routeProfileAlt: (dist, ratio) => `Profil du trajet sur ${dist}, pente tracée à ${ratio} pour 1`,
+    routeStraight: 'Ligne droite — rien sur le chemin.',
+    routeAround: (dist, legs) => `Contournement du relief : ${dist} en ${legs} branche${legs === 1 ? '' : 's'}.`,
+    routeVersusDirect: d => `Ligne directe : ${d}.`,
+    routeLimitedBy: (elev, dist, bearing) => `Point le plus critique au-dessus du sol à ${elev}, à ${dist} au ${bearing}.`,
+    routeLimitedArrival: "Point le plus critique à l'arrivée sur le terrain.",
+    routeUnchecked: "Relief non vérifié — finesse à vol d'oiseau affichée.",
+    routeBlocked: 'Aucun trajet dégagé du relief depuis cette altitude.',
     colName: 'Nom', colDist: 'Dist', colGlide: 'Finesse', colDiff: 'Diff',
     fieldsLoaded: 'Terrains', noFields: 'Aucun terrain chargé.',
     waitingGps: 'En attente du GPS. Autorisez la localisation.',
     airfield: 'Aérodrome', field: 'Terrain', outlanding: 'Vache',
     footerNote: "Pas pour la navigation principale. Distance/finesse à vol d'oiseau uniquement : ni vent, ni descendance, ni relief, ni espace aérien.",
+    footerNoteTerrain: "Pas pour la navigation principale. La finesse suit un trajet dégagé du relief ; la distance reste à vol d'oiseau. Ni vent, ni descendance, ni espace aérien.",
     updateBanner: '🔄 Nouvelles données de terrains disponibles.', update: 'Mettre à jour',
     sampleWarning: "Données d'exemple uniquement — n'utilisez pas ce pack en vol. Lancez l'importateur pour construire le vrai pack Guide des Aires.",
     gpsError: e => `Erreur GPS : ${e}.`,
     altMissingWarning: "L'altitude GPS est absente, la finesse requise ne peut pas être calculée. Ajoutez une altitude manuelle dans les Réglages pour les tests au sol.",
     close: 'Fermer', bearing: 'Relèvement', distance: 'Distance', reqGlide: 'Finesse req.',
-    deltaSafe: 'Δsécu', elevation: 'Altitude', runway: 'Piste', frequency: 'Fréquence',
+    arrivalHeight: 'Arrivée', deltaSafe: 'Δsécu', elevation: 'Altitude', runway: 'Piste', frequency: 'Fréquence',
     glideNotShown: r => `Finesse non affichée : ${r}.`,
     notes: 'Notes', noNotes: 'Aucune note.', mediaHeading: 'Photos / docs / VAC',
     noMedia: 'Aucun média joint.', openPdf: 'Ouvrir le PDF',
     source: 'Source', imported: 'importé le', unknown: 'inconnu',
-    altMissing: 'absente', altManual: 'manuelle',
+    gpsSimulated: 'Position simulée — GPS désactivé',
+    testing: 'Test',
+    testNote: "Place l'application à un lieu et une altitude choisis pour vérifier les finesses au sol. Nécessite une connexion, n'enregistre rien et remplace le GPS jusqu'à l'arrêt.",
+    testPlace: 'Lieu',
+    testPlacePlaceholder: 'Chercher une ville, un terrain, un sommet…',
+    testSearching: 'Recherche…',
+    testAltitude: 'Altitude',
+    testStop: 'Arrêter le test',
+    testNoResults: 'Aucun résultat.',
+    testSearchFailed: 'Recherche impossible — une connexion est nécessaire.',
+    testUnnamed: 'Position choisie',
+    testAttribution: 'Recherche de lieux par Photon, données OpenStreetMap.',
+    testBanner: (where, altitude) => `⚠︎ Position simulée : ${where}, ${altitude}. Ce n'est pas votre position réelle.`,
+    altSimulated: 'simulée',
+    altMissing: 'absente',
     gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Erreur',
     gpsIdle: 'inactif', gpsRequesting: 'en cours', gpsUnavailable: 'indisponible',
     reasonGpsAlt: 'Altitude GPS absente', reasonFieldElev: 'Altitude terrain absente',
     reasonBelowSafe: m => `Sous l'arrivée sûre de ${m} m`,
+    reasonTerrainBlocked: 'Aucun trajet dégagé du relief',
     revealConfirm: (label, severity) => `Les terrains de difficulté ${label} sont ${severity} et potentiellement dangereux — uniquement en dernier recours d'urgence, non recommandés. Les afficher quand même dans la liste ?`,
     sevDifficult: 'difficiles', sevVeryDifficult: 'très difficiles',
     noPackYet: 'Aucun pack chargé pour le moment.', noCacheApi: "Le stockage de cache n'est pas disponible dans ce navigateur.",
@@ -413,30 +557,85 @@ const STRINGS = {
     nearestList: 'Nächstgelegene Felder', sort: 'Sortierung',
     sortGlide: 'Beste erforderliche Gleitzahl', sortDistance: 'Kürzeste Entfernung',
     safetyMargin: 'Sicherheits-Ankunftsreserve, m',
-    useManualAlt: 'Manuelle Höhe (Bodentest)', manualAlt: 'Manuelle Höhe, m',
-    manualAltNote: 'Manuelle Höhe nur für Bodentests. Im Flug ausschalten und die GPS-Höhe des Telefons verwenden.',
     hideC: 'C-Felder ausblenden', hideD: 'D-Felder ausblenden',
     cdNote: 'C- und D-Felder sind standardmäßig ausgeblendet. Sie sind schwierig und möglicherweise gefährlich — nur als letzte Notfalloption empfohlen.',
+    terrain: 'Gelände',
+    terrainRouting: 'Gleitpfad um das Gelände herum rechnen',
+    terrainNote: 'Mit eingeschaltetem Gelände folgt die erforderliche Gleitzahl einem Pfad, der vom Boden frei bleibt, statt einer Luftlinie. Ein Feld talabwärts kann erreichbar werden, eines hinter einem Grat nicht mehr.',
+    terrainClearance: 'Geländefreiheit',
+    terrainClearanceNote: c => `Berechnete Pfade bleiben mindestens ${c} m über Grund. Höher für mehr Spielraum zum Wegdrehen von steigendem Gelände, niedriger für mehr Reichweite.`,
+    terrainAttribution: 'Höhen: Copernicus DEM (ESA). Pass- und Sattelnamen: © OpenStreetMap-Mitwirkende.',
+    terrainUnsupported: 'Dieser Browser kann keine Geländedaten lesen. Gleitzahl bleibt Luftlinie.',
+    terrainMissing: 'Für diese Installation sind keine Geländedaten veröffentlicht. Gleitzahl bleibt Luftlinie.',
+    terrainCoverage: p => `${p} % des Arbeitsbereichs haben Geländedaten`,
+    terrainPartial: 'Die Geländedaten sind hier unvollständig; Felder ohne Pfad behalten ihre Luftlinien-Gleitzahl.',
+    downloadTerrain: 'Gelände herunterladen',
+    terrainTiles: (n, size) => `${n} Kacheln · ${size}`,
+    terrainCachedCount: (done, total) => `${done} von ${total} Kacheln offline`,
+    terrainSolving: 'Pfade werden berechnet…',
+    route: 'Pfad',
+    routeLength: 'Pfad',
+    routeViaChip: name => `über ${name}`,
+    routeViaPlain: 'um das Gelände',
+    routeLimitedByCol: (name, elev, dist) => `Engste Stelle über ${name}, ${elev}, ${dist} entfernt.`,
+    cancel: 'Abbrechen',
+    terrainExperimental: 'Experimentell',
+    terrainConsentTitle: 'Experimentelle Funktion',
+    terrainConsentBody: 'Die Gleitzahl um das Gelände herum ist experimentell und kann falsch '
+      + 'sein. Sie ändert, welche Felder diese App als erreichbar bezeichnet. Die Verantwortung '
+      + 'für die Wahl von Flugweg und Landefeld bleibt allein bei dir.',
+    terrainConsentDetail: 'Der Pfad ist Rechnerei auf einem groben Höhenraster — etwa 92 m pro '
+      + 'Zelle — und weiss nichts von Wind, Sinken, Luftraum, Hindernissen oder deinem Flugzeug. '
+      + 'Er ist keine zu fliegende Route und keine Freigabe, sie zu fliegen. Prüfe jede Zahl '
+      + 'gegen dein eigenes Urteil, deine Navigationsmittel und das, was du siehst.',
+    terrainConsentAccept: 'Verstanden — einschalten',
+    routeCrossing: (above, clears) => `${above} unter dir; der Pfad bleibt ${clears} darüber.`,
+    routeAbove: above => `${above} unter dir.`,
+    routeProfileKey: c => `Das Gelände entlang des Pfades, die ${c} m Freiheitslinie darüber und der Gleitpfad zur angezeigten Zahl — beide treffen sich am markierten Punkt.`,
+    routeProfileAlt: (dist, ratio) => `Pfadprofil über ${dist}, Gleitpfad bei ${ratio} zu 1`,
+    routeStraight: 'Luftlinie — nichts im Weg.',
+    routeAround: (dist, legs) => `Um das Gelände herum: ${dist} in ${legs} Schenkel${legs === 1 ? '' : 'n'}.`,
+    routeVersusDirect: d => `Direkte Linie: ${d}.`,
+    routeLimitedBy: (elev, dist, bearing) => `Engste Stelle über Grund bei ${elev}, ${dist} entfernt auf ${bearing}.`,
+    routeLimitedArrival: 'Engste Stelle bei der Ankunft am Feld.',
+    routeUnchecked: 'Gelände nicht geprüft — Luftlinien-Gleitzahl angezeigt.',
+    routeBlocked: 'Aus dieser Höhe kein vom Gelände freier Pfad.',
     colName: 'Name', colDist: 'Dist', colGlide: 'Gleit', colDiff: 'Diff',
     fieldsLoaded: 'Felder', noFields: 'Keine Felder geladen.',
     waitingGps: 'Warte auf GPS. Standortzugriff erlauben.',
     airfield: 'Flugplatz', field: 'Feld', outlanding: 'Außenlandung',
     footerNote: 'Nicht zur primären Navigation. Nur Luftlinie/Gleitzahl: kein Wind, kein Sinken, keine Geländefreiheit, kein Luftraum.',
+    footerNoteTerrain: 'Nicht zur primären Navigation. Die Gleitzahl folgt einem vom Gelände freien Pfad; die Entfernung bleibt Luftlinie. Kein Wind, kein Sinken, kein Luftraum.',
     updateBanner: '🔄 Neue Felddaten verfügbar.', update: 'Aktualisieren',
     sampleWarning: 'Nur Beispieldaten — dieses Paket nicht im Flug verwenden. Importer ausführen, um das echte Guide-des-Aires-Paket zu erstellen.',
     gpsError: e => `GPS-Fehler: ${e}.`,
     altMissingWarning: 'GPS-Höhe fehlt, daher kann die erforderliche Gleitzahl nicht berechnet werden. Für Bodentests eine manuelle Höhe in den Einstellungen angeben.',
     close: 'Schließen', bearing: 'Peilung', distance: 'Entfernung', reqGlide: 'Erf. Gleit',
-    deltaSafe: 'Δsicher', elevation: 'Höhe', runway: 'Bahn', frequency: 'Frequenz',
+    arrivalHeight: 'Ankunft', deltaSafe: 'Δsicher', elevation: 'Höhe', runway: 'Bahn', frequency: 'Frequenz',
     glideNotShown: r => `Gleitzahl nicht angezeigt: ${r}.`,
     notes: 'Notizen', noNotes: 'Keine Notizen.', mediaHeading: 'Fotos / Dokumente / VAC',
     noMedia: 'Keine Medien angehängt.', openPdf: 'PDF öffnen',
     source: 'Quelle', imported: 'importiert am', unknown: 'unbekannt',
-    altMissing: 'fehlt', altManual: 'manuell',
+    gpsSimulated: 'Simulierte Position — GPS aus',
+    testing: 'Test',
+    testNote: 'Versetzt die App an einen gewählten Ort und eine gewählte Höhe, um Gleitzahlen am Boden zu prüfen. Braucht eine Verbindung, speichert nichts und ersetzt das GPS bis zum Beenden.',
+    testPlace: 'Ort',
+    testPlacePlaceholder: 'Ort, Flugplatz, Gipfel suchen…',
+    testSearching: 'Suche…',
+    testAltitude: 'Höhe',
+    testStop: 'Test beenden',
+    testNoResults: 'Nichts gefunden.',
+    testSearchFailed: 'Suche fehlgeschlagen — dafür ist eine Verbindung nötig.',
+    testUnnamed: 'Gewählte Position',
+    testAttribution: 'Ortssuche von Photon, mit OpenStreetMap-Daten.',
+    testBanner: (where, altitude) => `⚠︎ Simulierte Position: ${where}, ${altitude}. Nicht deine echte Position.`,
+    altSimulated: 'simuliert',
+    altMissing: 'fehlt',
     gpsOk: acc => `OK ±${acc} m`, gpsErr: 'Fehler',
     gpsIdle: 'inaktiv', gpsRequesting: 'anfordern', gpsUnavailable: 'nicht verfügbar',
     reasonGpsAlt: 'GPS-Höhe fehlt', reasonFieldElev: 'Feldhöhe fehlt',
     reasonBelowSafe: m => `${m} m unter sicherer Ankunft`,
+    reasonTerrainBlocked: 'Kein vom Gelände freier Pfad',
     revealConfirm: (label, severity) => `Felder der Schwierigkeit ${label} sind ${severity} und möglicherweise gefährlich — nur als letzte Notfalloption, nicht empfohlen. Trotzdem in der Liste anzeigen?`,
     sevDifficult: 'schwierig', sevVeryDifficult: 'sehr schwierig',
     noPackYet: 'Noch kein Paket geladen.', noCacheApi: 'Cache-Speicher ist in diesem Browser nicht verfügbar.',
@@ -572,6 +771,7 @@ let state = {
   contribFor: null,
   showNewField: false,
   showBugReport: false,
+  showTerrainConsent: false,
   releaseNotes: [],
   showReleaseNotes: false,
   updateNoteAvailable: false,
@@ -585,7 +785,25 @@ let state = {
   offlineSync: null,
   detailScrollTop: 0,
   dataUpdateAvailable: false,
+  showTesting: false,
+  testSearch: null,
+  testQuery: '',
   activePacks: [],
+  // Terrain-routed glide. `routes` holds one entry per field the last solve answered; fields
+  // absent from it were either out of the working area or have no route clear of the ground,
+  // which `trusted` decides how to report.
+  terrain: {
+    store: null,
+    available: null,      // null until the tile index has been asked for
+    status: 'idle',       // idle | solving | ready | unavailable | error
+    routes: new Map(),
+    solvedIds: new Set(), // fields the last solve was actually asked about
+    coverage: 0,
+    trusted: false,
+    error: '',
+    cacheStatus: 'unknown',
+    cacheProgress: '',
+  },
 };
 
 const app = document.querySelector('#app');
@@ -644,6 +862,10 @@ function loadSettings() {
     if (settings.packIds.includes('alps')) {
       settings.packIds = [...new Set(settings.packIds.flatMap(id => id === 'alps' ? ['alps-west', 'alps-east'] : [id]))];
     }
+    // Terrain routing shipped on by default before it was gated behind a warning, so a stored
+    // `true` may predate the warning entirely. Anyone in that state gets it switched off and is
+    // asked properly, rather than keeping a setting they were never shown the terms of.
+    if (settings.terrainRouting && !settings.terrainAcknowledged) settings.terrainRouting = false;
     return Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map(key => [key, settings[key]]));
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -818,10 +1040,20 @@ async function reloadSelectedPack() {
   }
 }
 
-function startGps() {
+function stopGps() {
   if (gpsWatchId !== null && 'geolocation' in navigator) {
     navigator.geolocation.clearWatch(gpsWatchId);
     gpsWatchId = null;
+  }
+}
+
+function startGps() {
+  stopGps();
+  // Simulated position wins and the receiver stays off, so a real fix can never arrive and
+  // quietly replace the position under test halfway through a comparison.
+  if (state.settings.testMode) {
+    if (applyTestPosition()) onSimulatedPositionChanged();
+    return;
   }
   if (!('geolocation' in navigator)) {
     state.gpsStatus = 'unavailable';
@@ -843,6 +1075,9 @@ function startGps() {
       state.gpsStatus = 'ok';
       state.gpsError = '';
       computeRows();
+      // Fire and forget: the list is already correct with straight-line numbers, and the solve
+      // refines it a moment later if the glider has moved far enough to be worth redoing.
+      refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
       if (!state.selectedFieldId) scheduleRender();
     },
     error => {
@@ -854,18 +1089,38 @@ function startGps() {
   );
 }
 
+/** Put the simulated position in place of a GPS fix. Everything downstream reads state.position,
+ *  so nothing else has to know the difference — except the warning banner, which must. */
+function applyTestPosition() {
+  const { testLatitude, testLongitude, testAltitudeM } = state.settings;
+  if (!Number.isFinite(testLatitude) || !Number.isFinite(testLongitude)) return false;
+  state.position = {
+    latitude: testLatitude,
+    longitude: testLongitude,
+    altitudeM: Number.isFinite(Number(testAltitudeM)) ? Number(testAltitudeM) : null,
+    accuracyM: 0,
+    altitudeAccuracyM: 0,
+    timestamp: Date.now(),
+    simulated: true,
+  };
+  state.gpsStatus = 'simulated';
+  state.gpsError = '';
+  computeRows();
+  return true;
+}
+
+function testModeActive() {
+  return Boolean(state.settings.testMode && state.position?.simulated);
+}
+
 function activeAltitudeM() {
-  if (state.settings.useManualAltitude) {
-    const manual = Number(state.settings.manualAltitudeM);
-    return Number.isFinite(manual) ? manual : null;
-  }
   return state.position?.altitudeM ?? null;
 }
 
 function altitudeLabel() {
   const altitude = activeAltitudeM();
   if (altitude === null) return t('altMissing');
-  return `${fmtM(altitude)}${state.settings.useManualAltitude ? ` ${t('altManual')}` : ''}`;
+  return `${fmtM(altitude)}${testModeActive() ? ` ${t('altSimulated')}` : ''}`;
 }
 
 // Distance/bearing/required-glide for one field from the current position. Shared by the
@@ -901,6 +1156,7 @@ function computeRows() {
     if (state.settings.hideC && row.field.difficulty === 'C') return false;
     return true;
   });
+  rows = rows.map(applyTerrainRoute);
   rows.sort((a, b) => {
     if (state.settings.sortMode === 'glide') {
       if (a.requiredGlideRatio === null && b.requiredGlideRatio === null) return a.distanceM - b.distanceM;
@@ -911,6 +1167,511 @@ function computeRows() {
     return a.distanceM - b.distanceM;
   });
   state.computedRows = rows;
+}
+
+// --- simulated position (testing only) ---------------------------------------------------------
+//
+// Online-only and deliberately uncached: this exists to put the app somewhere it is not, which is
+// the one thing that must never survive into a flight by accident. The service worker only
+// intercepts its own scope and the pack origin, so these requests pass straight through it.
+//
+// Photon rather than Nominatim because Nominatim sends no Access-Control-Allow-Origin and is
+// therefore unusable from a browser. Both are OpenStreetMap data; Photon is Komoot's.
+const GEOCODER_URL = 'https://photon.komoot.io/api/';
+
+async function searchPlaces(query) {
+  const url = new URL(GEOCODER_URL);
+  url.searchParams.set('q', query);
+  url.searchParams.set('limit', '6');
+  const language = resolveLang();
+  if (['en', 'fr', 'de'].includes(language)) url.searchParams.set('lang', language);
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const data = await response.json();
+  return (data.features || []).map(feature => {
+    const properties = feature.properties || {};
+    const [longitude, latitude] = feature.geometry?.coordinates || [];
+    const parts = [
+      properties.name,
+      properties.city && properties.city !== properties.name ? properties.city : '',
+      properties.state,
+      properties.country,
+    ];
+    return { latitude, longitude, kind: properties.osm_value || '', label: parts.filter(Boolean).join(', ') };
+  }).filter(place => Number.isFinite(place.latitude) && Number.isFinite(place.longitude));
+}
+
+// Long enough that a pause reads as "done typing", short enough not to feel like waiting. Below
+// three characters there is nothing worth asking about, and it keeps the request count civil.
+const PLACE_SEARCH_DEBOUNCE_MS = 300;
+const PLACE_SEARCH_MIN_CHARS = 3;
+let placeSearchTimer = null;
+let placeSearchSeq = 0;
+
+function queuePlaceSearch(query) {
+  window.clearTimeout(placeSearchTimer);
+  const text = String(query || '').trim();
+  state.testQuery = text;
+  if (text.length < PLACE_SEARCH_MIN_CHARS) {
+    state.testSearch = null;
+    updateTestResults();
+    return;
+  }
+  placeSearchTimer = window.setTimeout(() => runPlaceSearch(text), PLACE_SEARCH_DEBOUNCE_MS);
+}
+
+async function runPlaceSearch(query) {
+  const text = String(query || '').trim();
+  if (text.length < PLACE_SEARCH_MIN_CHARS) return;
+  // Typing outruns the network, so replies can land out of order. Only the newest one may write.
+  const seq = ++placeSearchSeq;
+  state.testSearch = { status: 'searching', results: [], error: '' };
+  updateTestResults();
+  try {
+    const results = await searchPlaces(text);
+    if (seq !== placeSearchSeq) return;
+    state.testSearch = { status: 'done', results, error: results.length ? '' : t('testNoResults') };
+  } catch (error) {
+    if (seq !== placeSearchSeq) return;
+    console.warn('Place search failed', error);
+    state.testSearch = { status: 'done', results: [], error: t('testSearchFailed') };
+  }
+  updateTestResults();
+}
+
+/** The results markup on its own, so it can be patched in without touching the input. */
+function renderTestResults() {
+  const search = state.testSearch;
+  if (!search) return '';
+  if (search.status === 'searching') return `<p class="settings-note">${escapeHtml(t('testSearching'))}</p>`;
+  if (search.error) return `<p class="settings-note">${escapeHtml(search.error)}</p>`;
+  return search.results.map((place, index) => `
+      <button class="test-result" data-test-index="${index}">
+        <span class="test-result-name">${escapeHtml(place.label)}</span>
+        <span class="test-result-meta">${escapeHtml(place.kind)} · ${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}</span>
+      </button>`).join('');
+}
+
+function updateTestResults() {
+  const container = document.querySelector('#testResults');
+  if (!container) return;
+  container.innerHTML = renderTestResults();
+  attachTestResultEvents();
+}
+
+function attachTestResultEvents() {
+  document.querySelectorAll('.test-result').forEach(button => button.addEventListener('click', () => {
+    const place = state.testSearch?.results?.[Number(button.dataset.testIndex)];
+    if (place) startTestMode(place);
+  }));
+}
+
+/** Adopt a searched place as the simulated position. */
+function startTestMode(place) {
+  state.testSearch = null;
+  state.testQuery = '';
+  state.settings.testMode = true;
+  state.settings.testLatitude = place.latitude;
+  state.settings.testLongitude = place.longitude;
+  state.settings.testLabel = place.label;
+  saveSettings();
+  stopGps();
+  applyTestPosition();
+  onSimulatedPositionChanged();
+  render();
+}
+
+function stopTestMode() {
+  state.settings.testMode = false;
+  saveSettings();
+  state.position = null;
+  state.gpsStatus = 'idle';
+  state.testSearch = null;
+  onSimulatedPositionChanged();
+  startGps();
+  render();
+}
+
+// A simulated move is instant and arbitrary, so none of refreshTerrainRoutes' "has the glider
+// moved far enough" throttling applies: the last solve is discarded outright and a new one forced.
+function onSimulatedPositionChanged() {
+  invalidateTerrainRoutes();
+  refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+}
+// --- terrain-routed glide ----------------------------------------------------------------------
+//
+// The straight-line numbers above are computed first and always; routing then replaces them for
+// the fields it has an answer for. That ordering is deliberate — the list is useful the instant
+// there is a GPS fix, and a slow or missing terrain solve can only ever improve it, never delay it.
+
+let glideWorker = null;
+let glideRequestId = 0;
+let lastTerrainSolve = null;
+
+function terrainClearanceM() {
+  const value = Number(state.settings.terrainClearanceM);
+  if (!Number.isFinite(value)) return DEFAULT_SETTINGS.terrainClearanceM;
+  return Math.min(TERRAIN_CLEARANCE_MAX_M, Math.max(TERRAIN_CLEARANCE_MIN_M, value));
+}
+
+function terrainStore() {
+  const terrain = state.terrain;
+  // dataBase settles only after loadPackIndex has proved which origin serves the packs, and it
+  // can differ between deployments, so the store is rebuilt if it moves.
+  if (!terrain.store || String(terrain.store.baseUrl) !== String(dataBase)) {
+    terrain.store = new TerrainStore({ baseUrl: dataBase, cacheName: DATA_CACHE });
+  }
+  return terrain.store;
+}
+
+// A routed path is only worth mentioning when it actually goes somewhere else. Below this it is
+// the straight line with grid noise on it, and a chip would be decoration.
+const ROUTE_DETOUR_RATIO = 1.1;
+
+function routeIsDetour(row) {
+  const route = row?.route;
+  if (!route || route.direct || !Number.isFinite(route.pathLengthM)) return false;
+  return route.pathLengthM > (row.distanceM || 0) * ROUTE_DETOUR_RATIO;
+}
+
+/**
+ * What to call the place a routed glide is pinched at — a named col, or nothing.
+ *
+ * There used to be a fallback to the compass point the route heads for, and it was the wrong
+ * shape of answer: "west of track" reads as an instruction to fly west, and this app does not
+ * navigate. It reports what a glide costs; the pilot flies it on whatever they navigate with.
+ * A named col escapes that because it is a place a pilot already knows, not a heading. With no
+ * name the chip says only that the glide goes around terrain, which is the whole of what the app
+ * is entitled to claim.
+ */
+function routeVia(row) {
+  return row?.route?.critical?.colName || '';
+}
+
+/** Replace a row's straight-line glide with the routed one, or say why there isn't one. */
+function applyTerrainRoute(row) {
+  const terrain = state.terrain;
+  const route = terrain.routes.get(row.field.id);
+  if (route) {
+    row.directGlideRatio = row.requiredGlideRatio;
+    row.requiredGlideRatio = route.requiredGlideRatio;
+    row.route = route;
+    row.terrainState = route.direct ? 'direct' : 'routed';
+    row.glideReason = '';
+    return row;
+  }
+  // No route came back. That only means "unreachable" when the solve actually looked at this
+  // field and had the ground data to judge it; otherwise the straight-line number stands, marked
+  // as what it is.
+  if (terrain.status === 'ready' && terrain.trusted
+      && terrain.solvedIds.has(row.field.id) && row.requiredGlideRatio !== null) {
+    row.directGlideRatio = row.requiredGlideRatio;
+    row.requiredGlideRatio = null;
+    row.terrainState = 'blocked';
+    row.glideReason = t('reasonTerrainBlocked');
+    return row;
+  }
+  row.terrainState = terrain.status === 'ready' ? 'unchecked' : 'pending';
+  return row;
+}
+
+/**
+ * Which tiles a pilot flying this pack should carry. The bounding box of the loaded fields is
+ * the honest answer: a route runs between fields, so the ground under them is the ground it
+ * crosses. Anything beyond that is fetched on demand while there is still a radio.
+ */
+function terrainDownloadTargets() {
+  const index = state.terrain.store?.index;
+  if (!index || !index.tiles?.length || !state.fields.length) return { keys: [], bytes: 0 };
+
+  let south = Infinity, north = -Infinity, west = Infinity, east = -Infinity;
+  for (const field of state.fields) {
+    if (!Number.isFinite(field.latitude) || !Number.isFinite(field.longitude)) continue;
+    south = Math.min(south, field.latitude); north = Math.max(north, field.latitude);
+    west = Math.min(west, field.longitude); east = Math.max(east, field.longitude);
+  }
+  if (!Number.isFinite(south)) return { keys: [], bytes: 0 };
+
+  const published = new Map(index.tiles.map(entry => [entry.key, entry.bytes]));
+  const keys = tileKeysForBounds({ south, west, north, east }).filter(key => published.has(key));
+  return { keys, bytes: keys.reduce((total, key) => total + (published.get(key) || 0), 0) };
+}
+
+function terrainTileUrls(keys) {
+  const store = terrainStore();
+  return keys.map(key => store.url(terrainPaths.tile(key)));
+}
+
+async function checkTerrainCacheStatus() {
+  const terrain = state.terrain;
+  if (!('caches' in window)) { terrain.cacheStatus = 'unknown'; return; }
+  const { keys } = terrainDownloadTargets();
+  if (!keys.length) { terrain.cacheStatus = 'unknown'; terrain.cacheProgress = ''; return; }
+  const cache = await caches.open(DATA_CACHE);
+  const cached = new Set((await cache.keys()).map(request => request.url));
+  const have = terrainTileUrls(keys).filter(url => cached.has(url)).length;
+  terrain.cacheStatus = have === keys.length ? 'ready' : have > 0 ? 'incomplete' : 'not downloaded';
+  terrain.cacheProgress = t('terrainCachedCount', have, keys.length);
+}
+
+/**
+ * Load the tile index and cache count the settings page needs, then re-render — but only when
+ * the answer actually changed. This runs from attachEvents, so an unconditional render() here
+ * would re-enter itself forever.
+ */
+let terrainStatusPending = false;
+let terrainStatusSignature = '';
+async function refreshTerrainStatus() {
+  if (terrainStatusPending || !terrainSupported()) return;
+  terrainStatusPending = true;
+  try {
+    if (state.terrain.available === null) {
+      state.terrain.available = Boolean(await terrainStore().loadIndex());
+    }
+    await checkTerrainCacheStatus();
+    const terrain = state.terrain;
+    const signature = `${terrain.available}|${terrain.cacheStatus}|${terrain.cacheProgress}`;
+    if (signature !== terrainStatusSignature) {
+      terrainStatusSignature = signature;
+      render();
+    }
+  } catch (error) {
+    console.warn('Terrain status failed', error);
+  } finally {
+    terrainStatusPending = false;
+  }
+}
+
+async function downloadTerrain() {
+  const { keys } = terrainDownloadTargets();
+  if (!keys.length || !('caches' in window)) return;
+  const urls = terrainTileUrls(keys);
+  const cache = await caches.open(DATA_CACHE);
+  const cached = new Set((await cache.keys()).map(request => request.url));
+  const toFetch = urls.filter(url => !cached.has(url));
+
+  state.terrain.cacheStatus = 'downloading';
+  let failed = 0;
+  if (toFetch.length) {
+    state.offlineSync = { done: 0, total: toFetch.length, failed: 0 };
+    render();
+    for (let i = 0; i < toFetch.length; i += 1) {
+      try {
+        const response = await fetch(toFetch[i]);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        await cache.put(toFetch[i], response.clone());
+      } catch (error) {
+        console.warn('Terrain tile download failed', toFetch[i], error);
+        failed += 1;
+      }
+      state.offlineSync = { done: i + 1, total: toFetch.length, failed };
+      updateOfflineBar();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+  state.offlineSync = null;
+  await checkTerrainCacheStatus();
+  // Newly downloaded ground can change every answer, so throw away the last solve.
+  invalidateTerrainRoutes();
+  render();
+  refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+}
+
+/** Forget the last solve so the next refresh runs even if the glider has not moved. */
+function invalidateTerrainRoutes() {
+  lastTerrainSolve = null;
+  state.terrain.routes = new Map();
+  state.terrain.solvedIds = new Set();
+  if (state.terrain.status !== 'unavailable') state.terrain.status = 'idle';
+  computeRows();
+}
+
+function terrainInputsChanged(altitudeM) {
+  const last = lastTerrainSolve;
+  if (!last) return true;
+  if (last.clearanceM !== terrainClearanceM()) return true;
+  if (last.safetyMarginM !== (Number(state.settings.safetyMarginM) || 0)) return true;
+  if (last.fieldCount !== state.fields.length) return true;
+  if (Math.abs(last.altitudeM - altitudeM) >= TERRAIN_RESOLVE_ALTITUDE_M) return true;
+  return haversineMeters(last.latitude, last.longitude, state.position.latitude, state.position.longitude)
+    >= TERRAIN_RESOLVE_DISTANCE_M;
+}
+
+function ensureGlideWorker() {
+  if (glideWorker) return glideWorker;
+  try {
+    glideWorker = new Worker(new URL('glide-worker.js', import.meta.url));
+    glideWorker.onmessage = onGlideResult;
+    glideWorker.onerror = error => {
+      console.warn('Glide worker failed', error);
+      // Drop it rather than retry in a loop: without routing the app is exactly what it was
+      // before this feature, which is a working app.
+      glideWorker?.terminate();
+      glideWorker = null;
+      state.terrain.status = 'error';
+      state.terrain.error = error.message || 'worker error';
+      state.terrain.routes = new Map();
+      computeRows();
+      scheduleRender();
+    };
+  } catch (error) {
+    console.warn('Workers unavailable', error);
+    state.terrain.status = 'unavailable';
+    glideWorker = null;
+  }
+  return glideWorker;
+}
+
+function onGlideResult(event) {
+  const message = event.data;
+  const terrain = state.terrain;
+  // A solve that finished after a newer one started is stale: the glider has moved on.
+  if (!message || message.id !== glideRequestId) return;
+
+  if (message.type === 'error') {
+    terrain.status = 'error';
+    terrain.error = message.message;
+    terrain.routes = new Map();
+  } else if (message.type === 'solved') {
+    terrain.routes = new Map(Object.entries(message.results));
+    terrain.status = 'ready';
+    terrain.error = '';
+    nameRouteCols();
+  }
+  computeRows();
+  scheduleRender();
+}
+
+/** Match each route's pinch point to a named col, if the deployment ships them. */
+function nameRouteCols() {
+  const store = state.terrain.store;
+  if (!store?.cols) return;
+  for (const route of state.terrain.routes.values()) {
+    if (!route.critical) continue;
+    const col = store.nearestCol(route.critical.latitude, route.critical.longitude);
+    // Only the name is taken. OpenStreetMap also carries the col's surveyed height, and it reads
+    // more authoritative — but it is not the ground this glide was measured against. A max-pooled
+    // cell near a saddle catches the shoulder, so it sits ~100 m above the surveyed notch, and
+    // quoting the surveyed figure beside a margin computed from the shoulder gives a route block
+    // whose own numbers disagree and whose height is optimistic by the difference.
+    if (col) route.critical.colName = col.name;
+  }
+}
+
+/**
+ * Route every nearby field, if terrain is available and the picture has changed enough to be
+ * worth the arithmetic. Never throws and never blocks a render: on any failure the straight-line
+ * numbers simply stay.
+ */
+async function refreshTerrainRoutes() {
+  const terrain = state.terrain;
+
+  if (!state.settings.terrainRouting) {
+    if (terrain.routes.size) { terrain.routes = new Map(); computeRows(); }
+    terrain.status = 'idle';
+    return;
+  }
+  if (!terrainSupported()) {
+    terrain.status = 'unavailable';
+    terrain.available = false;
+    return;
+  }
+  if (!state.position || !state.fields.length || terrain.status === 'solving') return;
+  const altitudeM = activeAltitudeM();
+  if (altitudeM === null || !terrainInputsChanged(altitudeM)) return;
+
+  const store = terrainStore();
+  if (terrain.available === null) {
+    terrain.available = Boolean(await store.loadIndex());
+    if (!terrain.available) {
+      terrain.status = 'unavailable';
+      scheduleRender();
+      return;
+    }
+  }
+  if (!terrain.available) return;
+
+  // Not inside the availability check above: opening Settings calls refreshTerrainStatus, which
+  // sets `available` first, so anything guarded by "have we looked yet" is skipped on the path
+  // where a pilot switches terrain on by hand — which is every first use. loadCols returns
+  // immediately once it has an answer, so calling it before each solve costs nothing.
+  //
+  // Awaited rather than raced: it is a couple of hundred kilobytes against megabytes of tiles,
+  // and racing it meant the first routes came out labelled "S of track" and silently corrected
+  // themselves a second later, which reads as a glitch even though both answers were true.
+  await store.loadCols().catch(() => null);
+
+  const clearanceM = terrainClearanceM();
+  const safetyMarginM = Number(state.settings.safetyMarginM) || 0;
+  const candidates = state.computedRows
+    .filter(row => Number.isFinite(row.field.elevationM))
+    .slice()
+    .sort((a, b) => a.distanceM - b.distanceM)
+    .slice(0, TERRAIN_MAX_TARGETS);
+  if (!candidates.length) return;
+
+  // Wide enough that a route can go the long way round: half again the distance to the farthest
+  // field worth answering, floored so a solve is never trivially small and capped so a phone is
+  // never asked to flood half of Europe.
+  const farthestM = candidates[candidates.length - 1].distanceM;
+  const radiusM = Math.min(90000, Math.max(15000, farthestM * 1.5));
+
+  terrain.status = 'solving';
+  lastTerrainSolve = {
+    latitude: state.position.latitude,
+    longitude: state.position.longitude,
+    altitudeM, clearanceM, safetyMarginM,
+    fieldCount: state.fields.length,
+  };
+
+  let grid = null;
+  try {
+    grid = await store.routingGrid({
+      latitude: state.position.latitude,
+      longitude: state.position.longitude,
+      radiusM,
+    });
+  } catch (error) {
+    console.warn('Terrain grid failed', error);
+  }
+  if (!grid) {
+    terrain.status = 'unavailable';
+    terrain.routes = new Map();
+    computeRows();
+    scheduleRender();
+    return;
+  }
+
+  const worker = ensureGlideWorker();
+  if (!worker) {
+    terrain.routes = new Map();
+    computeRows();
+    scheduleRender();
+    return;
+  }
+
+  terrain.coverage = grid.coverage;
+  terrain.trusted = grid.coverage >= TERRAIN_TRUST_COVERAGE;
+  terrain.solvedIds = new Set(candidates.map(row => row.field.id));
+  glideRequestId += 1;
+
+  const payload = { ...grid, elevations: grid.elevations.buffer };
+  worker.postMessage({
+    type: 'solve',
+    id: glideRequestId,
+    grid: payload,
+    latitude: state.position.latitude,
+    longitude: state.position.longitude,
+    altitudeM,
+    clearanceM,
+    safetyMarginM,
+    targets: candidates.map(row => ({
+      id: row.field.id,
+      latitude: row.field.latitude,
+      longitude: row.field.longitude,
+      elevationM: row.field.elevationM,
+    })),
+  }, [payload.elevations]);
 }
 
 function scheduleRender() {
@@ -932,9 +1693,22 @@ function scheduleRender() {
       updateSearchResults();
       return;
     }
+    // Likewise the place search in Settings. This one bites harder: the thing most likely to
+    // schedule a render while it is being typed into is a terrain solve finishing, which is
+    // precisely what the pilot is in the middle of setting up.
+    const place = document.querySelector('#testPlace');
+    if (place && document.activeElement === place) {
+      updateStatusStrip();
+      return;
+    }
     render();
   }, 1000);
 }
+
+// Lets a test fire the render path that used to eat the search box. Harmless in production:
+// scheduleRender is what a GPS tick or a finished terrain solve already calls.
+self.__mtcScheduleRenderProbe = scheduleRender;
+self.__mtcState = state;   // read-only diagnostics hook for the browser tests
 
 function updateStatusStrip() {
   const el = document.querySelector('#statusArea');
@@ -986,6 +1760,7 @@ function render() {
         </div>
         <div id="statusArea">${renderStatus()}</div>
       </header>
+      ${renderTestBanner()}
       <main class="main">
         ${state.view === 'settings' ? renderSettingsPage() : renderMainPage()}
       </main>
@@ -994,13 +1769,14 @@ function render() {
       ${renderNewField()}
       ${state.showReleaseNotes ? renderReleaseNotes() : ''}
       ${renderMigrationSheet()}
+      ${renderTerrainConsentSheet()}
       ${renderBugReport()}
       ${renderOfflineBar()}
     </div>
   `;
   // Lock background scroll while an overlay is open, so scrolling a short bottom-sheet doesn't
   // fall through to the list behind it.
-  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport || state.showMigrationSheet));
+  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport || state.showMigrationSheet || state.showTerrainConsent));
   attachEvents();
   requestAnimationFrame(() => {
     const detail = document.querySelector('.detail');
@@ -1038,15 +1814,26 @@ function renderStatus() {
 function gpsLabel() {
   if (state.gpsStatus === 'ok') return t('gpsOk', Math.round(state.position?.accuracyM || 0));
   if (state.gpsStatus === 'error') return t('gpsErr');
-  const map = { idle: 'gpsIdle', requesting: 'gpsRequesting', unavailable: 'gpsUnavailable' };
+  const map = { idle: 'gpsIdle', requesting: 'gpsRequesting', unavailable: 'gpsUnavailable', simulated: 'gpsSimulated' };
   return map[state.gpsStatus] ? t(map[state.gpsStatus]) : state.gpsStatus;
+}
+
+// Shown above everything, in red, whenever the position on screen is invented. A cockpit aid
+// quietly reporting fields near a place you are not is the worst thing this app could do.
+function renderTestBanner() {
+  if (!testModeActive()) return '';
+  const where = state.settings.testLabel || `${state.settings.testLatitude.toFixed(3)}, ${state.settings.testLongitude.toFixed(3)}`;
+  return `<div class="test-banner">
+      <span>${escapeHtml(t('testBanner', where, fmtM(state.position.altitudeM ?? 0)))}</span>
+      <button id="testBannerStop">${t('testStop')}</button>
+    </div>`;
 }
 
 function renderWarnings() {
   const items = [];
   if (state.packManifest?.isSample) items.push(escapeHtml(t('sampleWarning')));
   if (state.gpsStatus === 'error') items.push(escapeHtml(t('gpsError', state.gpsError)));
-  if (state.position && state.position.altitudeM === null && !state.settings.useManualAltitude) items.push(escapeHtml(t('altMissingWarning')));
+  if (state.position && state.position.altitudeM === null && !testModeActive()) items.push(escapeHtml(t('altMissingWarning')));
   if (!items.length) return '';
   return items.map(i => `<div class="warning">${i}</div>`).join('');
 }
@@ -1059,8 +1846,13 @@ function renderMainPage() {
     ${renderUpdateBanner()}
     ${renderWarnings()}
     <div id="fieldListArea">${renderFieldList()}</div>
-    <p class="footer-note">${escapeHtml(t('footerNote'))}</p>
+    <p class="footer-note">${escapeHtml(t(terrainRoutingLive() ? 'footerNoteTerrain' : 'footerNote'))}</p>
   `;
+}
+
+/** True when the glide numbers on screen are actually coming from routed paths. */
+function terrainRoutingLive() {
+  return state.settings.terrainRouting && state.terrain.routes.size > 0;
 }
 
 // Shown only on a retired deployment (see MIGRATION). Amber rather than the teal used by the
@@ -1105,6 +1897,29 @@ function renderMigrationBanner() {
       <button id="migrationBannerBtn">${escapeHtml(t('migDetails'))}</button>
     </div>
   `;
+}
+
+/**
+ * The terms of switching terrain routing on, shown every time it is switched on.
+ *
+ * Not a one-off dismissal stored on the device: this feature changes which fields the app calls
+ * reachable, and the moment a pilot chooses to trust it is the moment worth interrupting. Turning
+ * it off is never gated — only turning it on.
+ */
+function renderTerrainConsentSheet() {
+  if (!state.showTerrainConsent) return '';
+  return `
+    <div class="detail-backdrop" id="terrainConsentBackdrop">
+      <article class="detail" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('terrainConsentTitle'))}">
+        <div class="detail-title-row"><h2>⚠︎ ${escapeHtml(t('terrainConsentTitle'))}</h2></div>
+        <div class="mig-warn"><span>${escapeHtml(t('terrainConsentBody'))}</span></div>
+        <p class="settings-note">${escapeHtml(t('terrainConsentDetail'))}</p>
+        <div class="button-row">
+          <button id="terrainConsentCancel">${escapeHtml(t('cancel'))}</button>
+          <button class="primary" id="terrainConsentAccept">${escapeHtml(t('terrainConsentAccept'))}</button>
+        </div>
+      </article>
+    </div>`;
 }
 
 function renderMigrationSheet() {
@@ -1183,6 +1998,39 @@ function renderUpdateBanner() {
   `;
 }
 
+/**
+ * A setting that is on or off, as a labelled row with the switch on the right.
+ *
+ * The control is still a real checkbox — same id, same change event, same label and keyboard
+ * behaviour — with only its appearance replaced, so nothing downstream has to know it is drawn
+ * differently. A switch reads as a state rather than as a choice being ticked, which is what
+ * these settings are, and it is a far better target for a thumb.
+ */
+function switchRow(id, label, note, checked, disabled = false) {
+  return `
+        <div class="set-row">
+          <div class="set-top">
+            <label for="${id}">${escapeHtml(label)}</label>
+            <input id="${id}" type="checkbox" class="switch" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+          </div>
+          ${note ? `<p class="set-sub">${escapeHtml(note)}</p>` : ''}
+        </div>`;
+}
+
+/** A setting with a magnitude: the value sits beside its own label, the track spans the row. */
+function sliderRow({ id, valueId, label, value, display, min, max, step, note, noteId, disabled }) {
+  return `
+        <div class="set-row">
+          <div class="set-top">
+            <label for="${id}">${escapeHtml(label)}</label>
+            <output id="${valueId}" for="${id}" class="set-value">${escapeHtml(display)}</output>
+          </div>
+          <input id="${id}" type="range" min="${min}" max="${max}" step="${step}"
+                 value="${value}" ${disabled ? 'disabled' : ''} />
+          ${note ? `<p class="set-sub"${noteId ? ` id="${noteId}"` : ''}>${escapeHtml(note)}</p>` : ''}
+        </div>`;
+}
+
 function renderSettingsPage() {
   const activeIds = new Set(activePackIds());
   // Hidden packs (e.g. the transitional whole-Alps alias kept for old cached shells) stay
@@ -1190,9 +2038,9 @@ function renderSettingsPage() {
   const packList = state.packs.filter(p => !p.hidden).map(p => {
     const count = typeof p.fieldsCount === 'number' ? `${p.fieldsCount} ${t('fieldsWord')}` : '';
     return `<label class="pack-option">
-        <input type="checkbox" class="packCheck" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
         <span class="pack-name">${escapeHtml(packName(p))}</span>
         <span class="pack-meta">${escapeHtml(count)}</span>
+        <input type="checkbox" class="packCheck switch" value="${escapeHtml(p.id)}" ${activeIds.has(p.id) ? 'checked' : ''} />
       </label>`;
   }).join('');
   const manifest = state.packManifest;
@@ -1213,8 +2061,12 @@ function renderSettingsPage() {
 
       <div class="settings-card">
         <h3>${t('app')}</h3>
-        <label for="languageSelect">${t('language')}</label>
-        <select id="languageSelect">${langOptions}</select>
+        <div class="set-row">
+          <div class="set-top">
+            <label for="languageSelect">${t('language')}</label>
+            <select id="languageSelect" class="set-control">${langOptions}</select>
+          </div>
+        </div>
         <dl class="meta-list">
           <div><dt>${t('version')}</dt><dd>${escapeHtml(APP_VERSION)} · <a href="#" id="whatsNewLink">${t('whatsNew')}</a></dd></div>
           <div><dt>${t('licenceLabel')}</dt><dd><a href="${DATA_LICENCE_URL}" target="_blank" rel="noopener">${escapeHtml(t('licenceValue'))}</a></dd></div>
@@ -1248,32 +2100,109 @@ function renderSettingsPage() {
 
       <div class="settings-card">
         <h3>${t('nearestList')}</h3>
-        <label for="sortMode">${t('sort')}</label>
-        <select id="sortMode">
-          <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>${t('sortGlide')}</option>
-          <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>${t('sortDistance')}</option>
-        </select>
-        <label for="safetyMarginM">${t('safetyMargin')}</label>
-        <input id="safetyMarginM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.safetyMarginM}" />
-        <div class="checkbox-row">
-          <input id="useManualAltitude" type="checkbox" ${state.settings.useManualAltitude ? 'checked' : ''} />
-          <label for="useManualAltitude">${t('useManualAlt')}</label>
+        <div class="set-row">
+          <div class="set-top">
+            <label for="sortMode">${t('sort')}</label>
+            <select id="sortMode" class="set-control">
+              <option value="glide" ${state.settings.sortMode === 'glide' ? 'selected' : ''}>${t('sortGlide')}</option>
+              <option value="distance" ${state.settings.sortMode === 'distance' ? 'selected' : ''}>${t('sortDistance')}</option>
+            </select>
+          </div>
         </div>
-        <label for="manualAltitudeM">${t('manualAlt')}</label>
-        <input id="manualAltitudeM" inputmode="numeric" type="number" min="0" step="50" value="${state.settings.manualAltitudeM}" ${state.settings.useManualAltitude ? '' : 'disabled'} />
-        <p class="settings-note">${escapeHtml(t('manualAltNote'))}</p>
-        <div class="checkbox-row">
-          <input id="hideC" type="checkbox" ${state.settings.hideC ? 'checked' : ''} />
-          <label for="hideC">${t('hideC')}</label>
+        <div class="set-row">
+          <div class="set-top">
+            <label for="safetyMarginM">${t('safetyMargin')}</label>
+            <input id="safetyMarginM" class="set-control" inputmode="numeric" type="number"
+                   min="0" step="50" value="${state.settings.safetyMarginM}" />
+          </div>
         </div>
-        <div class="checkbox-row">
-          <input id="hideD" type="checkbox" ${state.settings.hideD ? 'checked' : ''} />
-          <label for="hideD">${t('hideD')}</label>
-        </div>
-        <p class="settings-note">${escapeHtml(t('cdNote'))}</p>
+        ${switchRow('hideC', t('hideC'), '', state.settings.hideC)}
+        ${switchRow('hideD', t('hideD'), t('cdNote'), state.settings.hideD)}
       </div>
+
+      ${renderTerrainCard()}
+      ${renderTestingCard()}
     </section>
   `;
+}
+
+function renderTerrainCard() {
+  const terrain = state.terrain;
+  const supported = terrainSupported();
+  const targets = terrainDownloadTargets();
+  const disabled = !supported || terrain.available === false;
+
+  let status = '';
+  if (!supported) status = t('terrainUnsupported');
+  else if (terrain.available === false) status = t('terrainMissing');
+  else if (terrain.status === 'solving') status = t('terrainSolving');
+  else if (terrain.status === 'ready' && !terrain.trusted) status = t('terrainPartial');
+  else if (terrain.status === 'ready') status = t('terrainCoverage', Math.round(terrain.coverage * 100));
+
+  return `
+      <div class="settings-card">
+        <h3>${t('terrain')} <span class="tag-experimental">${escapeHtml(t('terrainExperimental'))}</span></h3>
+        ${switchRow('terrainRouting', t('terrainRouting'), t('terrainNote'), state.settings.terrainRouting, disabled)}
+        ${sliderRow({
+          id: 'terrainClearanceM',
+          valueId: 'terrainClearanceValue',
+          label: t('terrainClearance'),
+          value: terrainClearanceM(),
+          display: fmtM(terrainClearanceM()),
+          min: TERRAIN_CLEARANCE_MIN_M,
+          max: TERRAIN_CLEARANCE_MAX_M,
+          step: TERRAIN_CLEARANCE_STEP_M,
+          note: t('terrainClearanceNote', terrainClearanceM()),
+          noteId: 'terrainClearanceNote',
+          disabled: !state.settings.terrainRouting || disabled,
+        })}
+        ${targets.keys.length ? `
+        <dl class="meta-list">
+          <div><dt>${t('downloadSize')}</dt><dd>${escapeHtml(t('terrainTiles', targets.keys.length, formatBytes(targets.bytes)))}</dd></div>
+          <div><dt>${t('offline')}</dt><dd>${escapeHtml(terrain.cacheProgress || cacheStatusLabel(terrain.cacheStatus))}</dd></div>
+        </dl>
+        <div class="button-row single">
+          <button id="downloadTerrain" ${disabled ? 'disabled' : ''}>${t('downloadTerrain')}</button>
+        </div>` : ''}
+        ${status ? `<p class="settings-note">${escapeHtml(status)}</p>` : ''}
+        <p class="settings-note">${escapeHtml(t('terrainAttribution'))}</p>
+      </div>`;
+}
+
+// Last in Settings and collapsed by default: useful on the ground, never wanted in the air.
+function renderTestingCard() {
+  const settings = state.settings;
+  const active = testModeActive();
+
+  return `
+      <div class="settings-card">
+        <button class="disclosure" id="toggleTesting" aria-expanded="${state.showTesting ? 'true' : 'false'}">
+          <span>🧪 ${t('testing')}</span>
+          <span class="disclosure-mark">${state.showTesting ? '▾' : '▸'}</span>
+        </button>
+        ${state.showTesting ? `
+        <p class="settings-note">${escapeHtml(t('testNote'))}</p>
+        ${active ? `
+        <div class="test-active">
+          <div><strong>${escapeHtml(settings.testLabel || t('testUnnamed'))}</strong></div>
+          <div class="test-active-meta">${settings.testLatitude.toFixed(4)}, ${settings.testLongitude.toFixed(4)} · ${fmtM(settings.testAltitudeM)}</div>
+        </div>` : ''}
+        <label for="testPlace">${t('testPlace')}</label>
+        <input id="testPlace" type="search" inputmode="search" autocomplete="off"
+               value="${escapeHtml(state.testQuery || '')}"
+               placeholder="${escapeHtml(t('testPlacePlaceholder'))}" />
+        <div class="test-results" id="testResults">${renderTestResults()}</div>
+        ${sliderRow({
+          id: 'testAltitudeM',
+          valueId: 'testAltitudeValue',
+          label: t('testAltitude'),
+          value: Number(settings.testAltitudeM) || 0,
+          display: fmtM(Number(settings.testAltitudeM) || 0),
+          min: 0, max: 6000, step: 100,
+        })}
+        ${active ? `<div class="button-row single"><button id="stopTesting">${t('testStop')}</button></div>` : ''}
+        <p class="settings-note">${escapeHtml(t('testAttribution'))}</p>` : ''}
+      </div>`;
 }
 
 
@@ -1359,15 +2288,30 @@ function renderSearchBox() {
   `;
 }
 
-function renderFieldRow({ field, distanceM, requiredGlideRatio, glideReason }) {
+function renderFieldRow(row) {
+  const { field, distanceM, requiredGlideRatio, glideReason, terrainState } = row;
+  // The number a pilot reads is the same size whatever produced it; only a small mark says the
+  // glide had to go around something, and only when it actually did.
+  const routed = terrainState === 'routed' ? ' routed' : '';
+  // The chip appears only for a real detour, so flat country sees no change at all — and it says
+  // where the route goes, which is the part you cannot get from the number.
+  const via = routeIsDetour(row) ? routeVia(row) : '';
+  // Distance first: a long col name is the part that can be cut without losing the point, and
+  // putting it last means the ellipsis eats the name's tail rather than the number.
+  // The mountain mark is drawn by CSS (::before here, ::after on the glide figure) from one
+  // shared definition, so the two cannot drift apart — they are the same statement twice.
+  const chip = routeIsDetour(row)
+    ? `<span class="field-via">${escapeHtml(fmtKm(row.route.pathLengthM))} ${escapeHtml(via ? t('routeViaChip', via) : t('routeViaPlain'))}</span>`
+    : '';
   return `
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
       <span class="field-main">
         <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
         <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? t('airfield') : t('field')].filter(Boolean).join(' · '))}</span>
+        ${chip}
       </span>
       <span class="field-distance">${Number.isFinite(distanceM) ? fmtKm(distanceM) : '—'}</span>
-      <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
+      <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}${routed}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
       <span class="badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
     </button>
   `;
@@ -1416,6 +2360,7 @@ function renderDetail(field) {
   const glideNote = row?.glideReason ? `<p class="inline-note">${escapeHtml(t('glideNotShown', row.glideReason))}</p>` : '';
   const media = (field.media || []).map(item => renderMediaItem(item, field._base)).join('') || `<p class="footer-note">${escapeHtml(t('noMedia'))}</p>`;
   const kindLabel = field.kind === 'airfield' ? t('airfield') : t('outlanding');
+  const arrivalHeightM = state.settings.terrainRouting ? routeArrivalHeightM(row) : null;
   return `
     <div class="detail-backdrop" id="detailBackdrop">
       <article class="detail" role="dialog" aria-modal="true">
@@ -1428,13 +2373,16 @@ function renderDetail(field) {
         <div class="detail-grid">
           <div class="detail-card"><span class="status-label">${t('bearing')}</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('distance')}</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
+          ${routeIsDetour(row) ? `<div class="detail-card"><span class="status-label">${t('routeLength')}</span><strong>${fmtKm(row.route.pathLengthM)}</strong></div>` : ''}
           <div class="detail-card"><span class="status-label">${t('reqGlide')}</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
+          ${arrivalHeightM !== null ? `<div class="detail-card"><span class="status-label">${t('arrivalHeight')}</span><strong>${fmtSignedM(arrivalHeightM)}</strong></div>` : ''}
           <div class="detail-card"><span class="status-label">${t('deltaSafe')}</span><strong>${row?.usableHeightM !== null && row ? fmtSignedM(row.usableHeightM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('elevation')}</span><strong>${field.elevationM !== null ? fmtM(field.elevationM) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('runway')}</span><strong>${escapeHtml(formatRunwayDimensions(field))}</strong></div>
           <div class="detail-card"><span class="status-label">${t('frequency')}</span><strong>${escapeHtml(formatFrequency(field))}</strong></div>
         </div>
         ${glideNote}
+        ${renderRouteBlock(row)}
         <h3>${t('notes')}</h3>
         <div class="notes">${escapeHtml(fieldNotes(field) || t('noNotes'))}</div>
         <h3>${t('mediaHeading')}</h3>
@@ -1449,6 +2397,178 @@ function renderDetail(field) {
 }
 
 
+
+/**
+ * The two things the pinch point's elevation alone does not say: how much height you have over it
+ * now, and how much the reported glide leaves when it crosses.
+ *
+ * The second is the clearance setting by construction — the tightest point is *defined* as where
+ * the glide grazes the clearance envelope, so it could not be anything else. Saying it anyway
+ * closes the loop: it shows the pilot that the ratio is bounded by their own margin rather than by
+ * the ground, and it is read off the geometry rather than off the setting, so a route solved under
+ * an older clearance still reports what that route actually does.
+ *
+ * The first is the number that moves. It is also the one that makes the ratio legible: the glide
+ * has to cover the distance to the point on roughly the height standing between you and it.
+ */
+function routeCrossingLine(route) {
+  const critical = route?.critical;
+  const altitude = activeAltitudeM();
+  if (!critical || altitude === null || !Number.isFinite(critical.elevationM)) return '';
+  const above = altitude - critical.elevationM;
+  if (!(above > 0)) return '';
+  const clears = Number.isFinite(critical.atM) && route.requiredGlideRatio > 0
+    ? above - critical.atM / route.requiredGlideRatio
+    : null;
+  return clears !== null && clears > 0
+    ? t('routeCrossing', fmtM(above), fmtM(clears))
+    : t('routeAbove', fmtM(above));
+}
+
+/**
+ * How high over the field the required glide actually puts you.
+ *
+ * When a col sets the ratio rather than the arrival does, the glide is sized for the col — it
+ * crosses that with the clearance and then goes on descending at the same slope to a field that
+ * needed much less, so it lands in with a good deal more than the safety margin. That surplus is
+ * a real reason to prefer one field over another and a bare ratio hides it completely. When the
+ * arrival is what sets the ratio this comes back as the margin exactly, which is the honest
+ * answer: there is nothing spare.
+ */
+function routeArrivalHeightM(row) {
+  const route = row?.route;
+  const altitude = activeAltitudeM();
+  const elevation = row?.field?.elevationM;
+  if (!route || altitude === null || !Number.isFinite(elevation)) return null;
+  if (!(route.requiredGlideRatio > 0) || !Number.isFinite(route.pathLengthM)) return null;
+  return altitude - route.pathLengthM / route.requiredGlideRatio - elevation;
+}
+
+/**
+ * What the glide had to do to get here. Only shown when terrain routing produced something to
+ * say — with the feature off, or with no terrain published, the detail sheet looks as it always did.
+ */
+function renderRouteBlock(row) {
+  if (!state.settings.terrainRouting || !row) return '';
+  const route = row.route;
+  const lines = [];
+
+  if (route && route.direct) {
+    lines.push(t('routeStraight'));
+  } else if (route) {
+    lines.push(t('routeAround', fmtKm(route.pathLengthM), route.legs));
+    if (Number.isFinite(row.distanceM)) lines.push(t('routeVersusDirect', fmtKm(row.distanceM)));
+    if (route.critical) {
+      const distanceM = haversineMeters(
+        state.position.latitude, state.position.longitude,
+        route.critical.latitude, route.critical.longitude,
+      );
+      const bearingDeg = bearingDegrees(
+        state.position.latitude, state.position.longitude,
+        route.critical.latitude, route.critical.longitude,
+      );
+      lines.push(route.critical.colName
+        ? t('routeLimitedByCol', route.critical.colName,
+            fmtM(route.critical.elevationM), fmtKm(distanceM))
+        : t('routeLimitedBy', fmtM(route.critical.elevationM), fmtKm(distanceM), fmtDeg(bearingDeg)));
+      const crossing = routeCrossingLine(route);
+      if (crossing) lines.push(crossing);
+    } else {
+      lines.push(t('routeLimitedArrival'));
+    }
+  } else if (row.terrainState === 'blocked') {
+    lines.push(t('routeBlocked'));
+  } else if (row.terrainState === 'unchecked') {
+    lines.push(t('routeUnchecked'));
+  } else if (state.terrain.status === 'solving') {
+    lines.push(t('terrainSolving'));
+  } else {
+    return '';
+  }
+
+  return `
+    <h3>${t('route')} <span class="tag-experimental">${escapeHtml(t('terrainExperimental'))}</span></h3>
+    <p class="route-summary">${lines.map(line => escapeHtml(line)).join('<br />')}</p>
+    ${renderRouteProfile(row)}
+  `;
+}
+
+/**
+ * The route in profile: ground, the clearance envelope above it, and the glide line drawn at the
+ * ratio the app is reporting. The point where those two meet is the answer's whole justification,
+ * so it is marked.
+ *
+ * Hand-built SVG rather than a chart library — it is four paths, and this ships to a cockpit
+ * where every kilobyte is downloaded once over a phone connection and then flown with.
+ */
+function renderRouteProfile(row) {
+  const route = row?.route;
+  const profile = route?.profile;
+  if (!profile?.terrain?.length || !state.position) return '';
+  const altitude = activeAltitudeM();
+  if (altitude === null) return '';
+
+  const width = 320;
+  const height = 130;
+  const padLeft = 34;
+  const padBottom = 16;
+  const padTop = 8;
+  const plotWidth = width - padLeft - 6;
+  const plotHeight = height - padTop - padBottom;
+
+  const clearance = terrainClearanceM();
+  const terrain = profile.terrain.map(v => (Number.isFinite(v) ? v : null));
+  const known = terrain.filter(v => v !== null);
+  if (!known.length) return '';
+  const arrival = Number.isFinite(row.field.elevationM) ? row.field.elevationM : known[known.length - 1];
+
+  const top = Math.max(altitude, ...known.map(v => v + clearance)) + 100;
+  const bottom = Math.min(arrival, ...known) - 80;
+  const span = Math.max(1, top - bottom);
+  const x = i => padLeft + (i / (terrain.length - 1)) * plotWidth;
+  const y = metres => padTop + (1 - (metres - bottom) / span) * plotHeight;
+
+  const line = values => values
+    .map((v, i) => (v === null ? null : `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`))
+    .filter(Boolean).join(' ');
+  const groundPath = `${line(terrain)} L${x(terrain.length - 1).toFixed(1)},${y(bottom).toFixed(1)} L${x(0).toFixed(1)},${y(bottom).toFixed(1)} Z`;
+  const envelopePath = line(terrain.map(v => (v === null ? null : v + clearance)));
+
+  // The glide line: altitude falls by one metre per `ratio` metres flown.
+  const ratio = route.requiredGlideRatio;
+  const glideEnd = altitude - profile.lengthM / ratio;
+  const glidePath = `M${x(0).toFixed(1)},${y(altitude).toFixed(1)} L${x(terrain.length - 1).toFixed(1)},${y(glideEnd).toFixed(1)}`;
+
+  let marker = '';
+  if (route.critical && Number.isFinite(route.critical.atM)) {
+    const at = Math.min(1, Math.max(0, route.critical.atM / profile.lengthM));
+    const markerX = padLeft + at * plotWidth;
+    const markerY = y(altitude - route.critical.atM / ratio);
+    const label = route.critical.colName || fmtM(route.critical.elevationM);
+    marker = `
+      <line x1="${markerX.toFixed(1)}" y1="${padTop}" x2="${markerX.toFixed(1)}" y2="${(padTop + plotHeight).toFixed(1)}" class="rp-mark" />
+      <circle cx="${markerX.toFixed(1)}" cy="${markerY.toFixed(1)}" r="3.5" class="rp-dot" />
+      <text x="${Math.min(markerX + 5, width - 4).toFixed(1)}" y="${(padTop + 10).toFixed(1)}"
+            class="rp-label" text-anchor="${markerX > width * 0.6 ? 'end' : 'start'}">${escapeHtml(label)}</text>`;
+  }
+
+  const ticks = [bottom + span, bottom + span / 2, bottom]
+    .map(v => `<text x="${padLeft - 5}" y="${(y(v) + 3).toFixed(1)}" class="rp-axis" text-anchor="end">${Math.round(v / 100) * 100}</text>`)
+    .join('');
+
+  return `
+    <svg class="route-profile" viewBox="0 0 ${width} ${height}" role="img"
+         aria-label="${escapeHtml(t('routeProfileAlt', fmtKm(profile.lengthM), Math.round(ratio)))}">
+      <path d="${groundPath}" class="rp-ground" />
+      <path d="${envelopePath}" class="rp-envelope" />
+      <path d="${glidePath}" class="rp-glide" />
+      ${marker}
+      ${ticks}
+      <text x="${padLeft}" y="${height - 4}" class="rp-axis">0</text>
+      <text x="${width - 6}" y="${height - 4}" class="rp-axis" text-anchor="end">${escapeHtml(fmtKm(profile.lengthM))}</text>
+    </svg>
+    <p class="route-profile-key">${escapeHtml(t('routeProfileKey', clearance))}</p>`;
+}
 
 function formatRunwayDimensions(field) {
   const length = Number(field.lengthM);
@@ -2178,6 +3298,9 @@ function attachEvents() {
     render();
   });
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
+  // The terrain card needs the published tile index and a cache count, neither of which is worth
+  // fetching until someone opens Settings. refreshTerrainStatus re-renders once when they land.
+  if (state.view === 'settings') refreshTerrainStatus();
   document.querySelector('#closeSettings')?.addEventListener('click', () => { state.view = 'main'; render(); });
   document.querySelector('#sharePack')?.addEventListener('click', shareApp);
   document.querySelector('#reportBug')?.addEventListener('click', openBugReport);
@@ -2208,12 +3331,55 @@ function attachEvents() {
     saveSettings();
     render();
   });
-  document.querySelector('#manualAltitudeM')?.addEventListener('change', e => {
-    state.settings.manualAltitudeM = Number(e.target.value);
+  document.querySelector('#terrainRouting')?.addEventListener('change', e => {
+    // Switching it off is immediate; switching it on asks first. The switch is put back where it
+    // was so the control never shows a state the app is not actually in while the sheet is up.
+    if (e.target.checked) {
+      e.target.checked = false;
+      state.showTerrainConsent = true;
+      render();
+      return;
+    }
+    state.settings.terrainRouting = false;
     saveSettings();
+    invalidateTerrainRoutes();
     render();
   });
-  for (const id of ['hideC', 'hideD', 'useManualAltitude']) {
+  document.querySelector('#terrainConsentCancel')?.addEventListener('click', () => {
+    state.showTerrainConsent = false;
+    render();
+  });
+  document.querySelector('#terrainConsentBackdrop')?.addEventListener('click', e => {
+    if (e.target.id === 'terrainConsentBackdrop') { state.showTerrainConsent = false; render(); }
+  });
+  document.querySelector('#terrainConsentAccept')?.addEventListener('click', () => {
+    state.showTerrainConsent = false;
+    state.settings.terrainRouting = true;
+    state.settings.terrainAcknowledged = true;
+    saveSettings();
+    invalidateTerrainRoutes();
+    render();
+    refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+  });
+  // Dragging fires continuously, so the live readout updates in place and nothing else happens
+  // until the pilot lets go. A wavefront per pixel of travel would be absurd, and a re-render
+  // mid-drag would tear the slider out from under their thumb.
+  document.querySelector('#terrainClearanceM')?.addEventListener('input', e => {
+    const metres = Number(e.target.value);
+    const readout = document.querySelector('#terrainClearanceValue');
+    if (readout) readout.textContent = fmtM(metres);
+    const note = document.querySelector('#terrainClearanceNote');
+    if (note) note.textContent = t('terrainClearanceNote', metres);
+  });
+  document.querySelector('#terrainClearanceM')?.addEventListener('change', e => {
+    state.settings.terrainClearanceM = Number(e.target.value);
+    saveSettings();
+    invalidateTerrainRoutes();
+    render();
+    refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+  });
+  document.querySelector('#downloadTerrain')?.addEventListener('click', downloadTerrain);
+  for (const id of ['hideC', 'hideD']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       if ((id === 'hideC' || id === 'hideD') && !e.target.checked) {
         // Revealing difficult fields — make the pilot acknowledge the risk before showing them.
@@ -2226,11 +3392,41 @@ function attachEvents() {
         }
       }
       state.settings[id] = e.target.checked;
-      if (id === 'useManualAltitude') computeRows();
       saveSettings();
       render();
     });
   }
+  document.querySelector('#toggleTesting')?.addEventListener('click', () => {
+    state.showTesting = !state.showTesting;
+    render();
+  });
+  document.querySelector('#testPlace')?.addEventListener('input', e => queuePlaceSearch(e.target.value));
+  document.querySelector('#testPlace')?.addEventListener('keydown', e => {
+    // Enter only skips the wait; it is not required to get results.
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      window.clearTimeout(placeSearchTimer);
+      runPlaceSearch(e.target.value);
+    }
+  });
+  attachTestResultEvents();
+  // Dragging updates the readout only; the position is re-adopted on release, same reasoning as
+  // the terrain clearance slider.
+  document.querySelector('#testAltitudeM')?.addEventListener('input', e => {
+    const readout = document.querySelector('#testAltitudeValue');
+    if (readout) readout.textContent = fmtM(Number(e.target.value));
+  });
+  document.querySelector('#testAltitudeM')?.addEventListener('change', e => {
+    state.settings.testAltitudeM = Number(e.target.value);
+    saveSettings();
+    if (state.settings.testMode) {
+      applyTestPosition();
+      onSimulatedPositionChanged();
+    }
+    render();
+  });
+  document.querySelector('#stopTesting')?.addEventListener('click', stopTestMode);
+  document.querySelector('#testBannerStop')?.addEventListener('click', stopTestMode);
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
   document.querySelector('#exportCup')?.addEventListener('click', exportCup);
   document.querySelector('#syncDataBtn')?.addEventListener('click', () => {

@@ -11,7 +11,9 @@ Install it on your phone, open it before or during a flight, allow location acce
 
 This app is intended as a cockpit aid for quick field briefing and triage only. It is provided as-is, without warranty, guarantee, operational approval, or assumption of responsibility by its author or contributors.
 
-Meet the Cows is not primary navigation. It does not account for terrain, wind, sink, airspace, obstacles, NOTAMs, legality, surface condition, livestock, crops, wires, slope, current weather, or the pilot's actual aircraft performance.
+Meet the Cows is not primary navigation. It does not account for wind, sink, airspace, obstacles, NOTAMs, legality, surface condition, livestock, crops, wires, slope, current weather, or the pilot's actual aircraft performance.
+
+It does account for terrain, in one narrow sense and no further: the required glide ratio can be computed along a path that stays clear of the ground rather than along the straight line (see [Terrain-routed glide](#terrain-routed-glide)). That is a better arithmetic answer to "what glide does this field cost", not a route to fly and not a clearance to fly it. The path is found on a coarse elevation grid with no knowledge of wind, sink, airspace, or your aircraft; the app never tells you which way to point the nose, and every caveat above still applies unchanged.
 
 The pilot in command is solely responsible for all flight planning, navigation, field selection, landing decisions, and consequences of using or not using any information shown by the app. Always use official and current sources, local knowledge, active lookout, and established navigation tools for flight decisions.
 
@@ -21,9 +23,15 @@ Difficulty `C` and `D` fields are highly contraindicated. Treat them as hazardou
 
 - Nearby fields from your current GPS position
 - Three best safe options (difficulty `A`, required glide ratio 20 or better, airfields first) pinned above the list
-- Distance, bearing, and straight-line required glide ratio
+- Distance, bearing, and required glide ratio — straight-line, or routed around terrain
+- Terrain-routed glide: the required ratio follows a path that stays clear of the ground, so a
+  field down a valley can become reachable and one behind a ridge can stop being
+- Route profile in the field detail view: the ground, the clearance line above it, and the glide
+  drawn at the ratio being reported, marked where the two meet
+- Named cols from OpenStreetMap, so the limiting point reads "via Col de Joux" rather than a bearing
+- Arrival height: how far above the field the routed glide actually gets you
 - Safety arrival margin setting
-- Manual altitude mode for ground testing
+- Testing mode: place the app at any searched location and altitude to check figures on the ground
 - Filters for more difficult fields
 - Field detail view with notes, photos, and documents
 - Full French / English / German localization — the interface and field notes follow your device language, with a manual switch in Settings
@@ -53,6 +61,11 @@ Photos and PDFs can be large, so they are not all cached automatically. To make 
 
 This downloads every photo and document for the pack and records what you have so later updates only fetch the difference.
 
+Terrain tiles are separate, under **Settings → Terrain → Download terrain**, and are offered only
+for the ground your selected packs actually cover — not the whole published set. Settings shows
+the tile count and size before you commit to it. Without them, terrain routing works online and
+falls back to the straight-line glide offline; with them, it works in the air like everything else.
+
 ## Updates
 
 Updates are only ever offered, never applied in flight. You choose when to reload or sync, on the ground with a good connection.
@@ -70,22 +83,104 @@ When a newer data pack is published, a `New field data available` banner appears
 1. Launch the home-screen app.
 2. Wait for the GPS status to become available.
 3. Use the nearest list to compare distance, bearing, required glide ratio, and difficulty. The three best safe options (difficulty `A`, required glide ratio 20 or better, airfields preferred) are pinned above the thicker divider.
-4. Tap a field to review notes, photos, documents, and VAC material.
+4. Tap a field to review notes, photos, documents, and VAC material — plus the route and its
+   profile, when the glide is routed around terrain.
 5. Adjust the safety arrival margin in Settings if you want a more conservative glide estimate.
 
-The app uses phone GPS altitude when available. If your browser does not provide altitude, required glide ratio may be unavailable unless you use manual altitude for testing.
+The app uses phone GPS altitude when available. If your browser does not provide altitude, the required glide ratio is not shown — Settings has a testing mode for checking figures on the ground.
+
+## Terrain-routed glide
+
+A straight-line glide ratio is wrong in the mountains in both directions. It refuses a field that
+a valley leads down to below the ridge line, and it offers one with a ridge in the way. Cervinia
+to Aosta is the case that drove this: from 3,000 m the direct line crosses a 3,000 m wall and
+reads as impossible, while the run down the Valtournenche into the Aosta valley needs a required
+glide of about 17.
+
+With **Settings → Terrain → Fly the glide around terrain** on, the required ratio is computed
+along the best terrain-clearing path instead. Where the routed path is more than 10% longer than
+the direct line, the list row carries a chip — `▲ 34 km via Col de Saint-Pantaléon`, or
+`▲ 34 km around terrain` when no named col is close enough. Flat country sees no chip and no
+change at all: the straight line is still the best line, so it is still the answer.
+
+The field detail view then adds a **Route** block:
+
+- how far the routed path is, in how many legs, against the direct distance
+- the point that actually limits the glide, its ground elevation, and how far away it is
+- how far below you that point sits now, and what the glide clears it by
+- a profile: the ground along the route, the clearance line above it, and the glide drawn at the
+  ratio being reported — marked where those two meet, which is where the number is decided
+- an **Arrival** card: the height the routed glide reaches the field with
+
+That last one is worth a word. When a col sets the ratio rather than the arrival does, the glide
+is sized for the col — it crosses that with the clearance and then keeps descending at the same
+slope to a field that needed far less, so it arrives well above the safety margin. From Cervinia
+to Aosta that is about +430 m against a 250 m margin. When the arrival is what sets the ratio, the
+card reads the margin exactly: there is nothing spare.
+
+### Terrain clearance
+
+**Settings → Terrain → Terrain clearance** is the one new preference: the minimum height a routed
+glide has to keep above the ground along its whole length, 100–500 m in 50 m steps, 200 m by
+default. Raise it for more room to turn away from rising ground; lower it to reach further.
+
+It is a judgement call that varies with terrain and comfort, which is why it is exposed at all.
+Note that at the reported ratio you clear the limiting point by exactly this figure — that is what
+"limiting point" means — so the number the app gives you is bounded by your own margin rather than
+by the ground.
+
+### What it does not do
+
+No glide performance is ever assumed. The app reports the ratio a field *requires*; comparing that
+with what your aircraft actually achieves, in the air you actually have, stays with you.
+
+The path is not a route to fly. It is the geometry that justifies a number, found on a coarse grid
+with no knowledge of wind, sink, airspace, or airmanship. The app deliberately does not name a
+direction to head — an earlier version's fallback chip said things like "west of track", which
+reads as an instruction, and it was removed for that reason. Navigation belongs in your navigation
+app.
+
+### The terrain data
+
+Elevations come from the [Copernicus DEM](https://dataspace.copernicus.eu) GLO-30 product, built
+into 1° tiles of 16-bit metres at 3 arc-seconds (about 92 m) by `scripts/build_terrain_tiles.py`.
+Downsampling takes the **maximum** of each source block rather than the mean, so a summit is never
+averaged away into a col that is not there — the error is always on the side of refusing a glide.
+
+That conservatism is visible in the app: near a saddle the max-pooled cell catches the shoulder
+beside the notch, so the elevation shown for a named col can sit ~100 m above its surveyed height.
+The route block quotes the DEM throughout rather than the surveyed figure, because that is the
+ground the glide was measured against, and because the difference errs the safe way.
+
+Col and pass names are named `natural=saddle` / `mountain_pass=yes` nodes from OpenStreetMap,
+fetched per bounding box by `scripts/fetch_cols.py`. They are optional decoration: without them
+the app still reports the limiting point, just without a name.
+
+Both are built and published by the manually dispatched `Build terrain tiles` workflow — the
+ground does not move, so this is deliberately not on the nightly pack schedule.
 
 ## Ground Testing
 
-Manual altitude is useful for testing the app before flight.
+Settings → **Testing** puts the app at a place and altitude of your choosing, so the numbers can
+be checked without leaving the ground.
 
-1. Open Settings.
-2. Enable `Use manual altitude for testing`.
-3. Enter a realistic altitude in meters.
-4. Open the app somewhere with location permission available so the nearest list can use your real phone position.
-5. Check that glide ratio, filters, field detail view, and offline media/docs behave as expected.
+1. Open Settings and expand `Testing` at the bottom.
+2. Search for a place — a town, an airfield, a peak.
+3. Pick a result, and set the altitude with the slider.
+4. Check that distance, glide ratio, filters and the field detail view behave as expected.
+5. `Stop testing` returns to real GPS.
 
-Turn manual altitude off before relying on live GPS altitude in flight.
+An earlier version of this only let you override the altitude, which stopped being enough once
+glide started depending on the ground: a plausible altitude in the wrong valley tells you nothing,
+and every interesting case is somewhere you are not standing.
+
+While a simulated position is in force a red banner sits above everything, on every screen, saying
+so. That is deliberate — a cockpit aid quietly reporting fields near a place you are not is the
+worst thing this app could do. The mode needs a connection, caches nothing, and its position is
+never used to answer anything the app cannot answer from GPS.
+
+Place search is [Photon](https://photon.komoot.io), on OpenStreetMap data. Nominatim would be the
+obvious choice but sends no `Access-Control-Allow-Origin`, so a browser cannot call it.
 
 ## Languages
 
@@ -131,7 +226,14 @@ one merged field set with their media shared in `_shared/`:
 /meet-the-cows/packs/<pack-id>/state.json
 /meet-the-cows/packs/_shared/media/...
 /meet-the-cows/packs/_shared/docs/...
+/meet-the-cows/packs/_terrain/index.json
+/meet-the-cows/packs/_terrain/cols.json
+/meet-the-cows/packs/_terrain/N45E007.terr
 ```
+
+`_terrain/` is shared by every pack and built on its own schedule — see
+[Terrain-routed glide](#terrain-routed-glide). `index.json` lists each tile with its size and
+SHA-256; the app fetches only the tiles overlapping the packs you have selected.
 
 `media-manifest.json` lists a content hash for every media/doc file; the app diffs it to
 download only changed files on an update. `state.json` is the source fingerprint the build
@@ -160,6 +262,10 @@ Meet the Cows stands on work published by several aviation and gliding data prov
 - [ENAV](https://www.enav.it): Italian AIP aerodrome and visual approach charts (© ENAV S.p.A., retrieved from the free online self-briefing service) where included.
 - [OpenAIP](https://www.openaip.net): airfield metadata used to help discover and place glider-relevant airfields.
 - [OurAirports](https://ourairports.com): optional airport/runway coordinate fallback for some pack builds.
+- [Copernicus DEM](https://dataspace.copernicus.eu) (GLO-30): terrain elevations for terrain-routed
+  glide — © ESA, Sinergise; produced using Copernicus WorldDEM-30.
+- [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL): named cols and
+  passes, and the [Photon](https://photon.komoot.io) place search used by Ground Testing.
 
 The exact sources used by a deployed pack are listed in that pack's `manifest.json`.
 
@@ -221,11 +327,17 @@ switched on anywhere; `deploy-app.yml`'s `deploy_retired_origin` input does that
 
 ### Deploy target
 
-`DEPLOY_TARGET` (repository variable) selects where the assembled site goes — unset for GitHub
-Pages, `cloudflare` for Cloudflare Pages via `wrangler pages deploy`. The Cloudflare path is a
-direct upload rather than a git-connected build, so the heavy pack build stays in Actions with
-its caches and secrets and Cloudflare only receives the finished directory. Each branch deploys
-under its own name, which is what gives experimental branches their own URLs.
+`DEPLOY_TARGET` (repository variable) selects where the assembled site goes — `cloudflare` for the
+Workers deploy that serves the live app, unset for GitHub Pages. The Cloudflare path is a direct
+upload rather than a git-connected build, so the heavy pack build stays in Actions with its caches
+and secrets and Cloudflare only receives the finished directory. `main` deploys to the Worker
+`meet-the-cows-app`, every other branch to `meet-the-cows-next`.
+
+The GitHub Pages path is now only the retired origin, `br0c.github.io/meet-the-cows`. It runs on a
+manual dispatch with the `deploy_retired_origin` input, whose one job is to hand that frozen copy a
+shell that knows the app has moved. There was also a Cloudflare **Pages** deploy here, from the
+period when `app.meetthecows.org` was still attached to a Pages project; both custom domains are on
+Workers now, so it was removed.
 
 When `PACKS_BASE_URL` is set, `scripts/publish_packs_r2.py` uploads the pack tree to an R2
 bucket (S3 API, hash-compared so only changed objects move) and the packs are then left out of

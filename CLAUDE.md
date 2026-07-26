@@ -2,6 +2,10 @@
 
 ## Git
 
+- **New work goes to `dev`, never straight to `main`.** `main` is what pilots are flying; it
+  changes only once something has been proven on `dev` at `next.meetthecows.org`. This includes
+  changes that look too small to need testing — the ones that turn out to matter are rarely the
+  ones that looked risky. `main` still takes fixes to things already broken in production.
 - **Never push to `main` without the user's explicit approval.** Do all development on feature
   branches and push those freely. For any push to `main`, ask first and wait for a clear yes.
   This is enforced by the `PreToolUse` hook in `.claude/settings.json`

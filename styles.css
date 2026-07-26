@@ -46,10 +46,10 @@ a { color: var(--accent); }
    .settings-card label / .settings-card input rules further down, which otherwise win on
    source order and break the row (label display:block, checkbox width:100% + padding). */
 .pack-list { display: grid; gap: 8px; margin: 4px 0 12px; }
-.settings-card label.pack-option { display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+.settings-card label.pack-option { display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
   gap: 10px; margin: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px;
   cursor: pointer; min-height: 42px; }
-.settings-card .pack-option input { width: auto; margin: 0; padding: 0; transform: scale(1.2); }
 .pack-name { font-size: 15px; color: var(--text); }
 .pack-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .meta-list dd.download-total { font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -176,8 +176,82 @@ a { color: var(--accent); }
   text-overflow: ellipsis;
 }
 .field-sub { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* "Via" chip: only present when the route genuinely differs from the direct line, so its absence
+   is information too. Sits under the name rather than in a column — it is a sentence, not a
+   number, and the four-column grid has no room for prose. */
+.field-via { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(56,189,248,.12); border: 1px solid rgba(56,189,248,.35); color: #bae6fd;
+  font-size: 10px; font-weight: 700; white-space: nowrap; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; }
 .field-distance,
 .field-glide { text-align: right; font-weight: 800; font-size: 14px; white-space: nowrap; }
+
+/* The mountain mark, once. Both places that carry it — the "via" chip and the marker beside a
+   routed glide figure — mask this same shape, so they can never drift into two different
+   drawings of the same idea. A mask rather than a background image because the fill then comes
+   from currentColor: the chip's blue and the figure's dimmed grey, with no second asset. */
+:root {
+  --mark-mountain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 16'%3E%3Cpath d='M0,15 L4.8,8.5 L8.4,12 L13.2,4.5 L17.4,10 L20.4,7.5 L24,15 Z' fill='%23000'/%3E%3C/svg%3E");
+}
+.field-via::before,
+.field-glide.routed::after {
+  content: '';
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask-image: var(--mark-mountain);
+  mask-image: var(--mark-mountain);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+.field-via::before { width: 11px; height: 7.5px; margin-right: 3px; vertical-align: -0.5px; }
+/* Bigger than the chip's copy on purpose: this one sits alone beside a number rather than at the
+   head of a sentence, with no words around it to say what it means. */
+.field-glide.routed::after { width: 16px; height: 11px; margin-left: 3px; opacity: .5; vertical-align: 0; }
+/* Boxed like the notes panel below it, because it is the same kind of thing: prose about this
+   field that the pilot reads rather than scans. A point larger than the other secondary text —
+   these are the sentences the routed number has to be justified by, so they get read properly. */
+.route-summary {
+  margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+}
+
+/* Route profile. Deliberately flat colours and no animation: it is read once, at a glance,
+   possibly while turning. */
+.route-profile { display: block; width: 100%; height: auto; margin: 8px 0 2px;
+  background: #030712; border: 1px solid var(--line); border-radius: 10px; }
+.rp-ground { fill: #1f2937; stroke: #475569; stroke-width: 1; }
+.rp-envelope { fill: none; stroke: #64748b; stroke-width: 1; stroke-dasharray: 3 3; }
+.rp-glide { fill: none; stroke: var(--accent); stroke-width: 2; }
+.rp-mark { stroke: #f59e0b; stroke-width: 1; stroke-dasharray: 2 3; }
+.rp-dot { fill: #f59e0b; stroke: #030712; stroke-width: 1.5; }
+.rp-label { fill: #fcd34d; font-size: 9px; font-weight: 700; }
+.rp-axis { fill: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
+.route-profile-key { margin: 0 0 2px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+
+/* Testing mode. Red rather than amber: an amber notice is an update or a migration, this one is
+   "the position on screen is invented", which is a different category of thing entirely. */
+.test-banner { margin: 8px 8px 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: #450a0a; color: #fecaca; border: 1px solid #b91c1c; border-radius: 12px;
+  padding: 10px; font-weight: 600; }
+.test-banner button { white-space: nowrap; background: #b91c1c; border-color: #ef4444; color: #fff5f5; }
+
+/* Collapsed section header. A button rather than <details> so it renders identically to the rest
+   of the settings cards and survives the app's full re-render. */
+.settings-card .disclosure { display: flex; align-items: center; justify-content: space-between;
+  width: 100%; background: transparent; border: 0; padding: 2px 0; color: var(--text);
+  font-size: 15px; font-weight: 700; }
+.disclosure-mark { color: var(--muted); font-weight: 400; }
+.test-results { display: grid; gap: 6px; margin: 6px 0 10px; }
+.settings-card .test-result { display: grid; gap: 2px; width: 100%; text-align: left;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.test-result-name { font-size: 14px; font-weight: 700; }
+.test-result-meta { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.test-active { border: 1px solid #b91c1c; background: #2a0a0a; border-radius: 10px;
+  padding: 9px 11px; margin: 4px 0 10px; }
+.test-active-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 .badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); font-weight: 900; justify-self: end; }
 .badge-a {
   color: #000;
@@ -227,6 +301,61 @@ a { color: var(--accent); }
 .checkbox-row input { width: auto; transform: scale(1.2); }
 .checkbox-row label { margin: 0; color: var(--text); font-size: 15px; }
 .settings-card input:disabled { opacity: .55; }
+
+/* A setting is a row: what it is on the left, what it is set to on the right, why underneath.
+   Hairlines rather than nested cards — the section card already carries the grouping, and one
+   box per preference would out-shout the list it is there to configure. */
+.set-row { display: grid; gap: 6px; padding: 9px 0; border-top: 1px solid var(--line); }
+.settings-card h3 + .set-row { border-top: 0; padding-top: 0; }
+.set-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; }
+.settings-card .set-top label { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+.set-value { color: var(--accent); font-weight: 800; font-variant-numeric: tabular-nums; }
+.set-row:has(input:disabled) .set-value { opacity: .55; }
+.set-sub { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+/* Controls that sit beside their label rather than under it, so they shrink to their content. */
+.settings-card .set-control { width: auto; min-width: 0; max-width: 62%; padding: 7px 9px; border-radius: 9px; }
+.settings-card input.set-control { width: 7em; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The generic .settings-card input rule above sets width:100% and a box with padding, which turns
+   a range input into a stretched, oddly inset track — so the range opts out of all three. */
+.settings-card input[type="range"] {
+  width: 100%; border: 0; background: transparent; padding: 0;
+  accent-color: var(--accent);
+  /* Comfortable to hit with a thumb in a moving cockpit, not a hairline. */
+  height: 28px;
+}
+
+/* An on/off setting, drawn as a switch. Still a checkbox underneath: the label, the focus ring
+   and the change event all behave as they always did, and only the paint is ours. */
+.settings-card input.switch {
+  appearance: none; -webkit-appearance: none;
+  flex: none; width: 46px; height: 27px; margin: 0; padding: 0;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2);
+  position: relative; cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.settings-card input.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 21px; height: 21px;
+  border-radius: 50%; background: var(--muted);
+  transition: transform .15s ease, background-color .15s ease;
+}
+.settings-card input.switch:checked { background: #075985; border-color: #0ea5e9; }
+.settings-card input.switch:checked::after { transform: translateX(19px); background: #e0f2fe; }
+.settings-card input.switch:disabled { cursor: default; }
+.settings-card input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .settings-card input.switch, .settings-card input.switch::after { transition: none; }
+}
+
+/* Amber, and beside the heading rather than buried in a note: it belongs wherever the numbers
+   this feature produces are being read, not only where it was switched on. */
+.tag-experimental {
+  display: inline-block; vertical-align: 2px;
+  background: #2a1e05; border: 1px solid #a16207; color: #fcd34d;
+  border-radius: 999px; padding: 2px 8px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+
 .settings-note { margin: -4px 0 2px; color: var(--muted); font-size: 12px; line-height: 1.35; }
 
 .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
