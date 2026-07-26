@@ -195,7 +195,13 @@ a { color: var(--accent); }
   margin-left: 2px;
   vertical-align: 0.35em;
 }
-.route-summary { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+/* Boxed like the notes panel below it, because it is the same kind of thing: prose about this
+   field that the pilot reads rather than scans. A point larger than the other secondary text —
+   these are the sentences the routed number has to be justified by, so they get read properly. */
+.route-summary {
+  margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+}
 
 /* Route profile. Deliberately flat colours and no animation: it is read once, at a glance,
    possibly while turning. */
