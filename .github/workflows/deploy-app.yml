@@ -2,7 +2,7 @@ name: Deploy app
 
 on:
   push:
-    # main -> production; dev -> the experimental deployment (next.meetthecows.org). Any other
+    # main -> production; dev -> the experimental deployment. Any other
     # branch can still be deployed on demand with workflow_dispatch, which uses that branch's
     # name for its own preview URL.
     branches: [main, dev]
@@ -191,7 +191,7 @@ jobs:
           if [ -n "${CHANNEL}" ]; then
             printf '/*\n  X-Robots-Tag: noindex, nofollow\n' >> dist/site/_headers
             echo "channel '${CHANNEL}': marked noindex"
-            # The dev branch is served at next.meetthecows.org, so it calls itself "next" on the
+            # The dev branch has its own origin, so it calls itself "next" on the
             # home screen. The internal channel value stays the branch name — that is what
             # suppresses the migration notice and what Settings shows a tester.
             LABEL="${CHANNEL}"
@@ -245,7 +245,7 @@ jobs:
       # --- Cloudflare Workers (static assets) --------------------------------------------------
       # Both branches, one config, name chosen per branch — see deploy/wrangler.toml for why they
       # must not diverge. main -> meet-the-cows-app (app.meetthecows.org),
-      # dev -> meet-the-cows-next (next.meetthecows.org).
+      # dev -> meet-the-cows-next.
       #
       # There was a Cloudflare Pages deploy here too, from the period when app.meetthecows.org was
       # still attached to a Pages project and the Worker only served next. Both custom domains are
@@ -272,7 +272,7 @@ jobs:
             if [ "${{ github.ref_name }}" = "main" ]; then
               echo "Worker meet-the-cows-app  -> app.meetthecows.org"
             else
-              echo "Worker meet-the-cows-next -> next.meetthecows.org"
+              echo "Worker meet-the-cows-next (experimental channel)"
             fi
             echo "Attach the custom domain in: Cloudflare -> Compute (Workers) -> <worker> -> Settings -> Domains & Routes"
           else

@@ -1,7 +1,7 @@
 # How the app is served — for BOTH main and the dev channel.
 #
 # ONE config, deployed twice under different Worker names, because the whole point of the
-# experimental build is to rehearse what production will do. When next.meetthecows.org ran on a
+# experimental build is to rehearse what production will do. When the channel build ran on a
 # Worker and app.meetthecows.org ran on a Pages project, it was rehearsing a different serving
 # stack: different header handling, different defaults, different failure modes. That is not a
 # staging environment, it is a second guess. The only difference between the two deployments is

@@ -287,9 +287,13 @@ per origin, so the app, the landing page and any experimental build can never di
 | Origin | What it is | Deployed as | Workflow |
 |---|---|---|---|
 | `app.meetthecows.org` | the PWA | Worker `meet-the-cows-app` | `deploy-app.yml` (branch `main`) |
-| `next.meetthecows.org` | experimental build, shared by hand and marked `noindex` | Worker `meet-the-cows-next` | `deploy-app.yml` (branch `dev`) |
+| _(unlisted)_ | the experimental build | its own Worker | `deploy-app.yml` (branch `dev`) |
 | `meetthecows.org` | landing page | Worker `meet-the-cows-site` | `deploy-site.yml` (`site/`) |
 | `data.meetthecows.org` | pack data in R2 | R2 bucket | `build-data-pack.yml` |
+
+The experimental origin is deliberately not written down here. It serves half-finished builds to
+whoever opens it, so it is shared by hand with people who know what they are getting, and it is
+marked `noindex` at deploy time. Naming it in a public repository would undo both.
 
 The app and the channel build share one `deploy/wrangler.toml` and differ only by the `--name`
 passed to `wrangler deploy`. That is deliberate: a channel served by a different stack than
@@ -330,8 +334,8 @@ switched on anywhere; `deploy-app.yml`'s `deploy_retired_origin` input does that
 `DEPLOY_TARGET` (repository variable) selects where the assembled site goes — `cloudflare` for the
 Workers deploy that serves the live app, unset for GitHub Pages. The Cloudflare path is a direct
 upload rather than a git-connected build, so the heavy pack build stays in Actions with its caches
-and secrets and Cloudflare only receives the finished directory. `main` deploys to the Worker
-`meet-the-cows-app`, every other branch to `meet-the-cows-next`.
+and secrets and Cloudflare only receives the finished directory. `main` deploys to the production Worker;
+every other branch deploys to the channel Worker under its own name.
 
 The GitHub Pages path is now only the retired origin, `br0c.github.io/meet-the-cows`. It runs on a
 manual dispatch with the `deploy_retired_origin` input, whose one job is to hand that frozen copy a
