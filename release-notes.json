@@ -3,13 +3,16 @@
     "version": "0.8.6-beta",
     "date": "2026-07-26",
     "en": [
-      "Fixed: airfields imported without a published code showed an internal key such as IT_ANDREA_BOZZO_44P864_7P407 where an identifier belongs. They now show no code at all, in the list, on the field page and in the exported waypoint file"
+      "Fixed: airfields imported without a published code showed an internal key such as IT_ANDREA_BOZZO_44P864_7P407 where an identifier belongs. They now show no code at all, in the list, on the field page and in the exported waypoint file",
+      "Fewer duplicate entries: an airfield carried by two sources under different names — “#73 Busano” and “Pegasus” for the same grass — is now recognised as one place by its runway heading, elevation and position, and merged with both sources' photos and notes kept"
     ],
     "fr": [
-      "Correction : les aérodromes importés sans code publié affichaient une clé interne du type IT_ANDREA_BOZZO_44P864_7P407 à la place d'un identifiant. Ils n'affichent désormais aucun code, dans la liste, sur la fiche du terrain et dans le fichier de points de virage exporté"
+      "Correction : les aérodromes importés sans code publié affichaient une clé interne du type IT_ANDREA_BOZZO_44P864_7P407 à la place d'un identifiant. Ils n'affichent désormais aucun code, dans la liste, sur la fiche du terrain et dans le fichier de points de virage exporté",
+      "Moins de doublons : un aérodrome présent dans deux sources sous des noms différents — « #73 Busano » et « Pegasus » pour la même piste — est désormais reconnu comme un seul lieu grâce à son orientation de piste, son altitude et sa position, puis fusionné en conservant les photos et les notes des deux sources"
     ],
     "de": [
-      "Behoben: Ohne veröffentlichten Code importierte Flugplätze zeigten dort, wo eine Kennung stehen sollte, einen internen Schlüssel wie IT_ANDREA_BOZZO_44P864_7P407. Sie zeigen nun gar keinen Code mehr – in der Liste, auf der Platzseite und in der exportierten Wegpunktdatei"
+      "Behoben: Ohne veröffentlichten Code importierte Flugplätze zeigten dort, wo eine Kennung stehen sollte, einen internen Schlüssel wie IT_ANDREA_BOZZO_44P864_7P407. Sie zeigen nun gar keinen Code mehr – in der Liste, auf der Platzseite und in der exportierten Wegpunktdatei",
+      "Weniger doppelte Einträge: Ein Flugplatz, den zwei Quellen unter verschiedenen Namen führen – „#73 Busano“ und „Pegasus“ für dieselbe Graspiste – wird nun anhand von Pistenrichtung, Höhe und Position als ein Ort erkannt und zusammengeführt, wobei Fotos und Hinweise beider Quellen erhalten bleiben"
     ]
   },
   {

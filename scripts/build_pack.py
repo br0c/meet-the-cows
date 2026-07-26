@@ -125,6 +125,14 @@ GLIDER_KEYWORDS = (
 )
 DEDUPE_DISTANCE_M = 350.0
 DEDUPE_STRONG_NAME_DISTANCE_M = 800.0
+# Two records of one strip, told apart by the ground rather than by spelling. The Guide calls an
+# airfield "#73 Busano" and OpenAIP calls the same grass "PEGASUS"; name similarity is zero, so
+# every name-based rule below is blind to them. What does agree is physical: runway heading,
+# elevation, position. All three are required together — see is_same_physical_strip for why the
+# distance bound is the one carrying the safety argument.
+SAME_STRIP_DISTANCE_M = 400.0
+SAME_STRIP_HEADING_DEG = 10.0
+SAME_STRIP_ELEVATION_M = 15.0
 PACK_IMAGE_MAX_LONG_EDGE = 2560
 PACK_IMAGE_JPEG_QUALITY = 85
 
@@ -3712,6 +3720,31 @@ def group_duplicate_fields(fields: list[dict[str, Any]]) -> list[list[dict[str, 
     return list(by_root.values())
 
 
+def is_same_physical_strip(a: dict[str, Any], b: dict[str, Any], distance: float | None) -> bool:
+    """One landing place described twice, judged on the ground instead of on the label.
+
+    Requires all three of: close together, runway headings that agree, and elevations that agree.
+    A runway is bidirectional — 080 and 260 are the same strip — so headings compare modulo 180.
+
+    The distance bound is what makes this safe to act on. Bevons_1 and Bevons_2 share a heading,
+    an elevation and a length to the metre yet lie 1.3 km apart; merging those would delete a real
+    landing option, and a pilot losing an option is a worse failure than a pilot seeing one place
+    listed twice. "Close together and physically identical" describes one strip. "Physically
+    identical" on its own does not. Missing heading or elevation means no evidence, which is not
+    the same as evidence of sameness, so those pairs are left alone.
+    """
+    if distance is None or distance > SAME_STRIP_DISTANCE_M:
+        return False
+    heading_a, heading_b = a.get("runwayDirectionDeg"), b.get("runwayDirectionDeg")
+    elevation_a, elevation_b = a.get("elevationM"), b.get("elevationM")
+    if not all(isinstance(v, (int, float)) for v in (heading_a, heading_b, elevation_a, elevation_b)):
+        return False
+    delta = abs(float(heading_a) - float(heading_b)) % 180.0
+    if min(delta, 180.0 - delta) > SAME_STRIP_HEADING_DEG:
+        return False
+    return abs(float(elevation_a) - float(elevation_b)) <= SAME_STRIP_ELEVATION_M
+
+
 def are_duplicate_fields(a: dict[str, Any], b: dict[str, Any]) -> bool:
     code_a = clean(a.get("code")).upper()
     code_b = clean(b.get("code")).upper()
@@ -3720,6 +3753,10 @@ def are_duplicate_fields(a: dict[str, Any], b: dict[str, Any]) -> bool:
     distance = distance_m(a.get("latitude"), a.get("longitude"), b.get("latitude"), b.get("longitude"))
     if distance is None:
         return False
+    # Before the name rules, because they need names to resemble each other and cross-source
+    # records of the same strip routinely do not.
+    if is_same_physical_strip(a, b, distance):
+        return True
     name_a = normalize_name_for_match(clean(a.get("name")))
     name_b = normalize_name_for_match(clean(b.get("name")))
     if not name_a or not name_b:

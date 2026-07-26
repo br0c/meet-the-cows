@@ -675,6 +675,83 @@ def test_minted_code_shape_is_what_the_app_filters_on():
     for code in ["LFNC", "LIMW", "LF7332", "411", "#78", "Ste-Jalle_2", "SallaOex", "Abondnce"]:
         assert not minted_re.search(code), code
 
+def strip(name, code, lat, lon, *, hdg=130.0, elev=300.0, kind="airfield",
+          difficulty="A", source="OpenAIP", media=None):
+    return {"name": name, "code": code, "latitude": lat, "longitude": lon,
+            "runwayDirectionDeg": hdg, "elevationM": elev, "kind": kind,
+            "difficulty": difficulty, "lengthM": 500.0,
+            "source": {"name": source}, "media": media or []}
+
+
+def test_same_strip_merges_across_sources_despite_unrelated_names():
+    """The Guide calls it "#73 Busano"; OpenAIP calls the same grass "PEGASUS".
+
+    Name similarity is zero, so every name-based rule is blind to them. Runway heading,
+    elevation and position all agree, which is what actually identifies a strip.
+    """
+    a = strip("#73 Busano", "#73", 45.3102, 7.6653, hdg=180.0, elev=300.0,
+              source="planeur-net / Guide des Aires de Sécurité")
+    b = strip("PEGASUS", "IT_PEGASUS_45P311_7P665", 45.3108, 7.6653, hdg=180.0, elev=295.0)
+    assert bp.token_similarity(bp.normalize_name_for_match(a["name"]),
+                               bp.normalize_name_for_match(b["name"])) == 0.0
+    assert bp.are_duplicate_fields(a, b)
+
+
+def test_a_runway_is_bidirectional():
+    """080 and 260 describe one strip flown from opposite ends, not two strips."""
+    a = strip("Alpha", "A1", 45.0, 7.0, hdg=80.0)
+    b = strip("Beta", "B1", 45.0005, 7.0, hdg=260.0)
+    assert bp.are_duplicate_fields(a, b)
+
+
+def test_identical_specs_far_apart_are_left_alone():
+    """Bevons_1 and Bevons_2, the reason the distance bound is not negotiable.
+
+    Same heading, same elevation, same length — and 1.3 km apart. They may well be two real
+    strips at one locality, and a pilot losing a landing option is a worse failure than a pilot
+    seeing one place listed twice.
+    """
+    a = strip("Bevons_1", "Bevons_1", 44.1722, 5.8953, kind="outlanding", difficulty="UNKNOWN")
+    b = strip("Bevons_2", "Bevons_2", 44.1683, 5.8797, kind="outlanding", difficulty="UNKNOWN")
+    metres = bp.distance_m(a["latitude"], a["longitude"], b["latitude"], b["longitude"])
+    assert metres > 1000, metres
+    assert not bp.is_same_physical_strip(a, b, metres)
+    assert not bp.are_duplicate_fields(a, b)
+
+
+def test_conflicting_headings_nearby_are_left_alone():
+    a = strip("Alpha", "A1", 45.0, 7.0, hdg=90.0)
+    b = strip("Beta", "B1", 45.0005, 7.0, hdg=10.0)
+    assert not bp.are_duplicate_fields(a, b)
+
+
+def test_conflicting_elevations_nearby_are_left_alone():
+    a = strip("Alpha", "A1", 45.0, 7.0, elev=300.0)
+    b = strip("Beta", "B1", 45.0005, 7.0, elev=400.0)
+    assert not bp.are_duplicate_fields(a, b)
+
+
+def test_missing_evidence_is_not_evidence_of_sameness():
+    """No heading or no elevation means nothing is known, so nothing is merged on it."""
+    a = strip("Alpha", "A1", 45.0, 7.0)
+    for missing in ("runwayDirectionDeg", "elevationM"):
+        b = strip("Beta", "B1", 45.0005, 7.0)
+        b[missing] = None
+        assert not bp.are_duplicate_fields(a, b), missing
+
+
+def test_merging_a_strip_keeps_the_worse_rating_and_every_photo():
+    """A merge must never make a field look easier, and must never drop a pilot's photo."""
+    a = strip("Le Truc", "#9", 45.0, 7.0, difficulty="C",
+              source="planeur-net / Guide des Aires de Sécurité",
+              media=[{"type": "image", "url": "../_shared/media/x/one.jpg", "caption": "one"}])
+    b = strip("LE TRUC AERODROME", "LF9999", 45.0005, 7.0, difficulty="A",
+              media=[{"type": "image", "url": "../_shared/media/y/two.jpg", "caption": "two"}])
+    merged = bp.consolidate_duplicate_fields([a, b])
+    assert len(merged) == 1, [f["name"] for f in merged]
+    assert merged[0]["difficulty"] == "C", merged[0]["difficulty"]
+    assert len(merged[0]["media"]) == 2, merged[0]["media"]
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
