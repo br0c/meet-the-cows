@@ -135,7 +135,7 @@ const context = await browser.newContext({ locale: 'en-GB' });
 await context.addInitScript(altitude => {
   localStorage.setItem('mtc-settings-v2', JSON.stringify({
     packIds: ['alps-test'], language: 'en', safetyMarginM: 250,
-    hideC: false, hideD: false, sortMode: 'glide',
+    showC: true, showD: true, sortMode: 'glide',
     testMode: true, testLatitude: 45.9360, testLongitude: 7.6310,   // Cervinia
     testAltitudeM: altitude, testLabel: 'Cervinia (test)',
     terrainRouting: false, terrainClearanceM: 200,

@@ -106,7 +106,7 @@ const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const context = await browser.newContext({ locale: 'en-GB' });
 await context.addInitScript(() => localStorage.setItem('mtc-settings-v2', JSON.stringify({
-  packIds: ['alps-test'], language: 'en', safetyMarginM: 250, hideC: false, hideD: false,
+  packIds: ['alps-test'], language: 'en', safetyMarginM: 250, showC: true, showD: true,
   sortMode: 'glide', testMode: true, testLatitude: 45.9356, testLongitude: 7.6304,
   testAltitudeM: 2800, testLabel: 'Cervinia', terrainRouting: true,
   terrainAcknowledged: true, terrainClearanceM: 200,

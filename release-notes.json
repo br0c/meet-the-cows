@@ -7,21 +7,24 @@
       "Fewer duplicate entries: an airfield carried by two sources under different names — “#73 Busano” and “Pegasus” for the same grass — is now recognised as one place by its runway heading, elevation and position, and merged with both sources' photos and notes kept",
       "Faster start on a weak connection: the app now waits at most a few seconds for the network before answering from what is already on the phone, and files that cannot have changed are not re-checked at all",
       "Terrain updates now reach the phone: rebuilt tiles are recognised by content, downloaded individually, and tiles fetched before this version are kept without re-downloading them",
-      "New in Settings: Remove terrain, to free the space the tiles occupy"
+      "New in Settings: Remove terrain, to free the space the tiles occupy",
+      "Settings now says “Show C fields” and “Show D fields”, both off, instead of “Hide C/D fields”, both on — the same behaviour, phrased like every other switch. Whatever you had chosen is kept"
     ],
     "fr": [
       "Correction : les aérodromes importés sans code publié affichaient une clé interne du type IT_ANDREA_BOZZO_44P864_7P407 à la place d'un identifiant. Ils n'affichent désormais aucun code, dans la liste, sur la fiche du terrain et dans le fichier de points de virage exporté",
       "Moins de doublons : un aérodrome présent dans deux sources sous des noms différents — « #73 Busano » et « Pegasus » pour la même piste — est désormais reconnu comme un seul lieu grâce à son orientation de piste, son altitude et sa position, puis fusionné en conservant les photos et les notes des deux sources",
       "Démarrage plus rapide avec une connexion faible : l'application n'attend plus le réseau que quelques secondes avant de répondre avec ce qui est déjà dans le téléphone, et les fichiers qui ne peuvent pas avoir changé ne sont plus revérifiés",
       "Les mises à jour du relief atteignent désormais le téléphone : les tuiles reconstruites sont reconnues à leur contenu, téléchargées individuellement, et les tuiles récupérées avant cette version sont conservées sans nouveau téléchargement",
-      "Nouveau dans les Réglages : Supprimer le relief, pour libérer l'espace occupé par les tuiles"
+      "Nouveau dans les Réglages : Supprimer le relief, pour libérer l'espace occupé par les tuiles",
+      "Les Réglages proposent désormais « Afficher les terrains C » et « Afficher les terrains D », tous deux désactivés, au lieu de « Masquer les terrains C/D », tous deux activés — même comportement, formulé comme les autres options. Votre choix précédent est conservé"
     ],
     "de": [
       "Behoben: Ohne veröffentlichten Code importierte Flugplätze zeigten dort, wo eine Kennung stehen sollte, einen internen Schlüssel wie IT_ANDREA_BOZZO_44P864_7P407. Sie zeigen nun gar keinen Code mehr – in der Liste, auf der Platzseite und in der exportierten Wegpunktdatei",
       "Weniger doppelte Einträge: Ein Flugplatz, den zwei Quellen unter verschiedenen Namen führen – „#73 Busano“ und „Pegasus“ für dieselbe Graspiste – wird nun anhand von Pistenrichtung, Höhe und Position als ein Ort erkannt und zusammengeführt, wobei Fotos und Hinweise beider Quellen erhalten bleiben",
       "Schnellerer Start bei schwacher Verbindung: Die App wartet höchstens ein paar Sekunden auf das Netz, bevor sie mit dem antwortet, was schon auf dem Telefon liegt — und Dateien, die sich nicht geändert haben können, werden gar nicht mehr nachgeprüft",
       "Gelände-Updates erreichen jetzt das Telefon: Neu gebaute Kacheln werden am Inhalt erkannt und einzeln geladen; vor dieser Version geladene Kacheln bleiben ohne erneuten Download erhalten",
-      "Neu in den Einstellungen: Gelände entfernen, um den belegten Speicher freizugeben"
+      "Neu in den Einstellungen: Gelände entfernen, um den belegten Speicher freizugeben",
+      "Die Einstellungen zeigen jetzt „C-Felder anzeigen“ und „D-Felder anzeigen“, beide aus, statt „C-/D-Felder ausblenden“, beide ein — gleiches Verhalten, formuliert wie jeder andere Schalter. Ihre bisherige Wahl bleibt erhalten"
     ]
   },
   {

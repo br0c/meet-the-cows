@@ -66,8 +66,8 @@ const DEFAULT_SETTINGS = {
   packIds: ['alps-west', 'alps-east'],
   language: 'auto',
   safetyMarginM: 250,
-  hideC: true,
-  hideD: true,
+  showC: false,
+  showD: false,
   sortMode: 'glide',
   // Simulated position for testing on the ground. Deliberately not persisted as "manual
   // altitude" any more: with terrain routing, a plausible altitude at the wrong place tells you
@@ -229,7 +229,7 @@ const STRINGS = {
     nearestList: 'Nearest list', sort: 'Sort',
     sortGlide: 'Best glide ratio', sortDistance: 'Nearest distance',
     safetyMargin: 'Safety arrival margin, m',
-    hideC: 'Hide C fields', hideD: 'Hide D fields',
+    showC: 'Show C fields', showD: 'Show D fields',
     cdNote: 'C and D fields are hidden by default. They are difficult and possibly dangerous — recommended only as last-resort emergency options.',
     terrain: 'Terrain',
     terrainRouting: 'Fly the glide around terrain',
@@ -396,7 +396,7 @@ const STRINGS = {
     nearestList: 'Liste des plus proches', sort: 'Tri',
     sortGlide: 'Meilleure finesse requise', sortDistance: 'Distance la plus courte',
     safetyMargin: "Marge d'arrivée de sécurité, m",
-    hideC: 'Masquer les terrains C', hideD: 'Masquer les terrains D',
+    showC: 'Afficher les terrains C', showD: 'Afficher les terrains D',
     cdNote: "Les terrains C et D sont masqués par défaut. Ils sont difficiles et potentiellement dangereux — recommandés uniquement en dernier recours d'urgence.",
     terrain: 'Relief',
     terrainRouting: 'Calculer la finesse en contournant le relief',
@@ -564,7 +564,7 @@ const STRINGS = {
     nearestList: 'Nächstgelegene Felder', sort: 'Sortierung',
     sortGlide: 'Beste erforderliche Gleitzahl', sortDistance: 'Kürzeste Entfernung',
     safetyMargin: 'Sicherheits-Ankunftsreserve, m',
-    hideC: 'C-Felder ausblenden', hideD: 'D-Felder ausblenden',
+    showC: 'C-Felder anzeigen', showD: 'D-Felder anzeigen',
     cdNote: 'C- und D-Felder sind standardmäßig ausgeblendet. Sie sind schwierig und möglicherweise gefährlich — nur als letzte Notfalloption empfohlen.',
     terrain: 'Gelände',
     terrainRouting: 'Gleitpfad um das Gelände herum rechnen',
@@ -876,6 +876,15 @@ function loadSettings() {
     // `true` may predate the warning entirely. Anyone in that state gets it switched off and is
     // asked properly, rather than keeping a setting they were never shown the terms of.
     if (settings.terrainRouting && !settings.terrainAcknowledged) settings.terrainRouting = false;
+    // "Hide C/D fields", on by default, became "Show C/D fields", off by default: the same
+    // behaviour said the way every other switch says itself. The stored value is the negation,
+    // and it has to be read here — the line below keeps only keys that exist in DEFAULT_SETTINGS,
+    // so an unmigrated hideC would simply vanish and a pilot who deliberately revealed those
+    // fields would quietly stop being shown them.
+    for (const grade of ['C', 'D']) {
+      const hidden = stored[`hide${grade}`];
+      if (typeof hidden === 'boolean') settings[`show${grade}`] = !hidden;
+    }
     return Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map(key => [key, settings[key]]));
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -1162,8 +1171,8 @@ function computeRows() {
   const safetyMarginM = Number(state.settings.safetyMarginM) || 0;
   let rows = state.fields.map(field => metricsForField(field, altitudeM, safetyMarginM));
   rows = rows.filter(row => {
-    if (state.settings.hideD && row.field.difficulty === 'D') return false;
-    if (state.settings.hideC && row.field.difficulty === 'C') return false;
+    if (!state.settings.showD && row.field.difficulty === 'D') return false;
+    if (!state.settings.showC && row.field.difficulty === 'C') return false;
     return true;
   });
   rows = rows.map(applyTerrainRoute);
@@ -2228,8 +2237,8 @@ function renderSettingsPage() {
                    min="0" step="50" value="${state.settings.safetyMarginM}" />
           </div>
         </div>
-        ${switchRow('hideC', t('hideC'), '', state.settings.hideC)}
-        ${switchRow('hideD', t('hideD'), t('cdNote'), state.settings.hideD)}
+        ${switchRow('showC', t('showC'), '', state.settings.showC)}
+        ${switchRow('showD', t('showD'), t('cdNote'), state.settings.showD)}
       </div>
 
       ${renderTerrainCard()}
@@ -3502,15 +3511,15 @@ function attachEvents() {
   });
   document.querySelector('#downloadTerrain')?.addEventListener('click', downloadTerrain);
   document.querySelector('#removeTerrain')?.addEventListener('click', removeTerrain);
-  for (const id of ['hideC', 'hideD']) {
+  for (const id of ['showC', 'showD']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
-      if ((id === 'hideC' || id === 'hideD') && !e.target.checked) {
+      if (e.target.checked) {
         // Revealing difficult fields — make the pilot acknowledge the risk before showing them.
-        const label = id === 'hideC' ? 'C' : 'D';
+        const label = id === 'showC' ? 'C' : 'D';
         const severity = label === 'D' ? t('sevVeryDifficult') : t('sevDifficult');
         const ok = confirm(t('revealConfirm', label, severity));
         if (!ok) {
-          e.target.checked = true; // decline: leave them hidden
+          e.target.checked = false; // decline: leave them hidden
           return;
         }
       }
