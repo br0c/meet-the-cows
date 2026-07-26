@@ -73,6 +73,20 @@ self.addEventListener('activate', event => {
   })());
 });
 
+// How long a fresh answer gets to beat the cached one. The number serves the cockpit case: on a
+// marginal connection a fetch does not fail, it HANGS — tens of seconds per file with one
+// flickering bar — and every load below used to await it with no limit, so the app could take a
+// minute to open in the air it is built for. Offline proper is unaffected (fetch rejects at
+// once, the cache answers immediately, as before); this only caps how long "maybe" may stall a
+// pilot who already has a working copy on the phone. The losing fetch is not cancelled — it
+// finishes in the background and refreshes the cache for the next load.
+const FRESH_RACE_MS = 3500;
+
+// Names minted by scripts/hash_assets.py: a 10-hex content hash before the extension. The bytes
+// cannot change under such a URL, so revalidating one is a round trip that can only confirm what
+// the name already guarantees — these are answered from the cache outright.
+const HASHED_ASSET_RE = /\.[0-9a-f]{10}\.(?:js|css)$/;
+
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
@@ -81,21 +95,32 @@ self.addEventListener('fetch', event => {
   if (!packData && !isSameScope(requestUrl)) return;
 
   if (event.request.mode === 'navigate') {
-    event.respondWith(networkFirst(SHELL_CACHE, event.request, u('index.html'), true));
+    event.respondWith(networkFirst(SHELL_CACHE, event.request, u('index.html'),
+      { revalidate: true, raceMs: FRESH_RACE_MS, event }));
     return;
   }
 
   const key = requestUrl.toString();
   if (APP_SHELL_SET.has(key)) {
-    // revalidate: the shell must never be answered from a stale HTTP cache entry, whatever
-    // max-age the host decided to put on it. Costs a conditional request and usually a 304.
-    event.respondWith(networkFirst(SHELL_CACHE, event.request, '', true));
+    if (HASHED_ASSET_RE.test(requestUrl.pathname)) {
+      event.respondWith(cacheOnlyFirst(SHELL_CACHE, event.request, true));
+      return;
+    }
+    // The unhashed shell (index, manifest, release notes, icon): never answered from a stale
+    // HTTP cache entry whatever max-age the host decided — but never allowed to stall a pilot
+    // who has a copy, either. Usually a conditional request and a 304.
+    event.respondWith(networkFirst(SHELL_CACHE, event.request, '',
+      { revalidate: true, raceMs: FRESH_RACE_MS, event }));
     return;
   }
   if (!packData) return;
 
   if (isPackCoreJson(requestUrl)) {
-    event.respondWith(networkFirst(DATA_CACHE, event.request));
+    // The same cap as the shell, for the same reason: the field list IS this data, and a pilot
+    // opening the app in the air must get yesterday's packs.json in seconds, not this morning's
+    // after a minute of stalling.
+    event.respondWith(networkFirst(DATA_CACHE, event.request, '',
+      { raceMs: FRESH_RACE_MS, event }));
     return;
   }
   if (isPackMediaOrDoc(requestUrl)) {
@@ -114,14 +139,46 @@ async function cacheOptional(cache, urls) {
   }
 }
 
-async function networkFirst(cacheName, request, fallbackUrl = '', revalidate = false) {
+const RACE_LOST = Symbol('race-lost');
+
+async function networkFirst(cacheName, request, fallbackUrl = '', { revalidate = false, raceMs = 0, event = null } = {}) {
   const cache = await caches.open(cacheName);
-  try {
-    // 'no-cache' means "ask the server, but a 304 is fine" — not "download it again". Offline
-    // this still throws and falls through to the cached copy below, exactly as before.
-    const response = await fetch(revalidate ? new Request(request, { cache: 'no-cache' }) : request);
+  // 'no-cache' means "ask the server, but a 304 is fine" — not "download it again". Offline
+  // this still rejects and the cached copy below answers, exactly as before.
+  //
+  // Rebuilt from the URL, not from the request: constructing a Request from one whose mode is
+  // 'navigate' throws, so the old `new Request(request, …)` spelling silently made every
+  // navigation cache-only — the throw landed in the catch below and the cached shell answered.
+  // Nothing looked wrong, because the worker's own install refreshes the shell on every version
+  // bump; but "revalidate" was a word this code said, not a thing it did. For a same-origin GET
+  // the URL is the whole request, so this loses nothing.
+  const network = (async () => {
+    const response = await fetch(revalidate ? new Request(request.url, { cache: 'no-cache' }) : request);
     if (isCacheable(response)) await cache.put(request, response.clone());
     return response;
+  })();
+
+  if (raceMs) {
+    const cached = await cache.match(request)
+      || (fallbackUrl ? await cache.match(fallbackUrl) : null);
+    if (cached) {
+      // A rejected fetch (offline) resolves to null and loses instantly; only an actual response
+      // inside the window wins. When the cache answers, the network fetch is deliberately left
+      // running — event.waitUntil keeps the worker alive to finish it, so the cache is fresh for
+      // the next load even though this one did not wait.
+      const winner = await Promise.race([
+        network.catch(() => null),
+        new Promise(resolve => setTimeout(() => resolve(RACE_LOST), raceMs)),
+      ]);
+      if (winner && winner !== RACE_LOST) return winner;
+      const settle = network.catch(() => {});
+      if (event) event.waitUntil(settle);
+      return cached;
+    }
+  }
+
+  try {
+    return await network;
   } catch (error) {
     const cached = await cache.match(request);
     if (cached) return cached;
@@ -133,11 +190,16 @@ async function networkFirst(cacheName, request, fallbackUrl = '', revalidate = f
   }
 }
 
-async function cacheOnlyFirst(cacheName, request) {
+async function cacheOnlyFirst(cacheName, request, storeOnMiss = false) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
   if (cached) return cached;
-  return fetch(request);
+  const response = await fetch(request);
+  // For hashed shell assets a miss means the install-time precache was lost (evicted, or a
+  // failed partial install) — refill it so the next load is a hit again. Media keeps the old
+  // behaviour: what lands in that cache is the download flow's decision, not a side effect.
+  if (storeOnMiss && isCacheable(response)) await cache.put(request, response.clone());
+  return response;
 }
 
 // An opaque response (a no-cors <img>/<iframe> load of a cross-origin pack file) reports

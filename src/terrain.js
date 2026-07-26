@@ -144,10 +144,25 @@ export class TerrainStore {
     this.index = null;
     this.indexPending = null;     // in-flight index fetch, so concurrent callers share one request
     this.indexRetryAt = 0;        // a failed index is retried, but not on every render
+    this.tileVersions = new Map();// key -> short content hash from the index, '' when unpublished
     this.cols = undefined;        // undefined = not asked yet, null = asked and absent
   }
 
   url(path) { return new URL(path, this.baseUrl).toString(); }
+
+  /**
+   * The address a tile is fetched and cached under. Carries the index's content hash as ?v=,
+   * because the bare key is a lie the caches believe forever: N45E007.terr keeps its name when a
+   * rebuild changes its bytes, the CDN serves it for a year, and fetchTile answers cache-first —
+   * so without this, a regenerated tile could never reach a phone that already held the old one.
+   * With it, new bytes mean a new URL, and every cache in the chain misses honestly. An index
+   * that predates the hashes yields the bare URL, which is exactly the old behaviour.
+   */
+  tileUrl(key) {
+    const version = this.tileVersions.get(key) || '';
+    const url = this.url(terrainPaths.tile(key));
+    return version ? `${url}?v=${version}` : url;
+  }
 
   /**
    * The published tile list, or null when this deployment ships no terrain at all.
@@ -167,6 +182,8 @@ export class TerrainStore {
         const response = await fetch(this.url(terrainPaths.index), { cache: 'no-cache' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         this.index = await response.json();
+        this.tileVersions = new Map((this.index.tiles || [])
+          .map(entry => [entry.key, String(entry.sha256 || '').slice(0, 10)]));
         this.indexRetryAt = 0;
       } catch (error) {
         console.info('No terrain index available', error);
@@ -189,6 +206,16 @@ export class TerrainStore {
   retryFailures() {
     this.unreachable.clear();
     this.indexRetryAt = 0;
+  }
+
+  /**
+   * Forget every decoded tile held in memory, so the next ask re-reads the cache (or network).
+   * Needed whenever the bytes behind a key may have changed or gone: after a download refreshes
+   * tiles, and after the pilot removes the offline set — fetchTile answers from memory first,
+   * and would otherwise keep serving ground that no longer exists anywhere else.
+   */
+  dropDecodedTiles() {
+    this.tiles.clear();
   }
 
   /**
@@ -240,15 +267,27 @@ export class TerrainStore {
     if (this.pending.has(key)) return this.pending.get(key);
 
     const task = (async () => {
-      const url = this.url(terrainPaths.tile(key));
+      const url = this.tileUrl(key);
       try {
-        // Cache first: in the air there is no network, and a tile never changes under its key
-        // within a build. A miss falls through to the network and is stored for next time.
+        // Cache first: in the air there is no network, and a tile's bytes never change under its
+        // versioned URL. A miss falls through to the network and is stored for next time.
         //
         // This lookup comes before the `unreachable` check on purpose. A pilot who enables terrain
         // on a bad connection and then downloads the region has put the tile in this cache; a
         // negative result remembered from before the download must not be what answers them.
-        let response = 'caches' in self ? await (await caches.open(this.cacheName)).match(url) : null;
+        //
+        // The second match is the past: tiles cached before URLs carried a version (bare key) or
+        // under a superseded version. They still answer — yesterday's ground beats no ground, and
+        // in the air it is all there is — but nothing here refreshes them behind the pilot's
+        // back: the settings card counts them as out of date, and replacing them is the next
+        // download's (or the next online solve's) explicit doing. A 70 MB surprise re-fetch on a
+        // phone plan is not this function's decision to make.
+        let response = null;
+        if ('caches' in self) {
+          const cache = await caches.open(this.cacheName);
+          response = await cache.match(url)
+            || await cache.match(this.url(terrainPaths.tile(key)), { ignoreSearch: true });
+        }
         if (!response) {
           if (this.unreachable.has(key)) return null;
           response = await fetch(url);

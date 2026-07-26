@@ -242,6 +242,8 @@ const STRINGS = {
     terrainCoverage: p => `${p}% of the working area has terrain data`,
     terrainPartial: 'Terrain data is incomplete here, so fields without a route keep their straight-line glide.',
     downloadTerrain: 'Download terrain',
+    removeTerrain: 'Remove terrain',
+    removeTerrainNote: 'Removing frees the space. Routing keeps working while there is a connection; download again before flying offline.',
     terrainTiles: (n, size) => `${n} tiles · ${size}`,
     terrainCachedCount: (done, total) => `${done} of ${total} tiles offline`,
     terrainSolving: 'working out routes…',
@@ -407,6 +409,8 @@ const STRINGS = {
     terrainCoverage: p => `${p} % de la zone de travail dispose de données de relief`,
     terrainPartial: "Les données de relief sont incomplètes ici : les terrains sans trajet gardent leur finesse à vol d'oiseau.",
     downloadTerrain: 'Télécharger le relief',
+    removeTerrain: 'Supprimer le relief',
+    removeTerrainNote: "La suppression libère l'espace. Le calcul continue de fonctionner avec une connexion ; retéléchargez avant de voler hors ligne.",
     terrainTiles: (n, size) => `${n} tuiles · ${size}`,
     terrainCachedCount: (done, total) => `${done} sur ${total} tuiles hors ligne`,
     terrainSolving: 'calcul des trajets…',
@@ -573,6 +577,8 @@ const STRINGS = {
     terrainCoverage: p => `${p} % des Arbeitsbereichs haben Geländedaten`,
     terrainPartial: 'Die Geländedaten sind hier unvollständig; Felder ohne Pfad behalten ihre Luftlinien-Gleitzahl.',
     downloadTerrain: 'Gelände herunterladen',
+    removeTerrain: 'Gelände entfernen',
+    removeTerrainNote: 'Das Entfernen gibt den Speicher frei. Mit Verbindung rechnet die App weiter; vor dem Offline-Flug erneut herunterladen.',
     terrainTiles: (n, size) => `${n} Kacheln · ${size}`,
     terrainCachedCount: (done, total) => `${done} von ${total} Kacheln offline`,
     terrainSolving: 'Pfade werden berechnet…',
@@ -806,6 +812,7 @@ let state = {
     error: '',
     cacheStatus: 'unknown',
     cacheProgress: '',
+    cacheAnyTiles: false, // any tile bytes at all in the cache, current or not — drives "Remove"
   },
 };
 
@@ -1400,9 +1407,12 @@ function terrainDownloadTargets() {
   return { keys, bytes: keys.reduce((total, key) => total + (published.get(key) || 0), 0) };
 }
 
+// Versioned addresses (…?v=<hash>), so a rebuilt tile is a cache miss everywhere at once —
+// see TerrainStore.tileUrl. Everything that fetches, counts or sweeps tiles goes through this,
+// which is what keeps the download, the status line and the solver telling one story.
 function terrainTileUrls(keys) {
   const store = terrainStore();
-  return keys.map(key => store.url(terrainPaths.tile(key)));
+  return keys.map(key => store.tileUrl(key));
 }
 
 async function checkTerrainCacheStatus() {
@@ -1411,10 +1421,57 @@ async function checkTerrainCacheStatus() {
   const { keys } = terrainDownloadTargets();
   if (!keys.length) { terrain.cacheStatus = 'unknown'; terrain.cacheProgress = ''; return; }
   const cache = await caches.open(DATA_CACHE);
-  const cached = new Set((await cache.keys()).map(request => request.url));
+  await reconcileTerrainCache(cache);
+  const requests = await cache.keys();
+  const cached = new Set(requests.map(request => request.url));
   const have = terrainTileUrls(keys).filter(url => cached.has(url)).length;
   terrain.cacheStatus = have === keys.length ? 'ready' : have > 0 ? 'incomplete' : 'not downloaded';
   terrain.cacheProgress = t('terrainCachedCount', have, keys.length);
+  // Whether ANY tile bytes sit in the cache — current, superseded or legacy — which is the
+  // question "is there something to remove" actually asks. `have` cannot answer it: a pilot
+  // whose tiles predate a rebuild has 0 current tiles and 70 MB on the phone.
+  terrain.cacheAnyTiles = requests.some(request => new URL(request.url).pathname.endsWith('.terr'));
+}
+
+/**
+ * Bring every cached tile in line with the index, without spending a byte of network.
+ *
+ * Two moves, each per tile key. ADOPT: an entry from before URLs carried a version sits under
+ * the bare key; when its bytes hash to exactly what the index says the tile is today, it IS the
+ * current tile in everything but its address, so it moves there and the old entry goes — one
+ * hash each, once, and never a re-download of megabytes the pilot already paid for. SWEEP: an
+ * entry whose replacement is genuinely in the cache is dead weight and goes — and not a moment
+ * before, because until the replacement is really there, the old bytes are what fetchTile falls
+ * back to when there is no radio. Stale bytes with no replacement therefore stay, counted as
+ * out of date by the status line and replaced over the wire by the next download or solve.
+ */
+async function reconcileTerrainCache(cache) {
+  const store = terrainStore();
+  if (!store.index) return;
+  const published = new Map((store.index.tiles || []).map(entry => [entry.key, entry.sha256]));
+  for (const request of await cache.keys()) {
+    const url = new URL(request.url);
+    if (!url.pathname.endsWith('.terr')) continue;
+    const key = url.pathname.split('/').pop().replace(/\.terr$/, '');
+    const sha = published.get(key);
+    if (!sha) continue;                                  // not this index's tile: leave it be
+    const currentUrl = store.tileUrl(key);
+    if (request.url === currentUrl) continue;            // already the current entry
+    if (await cache.match(currentUrl)) { await cache.delete(request); continue; }
+    if (url.search || !crypto?.subtle) continue;         // superseded version: keep as fallback
+    try {
+      const legacy = await cache.match(request);
+      const bytes = await legacy.arrayBuffer();
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+      if (hex === sha) {
+        await cache.put(currentUrl, new Response(bytes, {
+          headers: { 'content-type': 'application/octet-stream' },
+        }));
+        await cache.delete(request);
+      }
+    } catch { /* hashing is an optimisation; the download path still replaces the tile */ }
+  }
 }
 
 /**
@@ -1471,6 +1528,9 @@ async function downloadTerrain() {
   if (!keys.length || !('caches' in window)) return;
   const urls = terrainTileUrls(keys);
   const cache = await caches.open(DATA_CACHE);
+  // Cheap when checkTerrainCacheStatus already ran it, and not guaranteed to have run: a tile
+  // that can be adopted from the old cache must never be paid for over the radio.
+  await reconcileTerrainCache(cache);
   const cached = new Set((await cache.keys()).map(request => request.url));
   const toFetch = urls.filter(url => !cached.has(url));
 
@@ -1494,12 +1554,36 @@ async function downloadTerrain() {
     }
   }
   state.offlineSync = null;
+  // checkTerrainCacheStatus reconciles on the way through, which is also what sweeps the
+  // predecessors of every tile this download just replaced.
   await checkTerrainCacheStatus();
   // Newly downloaded ground can change every answer, so throw away the last solve — and the store
   // has to forget what it could not reach before, or it will answer from that instead of from the
-  // tiles now sitting in the cache.
+  // tiles now sitting in the cache. Decoded tiles held in memory go too: they were decoded from
+  // the superseded bytes, and fetchTile answers from memory first.
   state.terrain.store?.retryFailures();
+  state.terrain.store?.dropDecodedTiles();
   state.terrain.available = null;
+  invalidateTerrainRoutes();
+  render();
+  refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+}
+
+/**
+ * Delete every terrain tile from the phone — current, superseded and legacy alike. The routing
+ * SETTING is left alone on purpose: with a connection, solves keep working by fetching what they
+ * need (and re-caching only that much); without one, the glide falls back to straight lines,
+ * which is the app's honest baseline. The one thing this must not do is silently keep answering
+ * from memory as though nothing happened — hence the dropDecodedTiles.
+ */
+async function removeTerrain() {
+  if (!('caches' in window)) return;
+  const cache = await caches.open(DATA_CACHE);
+  for (const request of await cache.keys()) {
+    if (new URL(request.url).pathname.endsWith('.terr')) await cache.delete(request);
+  }
+  state.terrain.store?.dropDecodedTiles();
+  await checkTerrainCacheStatus();
   invalidateTerrainRoutes();
   render();
   refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
@@ -2189,9 +2273,11 @@ function renderTerrainCard() {
           <div><dt>${t('downloadSize')}</dt><dd>${escapeHtml(t('terrainTiles', targets.keys.length, formatBytes(targets.bytes)))}</dd></div>
           <div><dt>${t('offline')}</dt><dd>${escapeHtml(terrain.cacheProgress || cacheStatusLabel(terrain.cacheStatus))}</dd></div>
         </dl>
-        <div class="button-row single">
+        <div class="button-row${terrain.cacheAnyTiles ? '' : ' single'}">
           <button id="downloadTerrain" ${disabled ? 'disabled' : ''}>${t('downloadTerrain')}</button>
-        </div>` : ''}
+          ${terrain.cacheAnyTiles ? `<button id="removeTerrain">${t('removeTerrain')}</button>` : ''}
+        </div>
+        ${terrain.cacheAnyTiles ? `<p class="settings-note">${escapeHtml(t('removeTerrainNote'))}</p>` : ''}` : ''}
         ${status ? `<p class="settings-note">${escapeHtml(status)}</p>` : ''}
         <p class="settings-note">${escapeHtml(t('terrainAttribution'))}</p>
       </div>`;
@@ -3415,6 +3501,7 @@ function attachEvents() {
     refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
   });
   document.querySelector('#downloadTerrain')?.addEventListener('click', downloadTerrain);
+  document.querySelector('#removeTerrain')?.addEventListener('click', removeTerrain);
   for (const id of ['hideC', 'hideD']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       if ((id === 'hideC' || id === 'hideD') && !e.target.checked) {
