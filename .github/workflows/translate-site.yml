@@ -1,0 +1,103 @@
+# Translate the landing page with DeepL, using the key the data-pack build already has.
+#
+# Deliberately manual, and deliberately does not publish by default. Machine translation is a
+# draft: the run prints every English/French pair into the job summary and uploads the page, so
+# it can be read before anyone decides it is better than what is there. Set `commit` to push it.
+name: Translate landing site
+
+on:
+  workflow_dispatch:
+    inputs:
+      lang:
+        description: "Target language (DeepL code)"
+        type: string
+        default: "fr"
+      commit:
+        description: "Commit the result to this branch (leave off to review it first)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: translate-site
+  cancel-in-progress: false
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Check the key is present
+        env:
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+        run: |
+          if [ -z "${DEEPL_API_KEY}" ]; then
+            echo "::error::DEEPL_API_KEY is not set for this repository. Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          # Never print the key. The usage endpoint proves it works and shows what is left.
+          usage=$(curl -sS -H "Authorization: DeepL-Auth-Key ${DEEPL_API_KEY}" \
+            "$(case "${DEEPL_API_KEY}" in *:fx) echo https://api-free.deepl.com;; *) echo https://api.deepl.com;; esac)/v2/usage")
+          echo "DeepL usage: ${usage}"
+
+      - name: Keep a copy of the current page
+        run: |
+          LANG_DIR="site/public/${{ inputs.lang }}"
+          if [ -f "${LANG_DIR}/index.html" ]; then cp "${LANG_DIR}/index.html" /tmp/before.html; fi
+
+      - name: Translate
+        env:
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+        run: |
+          python3 scripts/translate_site.py --lang "${{ inputs.lang }}" --report /tmp/report.md
+
+      - name: Show the result
+        run: |
+          {
+            echo "## DeepL translation — ${{ inputs.lang }}"
+            echo
+            echo "Glossary: \`site/i18n/glossary.${{ inputs.lang == 'fr' && 'en-fr' || format('en-{0}', inputs.lang) }}.tsv\`."
+            echo "Pinned strings: \`site/i18n/overrides.${{ inputs.lang }}.json\`."
+            echo
+            cat /tmp/report.md
+            if [ -f /tmp/before.html ]; then
+              echo
+              echo "### Diff against the page that is live"
+              echo '```diff'
+              diff -u /tmp/before.html "site/public/${{ inputs.lang }}/index.html" | head -400 || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the page
+        uses: actions/upload-artifact@v4
+        with:
+          name: landing-${{ inputs.lang }}
+          path: site/public/${{ inputs.lang }}/index.html
+
+      - name: Commit
+        if: ${{ inputs.commit }}
+        run: |
+          git config user.name "Fabien Broquet"
+          git config user.email "fbroquet@pm.me"
+          if git diff --quiet -- "site/public/${{ inputs.lang }}/index.html"; then
+            echo "No change."
+            exit 0
+          fi
+          git add "site/public/${{ inputs.lang }}/index.html"
+          git commit -m "Regenerate the ${{ inputs.lang }} landing page with DeepL
+
+          Produced by scripts/translate_site.py against site/public/index.html, with the domain
+          glossary and the protected-term list. Reviewed from the run summary before landing."
+          git push origin "HEAD:${{ github.ref_name }}"
