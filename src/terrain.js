@@ -19,6 +19,11 @@ const ROUTE_LAT_DECIMATE = 3;
 
 const METRES_PER_DEGREE_LAT = 111320;
 
+// How long a failed index fetch is taken at its word before it is worth asking again. Long enough
+// that a re-rendering settings page cannot turn one dead host into a request storm, short enough
+// that a pilot who walks back into signal does not have to restart the app.
+const INDEX_RETRY_MS = 5000;
+
 export const terrainPaths = {
   dir: 'packs/_terrain/',
   index: 'packs/_terrain/index.json',
@@ -134,25 +139,56 @@ export class TerrainStore {
     this.maxTilesInMemory = maxTilesInMemory;
     this.tiles = new Map();       // key -> decoded tile (insertion order doubles as LRU)
     this.pending = new Map();     // key -> in-flight promise, so a burst asks the network once
-    this.missing = new Set();     // keys the server does not have; never asked for twice
+    this.absent = new Set();      // keys the server says it does not have; never asked for twice
+    this.unreachable = new Set(); // keys a flaky network lost; retried when the pilot acts
     this.index = null;
+    this.indexPending = null;     // in-flight index fetch, so concurrent callers share one request
+    this.indexRetryAt = 0;        // a failed index is retried, but not on every render
     this.cols = undefined;        // undefined = not asked yet, null = asked and absent
   }
 
   url(path) { return new URL(path, this.baseUrl).toString(); }
 
-  /** The published tile list, or null when this deployment ships no terrain at all. */
+  /**
+   * The published tile list, or null when this deployment ships no terrain at all.
+   *
+   * A success is cached forever — the index does not change under a deployment. A failure is not:
+   * a pilot who switches terrain on with one bar of signal, or before the data host has woken up,
+   * would otherwise be stuck with "no terrain" until they killed the app. It is retried on the
+   * next ask, floored at INDEX_RETRY_MS so a render loop cannot turn recovery into a flood.
+   */
   async loadIndex() {
-    if (this.index !== null) return this.index || null;
-    try {
-      const response = await fetch(this.url(terrainPaths.index), { cache: 'no-cache' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      this.index = await response.json();
-    } catch (error) {
-      console.info('No terrain index available', error);
-      this.index = false;
-    }
-    return this.index || null;
+    if (this.index) return this.index;
+    if (this.indexPending) return this.indexPending;
+    if (Date.now() < this.indexRetryAt) return null;
+
+    this.indexPending = (async () => {
+      try {
+        const response = await fetch(this.url(terrainPaths.index), { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        this.index = await response.json();
+        this.indexRetryAt = 0;
+      } catch (error) {
+        console.info('No terrain index available', error);
+        this.index = false;
+        this.indexRetryAt = Date.now() + INDEX_RETRY_MS;
+      } finally {
+        this.indexPending = null;
+      }
+      return this.index || null;
+    })();
+    return this.indexPending;
+  }
+
+  /**
+   * Forget every failure that a change in circumstances could have undone: tiles the network lost
+   * and an index that could not be fetched. Called when the pilot does something that plausibly
+   * fixes it — switching terrain on, or finishing a download — so recovery never needs a restart.
+   * Tiles the server positively denies having are left alone; nothing the pilot does creates them.
+   */
+  retryFailures() {
+    this.unreachable.clear();
+    this.indexRetryAt = 0;
   }
 
   /**
@@ -200,7 +236,7 @@ export class TerrainStore {
 
   async fetchTile(key) {
     if (this.tiles.has(key)) return this.tiles.get(key);
-    if (this.missing.has(key)) return null;
+    if (this.absent.has(key)) return null;
     if (this.pending.has(key)) return this.pending.get(key);
 
     const task = (async () => {
@@ -208,23 +244,32 @@ export class TerrainStore {
       try {
         // Cache first: in the air there is no network, and a tile never changes under its key
         // within a build. A miss falls through to the network and is stored for next time.
+        //
+        // This lookup comes before the `unreachable` check on purpose. A pilot who enables terrain
+        // on a bad connection and then downloads the region has put the tile in this cache; a
+        // negative result remembered from before the download must not be what answers them.
         let response = 'caches' in self ? await (await caches.open(this.cacheName)).match(url) : null;
         if (!response) {
+          if (this.unreachable.has(key)) return null;
           response = await fetch(url);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          // A 404 is the server saying the tile does not exist, which no amount of retrying or
+          // downloading will change. Anything else is the network, and gets another chance.
+          if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`),
+            { absent: response.status === 404 });
           if ('caches' in self) {
             await (await caches.open(this.cacheName)).put(url, response.clone());
           }
         }
         const tile = await decodeTile(await response.arrayBuffer());
         this.tiles.set(key, tile);
+        this.unreachable.delete(key);
         // Each tile is ~2.9 MB decoded, so hold a working set and drop the oldest beyond it.
         while (this.tiles.size > this.maxTilesInMemory) {
           this.tiles.delete(this.tiles.keys().next().value);
         }
         return tile;
       } catch (error) {
-        this.missing.add(key);
+        if (error?.absent) this.absent.add(key); else this.unreachable.add(key);
         console.info('Terrain tile unavailable', key, error);
         return null;
       } finally {

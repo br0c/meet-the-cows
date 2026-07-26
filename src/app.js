@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeysForBounds } from './terrain.js';
 
-const APP_VERSION = '0.8.4-beta';
+const APP_VERSION = '0.8.5-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -99,6 +99,9 @@ const TERRAIN_MAX_TARGETS = 80;
 // GPS tick would be pointless: neither the terrain nor the answer changes over 300 m.
 const TERRAIN_RESOLVE_DISTANCE_M = 400;
 const TERRAIN_RESOLVE_ALTITUDE_M = 75;
+// How often the settings page re-asks whether terrain data has come back, while it is showing the
+// greyed-out controls that say it has not. Comfortably above the store's own retry floor.
+const TERRAIN_STATUS_RETRY_MS = 6000;
 // Below this fraction of the working area covered by tiles, routed answers are treated as
 // advisory: a field with no route is reported as un-checked rather than as unreachable, because
 // the missing route may only mean missing ground data.
@@ -1421,19 +1424,40 @@ async function checkTerrainCacheStatus() {
  */
 let terrainStatusPending = false;
 let terrainStatusSignature = '';
+let terrainStatusRetry = null;
 async function refreshTerrainStatus() {
   if (terrainStatusPending || !terrainSupported()) return;
   terrainStatusPending = true;
+  clearTimeout(terrainStatusRetry);
+  terrainStatusRetry = null;
   try {
-    if (state.terrain.available === null) {
-      state.terrain.available = Boolean(await terrainStore().loadIndex());
-    }
+    // Asked every time, not only when the answer is still unknown: a "no" here greys out the
+    // switch and the download button, so latching it would leave a pilot who lost the network for
+    // a moment with no way back short of restarting. loadIndex caches the yes and rate-limits the
+    // retry, which makes the repeated call free in the case that matters.
+    const wasAvailable = state.terrain.available;
+    state.terrain.available = Boolean(await terrainStore().loadIndex());
     await checkTerrainCacheStatus();
     const terrain = state.terrain;
     const signature = `${terrain.available}|${terrain.cacheStatus}|${terrain.cacheProgress}`;
     if (signature !== terrainStatusSignature) {
       terrainStatusSignature = signature;
       render();
+    }
+    // Terrain that was missing and is now there is a solve waiting to happen: the last one gave
+    // up, and nothing else will ask again until the glider has moved far enough to count.
+    if (terrain.available && wasAvailable === false && state.settings.terrainRouting) {
+      invalidateTerrainRoutes();
+      refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+    }
+    // An unreachable index greys out the switch and the download button. Keep asking for as long
+    // as the pilot is sitting in front of those dead controls, so the moment the signal comes back
+    // they light up on their own rather than only after a restart. Settings is one page with two
+    // requests on it; this stops the instant they navigate away.
+    if (!terrain.available && state.view === 'settings') {
+      terrainStatusRetry = setTimeout(() => {
+        if (state.view === 'settings') refreshTerrainStatus();
+      }, TERRAIN_STATUS_RETRY_MS);
     }
   } catch (error) {
     console.warn('Terrain status failed', error);
@@ -1471,7 +1495,11 @@ async function downloadTerrain() {
   }
   state.offlineSync = null;
   await checkTerrainCacheStatus();
-  // Newly downloaded ground can change every answer, so throw away the last solve.
+  // Newly downloaded ground can change every answer, so throw away the last solve — and the store
+  // has to forget what it could not reach before, or it will answer from that instead of from the
+  // tiles now sitting in the cache.
+  state.terrain.store?.retryFailures();
+  state.terrain.available = null;
   invalidateTerrainRoutes();
   render();
   refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
@@ -1581,20 +1609,17 @@ async function refreshTerrainRoutes() {
   if (altitudeM === null || !terrainInputsChanged(altitudeM)) return;
 
   const store = terrainStore();
-  if (terrain.available === null) {
-    terrain.available = Boolean(await store.loadIndex());
-    if (!terrain.available) {
-      terrain.status = 'unavailable';
-      scheduleRender();
-      return;
-    }
+  terrain.available = Boolean(await store.loadIndex());
+  if (!terrain.available) {
+    terrain.status = 'unavailable';
+    scheduleRender();
+    return;
   }
-  if (!terrain.available) return;
 
-  // Not inside the availability check above: opening Settings calls refreshTerrainStatus, which
-  // sets `available` first, so anything guarded by "have we looked yet" is skipped on the path
-  // where a pilot switches terrain on by hand — which is every first use. loadCols returns
-  // immediately once it has an answer, so calling it before each solve costs nothing.
+  // Unconditional, not hung off "is this the first solve": the col names once lived behind a
+  // first-look guard, and because opening Settings had already taken that first look, the names
+  // never loaded on the path where a pilot switches terrain on by hand — which is every first
+  // use. loadCols returns immediately once it has an answer, so asking each time costs nothing.
   //
   // Awaited rather than raced: it is a couple of hundred kilobytes against megabytes of tiles,
   // and racing it meant the first routes came out labelled "S of track" and silently corrected
@@ -2298,8 +2323,8 @@ function renderFieldRow(row) {
   const via = routeIsDetour(row) ? routeVia(row) : '';
   // Distance first: a long col name is the part that can be cut without losing the point, and
   // putting it last means the ellipsis eats the name's tail rather than the number.
-  // The mountain mark is drawn by CSS (::before here, ::after on the glide figure) from one
-  // shared definition, so the two cannot drift apart — they are the same statement twice.
+  // The mountain mark is drawn by CSS — a ::before on both this chip and the glide figure — from
+  // one shared definition, so the two cannot drift apart: they are the same statement twice.
   const chip = routeIsDetour(row)
     ? `<span class="field-via">${escapeHtml(fmtKm(row.route.pathLengthM))} ${escapeHtml(via ? t('routeViaChip', via) : t('routeViaPlain'))}</span>`
     : '';
@@ -3357,6 +3382,10 @@ function attachEvents() {
     state.settings.terrainRouting = true;
     state.settings.terrainAcknowledged = true;
     saveSettings();
+    // Switching it on is a fresh start: whatever the network refused last time is worth one more
+    // try, since the pilot is asking for terrain now and may well be somewhere else than they were.
+    state.terrain.store?.retryFailures();
+    state.terrain.available = null;
     invalidateTerrainRoutes();
     render();
     refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));

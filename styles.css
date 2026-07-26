@@ -194,7 +194,7 @@ a { color: var(--accent); }
   --mark-mountain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 16'%3E%3Cpath d='M0,15 L4.8,8.5 L8.4,12 L13.2,4.5 L17.4,10 L20.4,7.5 L24,15 Z' fill='%23000'/%3E%3C/svg%3E");
 }
 .field-via::before,
-.field-glide.routed::after {
+.field-glide.routed::before {
   content: '';
   display: inline-block;
   background-color: currentColor;
@@ -207,8 +207,10 @@ a { color: var(--accent); }
 }
 .field-via::before { width: 11px; height: 7.5px; margin-right: 3px; vertical-align: -0.5px; }
 /* Bigger than the chip's copy on purpose: this one sits alone beside a number rather than at the
-   head of a sentence, with no words around it to say what it means. */
-.field-glide.routed::after { width: 16px; height: 11px; margin-left: 3px; opacity: .5; vertical-align: 0; }
+   head of a sentence, with no words around it to say what it means. To the LEFT of the figure,
+   not the right: the column is right-aligned, so a mark on the trailing edge would push the digits
+   over and the ratios would stop lining up down the list wherever a row had no route. */
+.field-glide.routed::before { width: 16px; height: 11px; margin-right: 3px; opacity: .5; vertical-align: 0; }
 /* Boxed like the notes panel below it, because it is the same kind of thing: prose about this
    field that the pilot reads rather than scans. A point larger than the other secondary text —
    these are the sentences the routed number has to be justified by, so they get read properly. */

@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.8.5-beta",
+    "date": "2026-07-26",
+    "en": [
+      "Fixed: enabling terrain routing on a poor connection could leave the list showing straight-line glides until the app was closed and reopened, even after the terrain had downloaded",
+      "Terrain that was unreachable is now retried when you switch terrain on or finish a download, and the Settings page brings its controls back to life on its own once the data is available again",
+      "The mountain marker now sits to the left of the glide ratio, so the ratios line up down the list whether or not a row is routed"
+    ],
+    "fr": [
+      "Correction : activer le calcul autour du relief avec une mauvaise connexion pouvait laisser la liste afficher des finesses en ligne droite jusqu'à la fermeture et la réouverture de l'application, même une fois le relief téléchargé",
+      "Le relief injoignable est désormais redemandé lorsque vous activez le relief ou terminez un téléchargement, et la page Réglages réactive ses commandes d'elle-même dès que les données redeviennent disponibles",
+      "Le repère de montagne se place maintenant à gauche de la finesse, pour que les valeurs s'alignent dans la liste, qu'une ligne soit calculée sur le relief ou non"
+    ],
+    "de": [
+      "Behoben: Wurde die Geländeführung bei schlechter Verbindung eingeschaltet, konnte die Liste weiterhin Gleitzahlen der geraden Linie anzeigen, bis die App geschlossen und neu geöffnet wurde – selbst nach dem Herunterladen des Geländes",
+      "Nicht erreichbares Gelände wird jetzt erneut angefragt, sobald Sie das Gelände einschalten oder einen Download abschließen, und die Einstellungsseite aktiviert ihre Bedienelemente von selbst wieder, sobald die Daten verfügbar sind",
+      "Die Bergmarkierung steht nun links von der Gleitzahl, damit die Werte in der Liste bündig stehen – ob eine Zeile über das Gelände geführt wird oder nicht"
+    ]
+  },
+  {
     "version": "0.8.4-beta",
     "date": "2026-07-25",
     "en": [

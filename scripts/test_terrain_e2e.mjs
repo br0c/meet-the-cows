@@ -276,6 +276,37 @@ check('the mountain mark is drawn, and not as text',
   await page.$eval('.field-via', el => getComputedStyle(el, '::before').maskImage !== 'none'
     && !/[▲⛰]/.test(el.innerText)));
 
+// The mark beside the ratio leads rather than trails. The column is right-aligned, so a trailing
+// mark shifts the digits left by its own width and the ratios stop lining up down the list on
+// exactly the rows that have no route — which is most of them in flat country.
+check('the ratio carries its mark on the leading edge',
+  await page.$eval('.field-glide.routed', el =>
+    getComputedStyle(el, '::before').maskImage !== 'none'
+    && getComputedStyle(el, '::after').maskImage === 'none'));
+const glideEdges = await page.$$eval('.field-glide', cells => {
+  const edge = el => {
+    const range = document.createRange();
+    // The text node only: where the digits end, not where the box ends.
+    const text = [...el.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+    if (!text) return null;
+    range.selectNodeContents(text);
+    return Math.round(range.getBoundingClientRect().right * 10) / 10;
+  };
+  const of = routed => cells.filter(c => c.classList.contains('routed') === routed)
+    .map(edge).filter(v => v !== null);
+  return { routed: of(true), plain: of(false) };
+});
+// Set MTC_SHOT to drop a picture of the list here — the numbers above prove the alignment, but
+// the mark's size and weight beside them is a judgement only an eye can make.
+if (process.env.MTC_SHOT) await page.screenshot({ path: process.env.MTC_SHOT });
+const allEdges = [...glideEdges.routed, ...glideEdges.plain];
+check('routed and unrouted rows have both kinds on screen to compare',
+  glideEdges.routed.length > 0 && glideEdges.plain.length > 0,
+  JSON.stringify(glideEdges));
+check('the ratios line up down the column whether or not a row is routed',
+  allEdges.length > 0 && Math.max(...allEdges) - Math.min(...allEdges) < 1,
+  JSON.stringify(glideEdges));
+
 // With no name for the pinch point the chip must say only that the glide goes around terrain.
 // It used to offer the compass point the route headed for, which reads as an instruction to fly
 // that way — this app reports what a glide costs and never tells anyone where to point the nose.
