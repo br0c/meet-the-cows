@@ -1502,9 +1502,14 @@ def load_openaip_airfields(
                 is_candidate = True
             if not is_candidate:
                 continue
-            code = airport.get("code") or airport.get("altCode") or stable_airfield_code(country, airport["name"], airport["latitude"], airport["longitude"])
-            code = clean(code).upper()
+            published_code = clean(airport.get("code") or airport.get("altCode")).upper()
+            # Records with no published code still need a key to join runways and frequencies on,
+            # so one is minted from the name and position. It is a join key and nothing more —
+            # syntheticCode marks it so it never reaches a pilot as though it were an identifier.
+            code = published_code or stable_airfield_code(
+                country, airport["name"], airport["latitude"], airport["longitude"])
             airport["code"] = code
+            airport["syntheticCode"] = not published_code
             airport["vacCandidate"] = bool(ICAO_FR_RE.match(code))
             airports[code] = airport
             runway = normalize_openaip_runway(record)
@@ -2051,6 +2056,11 @@ def make_open_airfield_entry(
 ) -> dict[str, Any]:
     code = clean(airport.get("code")).upper()
     country = clean(airport.get("country")) or infer_country_from_icao(code) or ""
+    # A minted join key is not an identifier anyone can look up, radio, or find on a chart, and the
+    # list shows the code under the field's name — so "IT_ANDREA_BOZZO_44P864_7P407" is where a
+    # pilot expects "LIMW". Publish nothing rather than that; the row then reads just "Airfield".
+    # stable_id already ignores codes of this shape, so the field's id is unchanged either way.
+    published_code = "" if airport.get("syntheticCode") else code
     runway = runway or {}
     frequencies = sorted([dict(freq) for freq in frequencies], key=frequency_sort_key)
     field_id = stable_id(country or "xx", code, airport["name"], airport["latitude"], airport["longitude"])
@@ -2060,7 +2070,7 @@ def make_open_airfield_entry(
         "id": field_id,
         "kind": "airfield",
         "name": airport["name"],
-        "code": code,
+        "code": published_code,
         "country": country,
         "latitude": round(float(airport["latitude"]), 7),
         "longitude": round(float(airport["longitude"]), 7),

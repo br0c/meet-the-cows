@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.6-beta",
+    "date": "2026-07-26",
+    "en": [
+      "Fixed: airfields imported without a published code showed an internal key such as IT_ANDREA_BOZZO_44P864_7P407 where an identifier belongs. They now show no code at all, in the list, on the field page and in the exported waypoint file"
+    ],
+    "fr": [
+      "Correction : les aérodromes importés sans code publié affichaient une clé interne du type IT_ANDREA_BOZZO_44P864_7P407 à la place d'un identifiant. Ils n'affichent désormais aucun code, dans la liste, sur la fiche du terrain et dans le fichier de points de virage exporté"
+    ],
+    "de": [
+      "Behoben: Ohne veröffentlichten Code importierte Flugplätze zeigten dort, wo eine Kennung stehen sollte, einen internen Schlüssel wie IT_ANDREA_BOZZO_44P864_7P407. Sie zeigen nun gar keinen Code mehr – in der Liste, auf der Platzseite und in der exportierten Wegpunktdatei"
+    ]
+  },
+  {
     "version": "0.8.5-beta",
     "date": "2026-07-26",
     "en": [

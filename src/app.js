@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeysForBounds } from './terrain.js';
 
-const APP_VERSION = '0.8.5-beta';
+const APP_VERSION = '0.8.6-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -1734,6 +1734,9 @@ function scheduleRender() {
 // scheduleRender is what a GPS tick or a finished terrain solve already calls.
 self.__mtcScheduleRenderProbe = scheduleRender;
 self.__mtcState = state;   // read-only diagnostics hook for the browser tests
+// The waypoint file is the one output that leaves for another device, so a test needs to read it
+// without driving a download. Pure function of state; calling it changes nothing.
+self.__mtcGenerateCupProbe = () => generateCupText();
 
 function updateStatusStrip() {
   const el = document.querySelector('#statusArea');
@@ -2282,6 +2285,8 @@ function searchMatches(query) {
   const tokens = normalizeSearch(query).split(/\s+/).filter(Boolean);
   if (!tokens.length) return [];
   const matched = state.fields.filter(field => {
+    // Raw code, not displayCode: a minted key is never shown, but matching it costs nothing and
+    // lets anyone who has one from an export find the field again.
     const hay = normalizeSearch(`${field.name || ''} ${field.code || ''}`);
     return tokens.every(tok => hay.includes(tok));
   });
@@ -2332,7 +2337,7 @@ function renderFieldRow(row) {
     <button class="field-row" data-field-id="${field.id}" title="${escapeHtml(glideReason || '')}">
       <span class="field-main">
         <span class="field-name">${escapeHtml(shortFieldName(field.name))}</span>
-        <span class="field-sub">${escapeHtml([field.code, field.kind === 'airfield' ? t('airfield') : t('field')].filter(Boolean).join(' · '))}</span>
+        <span class="field-sub">${escapeHtml([displayCode(field), field.kind === 'airfield' ? t('airfield') : t('field')].filter(Boolean).join(' · '))}</span>
         ${chip}
       </span>
       <span class="field-distance">${Number.isFinite(distanceM) ? fmtKm(distanceM) : '—'}</span>
@@ -2394,7 +2399,7 @@ function renderDetail(field) {
           <h2>${escapeHtml(field.name)}</h2>
           <span class="badge detail-badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
         </div>
-        <div class="detail-meta">${escapeHtml([field.code, kindLabel, field.rawDifficulty].filter(Boolean).join(' · '))}</div>
+        <div class="detail-meta">${escapeHtml([displayCode(field), kindLabel, field.rawDifficulty].filter(Boolean).join(' · '))}</div>
         <div class="detail-grid">
           <div class="detail-card"><span class="status-label">${t('bearing')}</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('distance')}</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
@@ -2649,7 +2654,7 @@ function renderContribute(field) {
       <article class="detail contrib" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('contribTitle'))}">
         <button id="closeContribute">${t('close')}</button>
         <div class="detail-title-row"><h2>${escapeHtml(t('contribTitle'))}</h2></div>
-        <div class="detail-meta">${escapeHtml([shortFieldName(field.name), field.code].filter(Boolean).join(' · '))}</div>
+        <div class="detail-meta">${escapeHtml([shortFieldName(field.name), displayCode(field)].filter(Boolean).join(' · '))}</div>
         <div id="contribBody" class="contrib-form">
           <label for="cDate">${t('cDate')}</label>
           <input id="cDate" type="date" value="${today}" />
@@ -2954,6 +2959,8 @@ async function submitContribution(field) {
   contribShowError('');
   const fd = new FormData();
   fd.set('fieldId', field.id);
+  // Raw code, not displayCode: this identifies the field to the review queue, and a minted key
+  // still identifies it. fieldId is the authoritative key; this is corroboration.
   fd.set('fieldCode', field.code || '');
   fd.set('fieldName', field.name || '');
   fd.set('fieldLat', String(field.latitude));
@@ -3737,13 +3744,13 @@ function generateCupText() {
   const rows = ['name,code,country,lat,lon,elev,style,rwdir,rwlen,freq,desc'];
   for (const field of state.fields) {
     if (!Number.isFinite(field.latitude) || !Number.isFinite(field.longitude)) continue;
-    const name = String(field.name || field.code || 'field').replace(/^#?\d+\s+/, '').trim();
+    const name = String(field.name || displayCode(field) || 'field').replace(/^#?\d+\s+/, '').trim();
     const elev = Number.isFinite(field.elevationM) ? `${Math.round(field.elevationM)}m` : '';
     const rwdir = Number.isFinite(field.runwayDirectionDeg) ? Math.round(field.runwayDirectionDeg) : '';
     const rwlen = Number.isFinite(field.lengthM) && field.lengthM > 0 ? `${Math.round(field.lengthM)}m` : '';
     rows.push([
       cupQuote(name),
-      cupQuote(field.code || ''),
+      cupQuote(displayCode(field)),
       String(field.country || '').slice(0, 2),
       cupCoord(field.latitude, true),
       cupCoord(field.longitude, false),
@@ -3809,6 +3816,21 @@ function bearingDegrees(lat1, lon1, lat2, lon2) {
 function shortFieldName(name) {
   const cleaned = String(name || '').replace(/^#?\d+\s+/, '').trim();
   return cleaned.length > 34 ? `${cleaned.slice(0, 33)}…` : cleaned;
+}
+
+// An OpenAIP record with no published identifier gets a key minted from its name and position —
+// FR_PLATEAU_DE_L_ALP_44P351_6P724 — so runways and frequencies have something to join on. The
+// pack build no longer publishes those as codes, but a pilot carrying an already-downloaded region
+// keeps them until they fetch it again, which for a few hundred megabytes can be a whole season.
+// So they are also filtered on the way to the screen. Matched on the minted shape's own tail
+// (…_LATpDEC_LONpDEC, minus signs written as M) rather than on length: 'Ste-Jalle_2' is a real
+// code at eleven characters, and a length rule would have eaten it.
+const MINTED_CODE_RE = /_M?\d+P\d+_M?\d+P\d+$/;
+
+/** The code as a pilot should see it: a real identifier, or nothing at all. */
+function displayCode(field) {
+  const code = String(field?.code || '');
+  return MINTED_CODE_RE.test(code) ? '' : code;
 }
 
 function fmtKm(m) { return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`; }

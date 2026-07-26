@@ -627,6 +627,54 @@ def test_copy_referenced_pictures_skips_undecodable_image():
         assert sorted(p.name for p in (Path(tmp) / "f1").iterdir()) == ["good.jpg"]
 
 
+def test_minted_airfield_code_is_not_published():
+    """An OpenAIP record with no published code must not show a join key as its identifier.
+
+    stable_airfield_code exists so runways and frequencies have something to join on when a
+    record carries neither an ICAO nor an alternate code. It is machine plumbing: publishing it
+    puts "IT_ANDREA_BOZZO_44P864_7P407" where a pilot expects "LIMW".
+    """
+    airport = {
+        "name": "ANDREA BOZZO", "latitude": 44.864, "longitude": 7.407,
+        "country": "IT", "elevationM": 250, "type": "glider site",
+        "code": bp.stable_airfield_code("IT", "ANDREA BOZZO", 44.864, 7.407),
+        "syntheticCode": True,
+    }
+    entry = bp.make_open_airfield_entry(airport, None, [], "alps-west")
+    assert entry["code"] == "", entry["code"]
+    # The id is built from name and position and never contained the minted code, so suppressing
+    # the code cannot move a field's id — which is what media paths are filed under.
+    assert entry["id"] == "it_andrea_bozzo_44p8640_7p4070", entry["id"]
+
+
+def test_real_airfield_code_is_still_published():
+    airport = {
+        "name": "Aosta", "latitude": 45.7383, "longitude": 7.3686,
+        "country": "IT", "elevationM": 545, "type": "aerodrome",
+        "code": "LIMW", "syntheticCode": False,
+    }
+    entry = bp.make_open_airfield_entry(airport, None, [], "alps-west")
+    assert entry["code"] == "LIMW", entry["code"]
+    assert "limw" in entry["id"], entry["id"]
+
+
+def test_minted_code_shape_is_what_the_app_filters_on():
+    """The app hides minted codes by matching their tail. Keep the two definitions in step."""
+    import re
+    minted_re = re.compile(r"_M?\d+P\d+_M?\d+P\d+$")
+    for country, name, lat, lon in [
+        ("IT", "ANDREA BOZZO", 44.864, 7.407),
+        ("CH", "SAN VITTORE", 46.234, 9.096),
+        ("FR", "PLATEAU DE L ALP", 44.351, 6.724),
+        ("FR", "West of Greenwich", 44.351, -1.5),     # negative longitude -> M prefix
+    ]:
+        code = bp.stable_airfield_code(country, name, lat, lon)
+        assert minted_re.search(code), code
+    # Real codes the app must leave alone, including the eleven-character one that rules out
+    # any "long codes are machine codes" shortcut.
+    for code in ["LFNC", "LIMW", "LF7332", "411", "#78", "Ste-Jalle_2", "SallaOex", "Abondnce"]:
+        assert not minted_re.search(code), code
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
