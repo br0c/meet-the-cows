@@ -1,0 +1,22 @@
+# Served by the static-asset Worker (Workers honours the Pages _headers format).
+#
+# The CSP is strict because the page earns it: everything is same-origin, no inline scripts, and
+# no inline styles — what were style="" attributes moved into styles.css for exactly this. If a
+# future edit adds an inline anything, the page will visibly break under this policy; move the
+# code into the .css/.js files instead of weakening the policy.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), camera=(), microphone=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# The screenshots and cards are hundreds of KB and change only when deliberately reshot; a day
+# of staleness after a reshoot costs nothing, revalidating them on every visit costs every visit.
+/screen-list.jpg
+  Cache-Control: public, max-age=86400
+/screen-detail.jpg
+  Cache-Control: public, max-age=86400
+/og-image.png
+  Cache-Control: public, max-age=86400
+/icon.svg
+  Cache-Control: public, max-age=86400

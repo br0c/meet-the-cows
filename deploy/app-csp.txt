@@ -1,0 +1,17 @@
+# The app's Content-Security-Policy — one line, one place. deploy-app.yml writes it into
+# _headers with __PACKS_ORIGIN__ replaced by the data host (empty when packs are same-origin),
+# and test_terrain_e2e serves it over its fixture, so a feature the policy would break fails a
+# test before it fails a pilot. Lines starting with # are stripped; the rest must be ONE line.
+#
+# Why each entry:
+#   script-src/frame-src/connect-src challenges.cloudflare.com — the Turnstile widget on the
+#     contribution form: its loader script, its iframe, and its own verification calls.
+#   frame-src also carries the data host: VAC/AD chart PDFs render in an <iframe>.
+#   connect-src also carries the contribution Worker (form posts are fetch()).
+#   img-src data: — the CSS mountain mark is a data: URI mask; blob: — photo previews in the
+#     contribution form come from createObjectURL.
+#   style-src 'unsafe-inline' — rendered HTML carries style="" attributes (progress bar width
+#     and friends). Inline STYLE, never inline script: script-src stays 'self' + Turnstile.
+#   worker-src 'self' — the glide solver and the service worker.
+#   frame-ancestors 'none' — nothing has any business framing a cockpit aid.
+default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com __PACKS_ORIGIN__; connect-src 'self' https://challenges.cloudflare.com https://mtc-contrib-intake.br0c.workers.dev __PACKS_ORIGIN__; img-src 'self' data: blob: __PACKS_ORIGIN__; style-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

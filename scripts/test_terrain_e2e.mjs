@@ -100,12 +100,22 @@ const check = (label, ok, detail = '') => {
 
 await buildFixture();
 
+// The production CSP, enforced over the whole suite: this file exercises the app end to end, so
+// any feature the policy would break — a worker, an iframe, a data: mask, an inline style —
+// breaks HERE as a console error before it breaks a pilot. The fixture is single-origin, which
+// 'self' covers, so the packs-origin placeholder simply disappears.
+const CSP = (await readFile(path.join(here, '..', 'deploy', 'app-csp.txt'), 'utf8'))
+  .split('\n').filter(line => !line.startsWith('#')).join('')
+  .replaceAll('__PACKS_ORIGIN__', '').replace(/ +/g, ' ');
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const file = path.join(ROOT, url.pathname === '/' ? 'index.html' : url.pathname);
   try {
     const body = await readFile(file);
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    const headers = { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' };
+    if (headers['content-type'] === 'text/html') headers['content-security-policy'] = CSP;
+    res.writeHead(200, headers);
     res.end(body);
   } catch {
     res.writeHead(404);

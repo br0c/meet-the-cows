@@ -123,6 +123,9 @@ h2 { font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: va
 
 .facts { display: flex; flex-wrap: wrap; gap: 10px 26px; color: var(--ink-2); font-size: 15px; }
 .facts b { color: var(--ink); font-weight: 650; }
+/* Replaces what were inline style attributes, which the CSP now forbids. */
+figure.shot { margin: 0; }
+.grid-after-facts { margin-top: 18px; }
 
 .notice {
   background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--warn);

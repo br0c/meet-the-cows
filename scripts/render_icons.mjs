@@ -1,4 +1,7 @@
-// Render the app icons from icons/icon.svg, in production colours and in the channel colour.
+// Render the app icons from icons/icon.svg, in production colours and in the channel colour —
+// and the two social cards (og:image), which share the icon's palette and are the only place
+// an address is spelled out in pixels. The previous card was drawn by hand and still said
+// br0c.github.io years after the move; generated here, the address is one constant below.
 //
 // The manifest used to ship the SVG alone. Safari's support for SVG manifest icons is patchy, so
 // an installed home-screen icon could come from anywhere — which matters now that the production
@@ -75,6 +78,45 @@ for (const { dir, ground, ink } of VARIANTS) {
     await page.close();
     console.log(`${path.relative(path.join(here, '..'), path.join(dir, name))}  ${size}x${size}`);
   }
+}
+
+// --- social cards --------------------------------------------------------------------------------
+// 1200×630, the og:image size everything renders well. One per origin, because the card's whole
+// job is to say where the link goes: the app's card carries the app address, the landing site's
+// its own. The drawing is the icon itself rather than an emoji glyph — the icon is the brand,
+// and a headless renderer's emoji fonts are nobody's to rely on.
+const CARDS = [
+  { file: path.join(icons, 'og-image.png'),
+    title: 'Meet the Cows', sub: 'Outlanding field viewer for glider pilots',
+    url: 'app.meetthecows.org' },
+  { file: path.join(here, '..', 'site', 'public', 'og-image.png'),
+    title: 'Meet the Cows', sub: 'Outlanding fields for glider pilots — free, offline, no account',
+    url: 'meetthecows.org' },
+];
+const ACCENT = '#38bdf8';
+const MUTED = '#94a3b8';
+
+for (const card of CARDS) {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 630 } });
+  await page.setContent(`<style>
+    html, body { margin: 0; width: 1200px; height: 630px; background: ${BASE_COLOUR}; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 26px; font-family: system-ui, sans-serif; text-align: center; }
+    .mark { width: 148px; height: 148px; }
+    .mark svg { width: 100%; height: 100%; display: block; }
+    h1 { margin: 0; color: ${LIGHT}; font-size: 88px; font-weight: 800; letter-spacing: -0.02em; }
+    .bar { width: 240px; height: 7px; border-radius: 4px; background: ${ACCENT}; margin: -6px 0 2px; }
+    p { margin: 0; color: ${MUTED}; font-size: 34px; max-width: 1020px; }
+    .url { color: ${ACCENT}; font-size: 36px; font-weight: 700; }
+  </style>
+  <div class="mark">${source}</div>
+  <h1>${card.title}</h1>
+  <div class="bar"></div>
+  <p>${card.sub}</p>
+  <div class="url">${card.url}</div>`, { waitUntil: 'load' });
+  await page.screenshot({ path: card.file });
+  await page.close();
+  console.log(`${path.relative(path.join(here, '..'), card.file)}  1200x630`);
 }
 
 await browser.close();

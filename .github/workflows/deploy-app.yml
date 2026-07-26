@@ -180,9 +180,35 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
           /src/*
             Cache-Control: public, max-age=31536000, immutable
+          # Icons are stamped with ?v=<content hash> (scripts/stamp_icon_urls.py) everywhere the
+          # shell references them, so the addressed bytes can never change — and the service
+          # worker's own fetches use cache:'reload'/'no-cache', which bypass this anyway.
+          /icons/*
+            Cache-Control: public, max-age=31536000, immutable
           /release-notes.json
             Cache-Control: public, max-age=0, must-revalidate
           HEADERS
+
+          # Security headers for everything, appended as their own block (matching _headers
+          # sections merge). The CSP itself lives in deploy/app-csp.txt — one line, shared with
+          # the e2e test so a feature the policy would break fails CI, not a pilot. The packs
+          # origin placeholder becomes the data host, or nothing when packs are same-origin.
+          PACKS_ORIGIN=$(python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+          base = os.environ.get("PACKS_BASE_URL", "").strip()
+          parts = urlsplit(base) if base else None
+          print(f"{parts.scheme}://{parts.netloc}" if parts and parts.netloc else "")
+          PY
+          )
+          CSP=$(grep -v '^#' deploy/app-csp.txt | tr -d '\n' | sed "s|__PACKS_ORIGIN__|${PACKS_ORIGIN}|g" | tr -s ' ')
+          {
+            echo "/*"
+            echo "  X-Content-Type-Options: nosniff"
+            echo "  Referrer-Policy: strict-origin-when-cross-origin"
+            echo "  Permissions-Policy: geolocation=(self), camera=(), microphone=()"
+            echo "  Content-Security-Policy: ${CSP}"
+          } >> dist/site/_headers
 
           # Experimental deployments are shared by hand, never advertised: keep them out of
           # search results so a pilot can never arrive at a test build from a web search. They
