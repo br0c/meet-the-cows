@@ -34,6 +34,26 @@ var NODATA = -32768;
 // Rungs, not a continuous search: each one costs a full wavefront. Tight at the bottom where
 // most fields resolve and most of the decisions are made, coarse above 30 where the answer is
 // "you are not gliding there in anything" long before the exact figure matters.
+//
+// The spacing is deliberate and has been measured, so before anyone refines it: the rung only
+// brackets the answer, and the reported ratio sits somewhere between the true optimum and the
+// rung that found it. Over 80 fields scattered around Cervinia at 2800 m (57 reachable), against
+// a 1.5%-step ladder, this one runs a median 4.7% pessimistic, 16% at the 90th percentile and
+// 25% at worst — depending on where a field's true answer happens to fall relative to a rung.
+//
+// It was left alone anyway, for three reasons that matter more than the percentage:
+//   - nothing a pilot acts on moves. No field crossed the top-pick gate of 20, and the first six
+//     of the sorted list were identical; the reordering is all in the tail nobody reads.
+//   - the error is always pessimistic. The number is an upper bound on the glide required, which
+//     is the only safe direction for it to be wrong in, and it quietly offsets a little of what
+//     this feature does not model at all — wind, sink, and the fact that the path it draws
+//     clears the ground by exactly the clearance and not one metre more.
+//   - a 1.5% ladder costs 9x: 225 ms against 24 ms for 80 targets on a desktop CPU, so several
+//     times that on the phone this actually runs on, re-solved every kilometre flown.
+//
+// If the list order or the top-pick gate ever starts to matter more, the cheap lever is 5% steps
+// up to 30 and coarse above it: that halves the median for about 30% more compute. Going finer
+// than that buys accuracy only where the answer is already "no".
 var DEFAULT_LADDER = [8, 10, 12, 14, 17, 20, 24, 28, 33, 40, 50, 65];
 // Enough to draw a readable profile on a phone, few enough to post cheaply for every field.
 var PROFILE_SAMPLES = 96;

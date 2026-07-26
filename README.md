@@ -321,11 +321,17 @@ switched on anywhere; `deploy-app.yml`'s `deploy_retired_origin` input does that
 
 ### Deploy target
 
-`DEPLOY_TARGET` (repository variable) selects where the assembled site goes — unset for GitHub
-Pages, `cloudflare` for Cloudflare Pages via `wrangler pages deploy`. The Cloudflare path is a
-direct upload rather than a git-connected build, so the heavy pack build stays in Actions with
-its caches and secrets and Cloudflare only receives the finished directory. Each branch deploys
-under its own name, which is what gives experimental branches their own URLs.
+`DEPLOY_TARGET` (repository variable) selects where the assembled site goes — `cloudflare` for the
+Workers deploy that serves the live app, unset for GitHub Pages. The Cloudflare path is a direct
+upload rather than a git-connected build, so the heavy pack build stays in Actions with its caches
+and secrets and Cloudflare only receives the finished directory. `main` deploys to the Worker
+`meet-the-cows-app`, every other branch to `meet-the-cows-next`.
+
+The GitHub Pages path is now only the retired origin, `br0c.github.io/meet-the-cows`. It runs on a
+manual dispatch with the `deploy_retired_origin` input, whose one job is to hand that frozen copy a
+shell that knows the app has moved. There was also a Cloudflare **Pages** deploy here, from the
+period when `app.meetthecows.org` was still attached to a Pages project; both custom domains are on
+Workers now, so it was removed.
 
 When `PACKS_BASE_URL` is set, `scripts/publish_packs_r2.py` uploads the pack tree to an R2
 bucket (S3 API, hash-compared so only changed objects move) and the packs are then left out of
