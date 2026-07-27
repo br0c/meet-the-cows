@@ -12,6 +12,11 @@
 //
 // packDir needs packs.json and packs/<id>/{manifest,fields}.json; terrain comes from
 // data/packs/_terrain. Writes screen-list.jpg and screen-detail.jpg at 750×1500.
+//
+// MTC_LANG picks the app's language and the file names: the default 'en' writes screen-list.jpg,
+// anything else writes screen-list.<lang>.jpg beside it. The landing page is translated, so the
+// shots on it should be too — a French reader looking at an English screenshot learns the page
+// was translated and the app was not, which is the opposite of true.
 
 import { chromium } from 'playwright';
 import http from 'node:http';
@@ -50,6 +55,17 @@ const SCENE = {
 };
 const VIEWPORT = { width: 750, height: 1500 };
 
+// The app's language, and the suffix the shots are written under. Locale is set to match so any
+// Intl-formatted figure (dates, decimals) reads the way it would for that pilot.
+const LANG = (process.env.MTC_LANG || 'en').toLowerCase();
+const LOCALES = { en: 'en-GB', fr: 'fr-FR', de: 'de-DE' };
+if (!LOCALES[LANG]) {
+  console.error(`MTC_LANG=${LANG} is not one of ${Object.keys(LOCALES).join(', ')}`);
+  process.exit(2);
+}
+const suffix = LANG === 'en' ? '' : `.${LANG}`;
+const shotName = base => `screen-${base}${suffix}.jpg`;
+
 const ROOT = path.join(tmpdir(), `mtc-shots-${process.pid}`);
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.jpg': 'image/jpeg',
@@ -84,17 +100,17 @@ const packIds = JSON.parse(await readFile(path.join(packSrc, 'packs.json'), 'utf
 
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-const context = await browser.newContext({ locale: 'en-GB', viewport: VIEWPORT,
+const context = await browser.newContext({ locale: LOCALES[LANG], viewport: VIEWPORT,
   deviceScaleFactor: 1, permissions: ['geolocation'] });
 // The "updated to x" strip appears whenever the stored version differs from the running one. It
 // is chrome about this rig, not about the app, so the current version is recorded up front.
 const appVersion = /APP_VERSION = '([^']+)'/
   .exec(await readFile(path.join(repo, 'src', 'app.js'), 'utf8'))[1];
 
-await context.addInitScript(([ids, scene, version]) => {
+await context.addInitScript(([ids, scene, version, language]) => {
   localStorage.setItem('mtc-last-seen-version', version);
   localStorage.setItem('mtc-settings-v2', JSON.stringify({
-    packIds: ids, language: 'en', safetyMarginM: 250, showC: true, showD: true,
+    packIds: ids, language, safetyMarginM: 250, showC: true, showD: true,
     testMode: false,
     terrainRouting: true, terrainAcknowledged: true, terrainClearanceM: 200,
   }));
@@ -119,7 +135,7 @@ await context.addInitScript(([ids, scene, version]) => {
       clearWatch: () => {},
     },
   });
-}, [packIds, SCENE, appVersion]);
+}, [packIds, SCENE, appVersion, LANG]);
 
 const page = await context.newPage();
 const problems = [];
@@ -167,7 +183,7 @@ const rawCodes = await page.$$eval('.field-row', rows => rows.slice(0, 6)
   .filter(s => /\d+P\d+/.test(s)).length);
 console.log(`  routed ${routedCount}/${rowCount} rows · raw-id codes in the top 6: ${rawCodes}`);
 
-await page.screenshot({ path: path.join(outDir, 'screen-list.jpg'), quality: 88, type: 'jpeg' });
+await page.screenshot({ path: path.join(outDir, shotName('list')), quality: 88, type: 'jpeg' });
 
 // --- detail sheet, with the glide-over-terrain profile ------------------------------------------
 let opened = '';
@@ -188,11 +204,11 @@ await page.waitForSelector('.route-profile', { timeout: 10000 });
 await page.waitForTimeout(900);
 console.log(`\ndetail shot — ${opened}`);
 console.log('  route text: ' + (await page.$eval('.route-summary', el => el.innerText)).split('\n').join(' / '));
-await page.screenshot({ path: path.join(outDir, 'screen-detail.jpg'), quality: 88, type: 'jpeg' });
+await page.screenshot({ path: path.join(outDir, shotName('detail')), quality: 88, type: 'jpeg' });
 
 await browser.close();
 server.close();
 if (problems.length) {
   console.log('\npage problems:'); for (const p of problems.slice(0, 8)) console.log('  ' + p);
 }
-console.log(`\nwrote screen-list.jpg and screen-detail.jpg to ${outDir}`);
+console.log(`\nwrote ${shotName('list')} and ${shotName('detail')} to ${outDir} (language: ${LANG})`);
