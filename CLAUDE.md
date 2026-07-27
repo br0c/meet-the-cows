@@ -17,6 +17,23 @@
   (sessions start from a fresh clone, so this must be re-applied every session). Keep the
   `Co-Authored-By: Claude …` trailer in commit messages so authorship stays honest.
 
+## Shipping a change to installed apps
+
+`APP_VERSION` (in both `src/app.js` and `service-worker.js`) is what makes a change reach a
+phone that already has the app. The shell cache is named after it, and the worker only
+reinstalls when its own bytes change — so a change that touches **neither** file reaches nobody
+until the pilot happens to relaunch twice, and an installed PWA that is resumed rather than
+relaunched may never do that.
+
+This bites hardest for things that are not app code at all. `deploy/app-csp.txt` is a **response
+header**, and the header is cached with the document: 0.8.7-beta's CSP fix was correct at the
+origin and still blocked every place search on installed apps, because no shell file changed.
+Measured: with no version bump the fix arrives on the second full relaunch; with one it arrives
+on the first, and the "new version is ready" banner offers it without a relaunch at all.
+
+**Bump `APP_VERSION` for anything that changes what a pilot's cached app does** — app code,
+`index.html`, `styles.css`, and the deploy headers alike. Scripts, tests and CI are exempt.
+
 ## Release notes
 
 `release-notes.json` is read by pilots in the app, not by maintainers. Every release must have an
