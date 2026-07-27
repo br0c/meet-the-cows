@@ -167,6 +167,57 @@ console.log('\n3 — with no altitude, the order falls back to distance on its o
   await context.close();
 }
 
+// --- 4. the pinned shortlist's cut-off ------------------------------------------------------------
+console.log('\n4 — what qualifies for the pinned picks');
+{
+  // The gate is bracketed rather than restated: a test that asserts the constant equals the
+  // constant catches nothing. Steep Near is the probe — its required glide moves with altitude,
+  // so the same field can be walked across the boundary from either side.
+  //
+  //   3000 m -> Steep Near needs 24.0, and must be pinned. At the old cut-off of 20 it was not,
+  //             which is the change this locks in.
+  //   2980 m -> the same field needs 26.1, is still perfectly reachable, and must NOT be pinned
+  //             while only two others qualify — so the cut-off is a real limit, not slice(0, 3)
+  //             quietly doing the work.
+  const listing = page => page.evaluate(() => {
+    const out = [];
+    const list = document.querySelector('.field-row')?.parentElement;
+    for (const el of list ? [...list.children] : []) {
+      if (el.classList.contains('top-picks-divider')) { out.push('--divider--'); continue; }
+      if (el.classList.contains('field-row')) out.push(el.querySelector('.field-name')?.textContent?.trim());
+    }
+    return out;
+  });
+  const pinnedIn = shown => {
+    const at = shown.indexOf('--divider--');
+    return at === -1 ? [] : shown.slice(0, at);
+  };
+
+  {
+    const { context, page } = await open();                       // 3000 m
+    const shown = await listing(page);
+    const pinned = pinnedIn(shown);
+    console.log(`  at 3000 m pinned: ${pinned.join(', ') || '(none)'}`);
+    check('a field needing 24 is pinned', pinned.includes('Steep Near'), pinned.join(', '));
+    check('and it is the third pick, behind the two easier ones', pinned.length === 3,
+      `${pinned.length} pinned`);
+    await context.close();
+  }
+  {
+    const { context, page } = await open({ testAltitudeM: 2980 }); // same field, now needing 26.1
+    const shown = await listing(page);
+    const pinned = pinnedIn(shown);
+    const listed = shown.filter(n => n !== '--divider--');
+    console.log(`  at 2980 m pinned: ${pinned.join(', ') || '(none)'}`);
+    check('the same field needing 26 is not pinned', !pinned.includes('Steep Near'),
+      pinned.join(', '));
+    check('though it is still offered below the divider', listed.includes('Steep Near'));
+    check('so the shortlist is short rather than padded', pinned.length === 2,
+      `${pinned.length} pinned`);
+    await context.close();
+  }
+}
+
 await browser.close();
 server.close();
 console.log(failures ? `\n${failures} check(s) FAILED` : '\nall checks passed');

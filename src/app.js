@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
-const APP_VERSION = '0.8.8-beta';
+const APP_VERSION = '0.8.9-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -782,7 +782,17 @@ function cacheStatusLabel(status) {
 
 // Best-options shortlist: only difficulty A entries reachable at this required glide
 // ratio or better qualify for the pinned top-three picks.
-const TOP_PICK_MAX_GLIDE = 20;
+//
+// 25 rather than the original 20. 20 is a safe number for anything with wings, which made it
+// the wrong number for this gate: it is not a glide the app promises, it is the cut-off for
+// what is worth pinning, and on a modern glider a field needing 25 is a comfortable option
+// rather than a marginal one. At 20 the shortlist came back short in exactly the terrain where
+// a shortlist is most wanted.
+//
+// It stays a cut-off, not an estimate. The ratios it filters already carry the arrival margin,
+// and the solver's rung ladder rounds them pessimistically, so a field near the boundary is
+// likelier to be excluded than let in. Nothing here models wind or sink.
+const TOP_PICK_MAX_GLIDE = 25;
 
 let renderTimer = null;
 let gpsWatchId = null;

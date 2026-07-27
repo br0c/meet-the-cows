@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.9-beta",
+    "date": "2026-07-27",
+    "en": [
+      "The three pinned picks now include fields needing up to a 25 glide, not 20"
+    ],
+    "fr": [
+      "Les trois choix épinglés incluent désormais les terrains jusqu’à une finesse de 25, au lieu de 20"
+    ],
+    "de": [
+      "Die drei angehefteten Vorschläge umfassen jetzt Felder bis Gleitzahl 25 statt 20"
+    ]
+  },
+  {
     "version": "0.8.8-beta",
     "date": "2026-07-27",
     "en": [
