@@ -54,8 +54,8 @@ self.addEventListener('install', event => {
     const shell = await caches.open(SHELL_CACHE);
     // NOT cache.addAll: its fetches go through the browser's HTTP cache, so a host serving the
     // shell with a long max-age lets a brand-new worker fill its brand-new versioned cache with
-    // the OLD build. That is not hypothetical — Cloudflare Pages serves these files with
-    // max-age=14400, and 0.8.1 installed itself and then cached 0.8.0 for four hours.
+    // the OLD build. That is not hypothetical: on a host that served these files with
+    // max-age=14400, 0.8.1 installed itself and then cached 0.8.0 for four hours.
     // 'reload' bypasses the HTTP cache on the way out and refreshes it on the way back.
     await Promise.all(APP_SHELL.map(async url => {
       const response = await fetch(url, { cache: 'reload' });

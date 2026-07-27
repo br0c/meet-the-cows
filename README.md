@@ -339,9 +339,11 @@ every other branch deploys to the channel Worker under its own name.
 
 The GitHub Pages path is now only the retired origin, `br0c.github.io/meet-the-cows`. It runs on a
 manual dispatch with the `deploy_retired_origin` input, whose one job is to hand that frozen copy a
-shell that knows the app has moved. There was also a Cloudflare **Pages** deploy here, from the
-period when `app.meetthecows.org` was still attached to a Pages project; both custom domains are on
-Workers now, so it was removed.
+shell that knows the app has moved.
+
+Nothing deploys to Cloudflare **Pages**. Both custom domains are Workers, and a Pages project
+answered unknown paths with the shell and a `200`, which the service worker would cache as though
+it were pack data; the Worker's `not_found_handling` returns a `404`.
 
 When `PACKS_BASE_URL` is set, `scripts/publish_packs_r2.py` uploads the pack tree to an R2
 bucket (S3 API, hash-compared so only changed objects move) and the packs are then left out of

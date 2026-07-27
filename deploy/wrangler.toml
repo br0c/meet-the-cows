@@ -1,16 +1,15 @@
 # How the app is served — for BOTH main and the dev channel.
 #
 # ONE config, deployed twice under different Worker names, because the whole point of the
-# experimental build is to rehearse what production will do. When the channel build ran on a
-# Worker and app.meetthecows.org ran on a Pages project, it was rehearsing a different serving
-# stack: different header handling, different defaults, different failure modes. That is not a
-# staging environment, it is a second guess. The only difference between the two deployments is
-# the --name passed on the command line.
+# experimental build is to rehearse what production will do. A channel served by a different
+# stack than production rehearses a different serving stack — different header handling,
+# different defaults, different failure modes — which is not a staging environment but a second
+# guess. The only difference between the two deployments is the --name on the command line.
 #
-# Workers rather than Pages because Pages is being folded into Workers and this account can no
-# longer create Pages projects at all (API error 8000000). Workers static assets support the same
-# _headers file, and default to Cache-Control: public, max-age=0, must-revalidate — which is what
-# the shell wants anyway.
+# Workers rather than Cloudflare Pages, and not by preference: this account cannot create Pages
+# projects at all (API error 8000000), Pages is being folded into Workers, and the 404 behaviour
+# below matters. Workers static assets read the same _headers file and default to
+# Cache-Control: public, max-age=0, must-revalidate, which is what the shell wants anyway.
 #
 # The assets are whatever .github/workflows/deploy-app.yml has just assembled into dist/site,
 # already carrying the right config.js, icons and channel branding.
@@ -19,9 +18,9 @@ compatibility_date = "2026-07-01"
 
 [assets]
 directory = "../dist/site"
-# An unknown path 404s. The Pages project answered such requests with the shell and a 200, which
-# is worse than it sounds here: loadPackIndex falls back to the app's own origin when the data
-# host cannot be reached, so a miss would hand it HTML with a 200, and the service worker caches
-# anything that reports ok — poisoning packs.json with an HTML page that then persists offline.
-# There is no client-side routing to protect: the app is one index.html at /.
+# An unknown path must 404, and this is the setting that decides it. Answering the shell with a
+# 200 instead is worse than it sounds: loadPackIndex falls back to the app's own origin when the
+# data host cannot be reached, so a miss would hand it HTML with a 200, and the service worker
+# caches anything that reports ok — poisoning packs.json with an HTML page that then persists
+# offline. There is no client-side routing to protect: the app is one index.html at /.
 not_found_handling = "none"

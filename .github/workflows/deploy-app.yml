@@ -273,11 +273,10 @@ jobs:
       # must not diverge. main -> meet-the-cows-app (app.meetthecows.org),
       # dev -> meet-the-cows-next.
       #
-      # There was a Cloudflare Pages deploy here too, from the period when app.meetthecows.org was
-      # still attached to a Pages project and the Worker only served next. Both custom domains are
-      # on Workers now — app.meetthecows.org answers 404 for an unknown path, which is the
-      # Worker's not_found_handling, where the Pages project returned the shell with a 200 — so
-      # uploading the same directory to Pages as well only produced a second copy nothing served.
+      # Workers, not Cloudflare Pages: this account cannot create Pages projects at all, and a
+      # Pages project answered an unknown path with the shell and a 200 — which the service
+      # worker would then cache as though it were packs.json. not_found_handling in
+      # deploy/wrangler.toml gives a 404 instead. Do not reintroduce a Pages deploy here.
       - name: Deploy to Cloudflare Workers
         if: vars.DEPLOY_TARGET == 'cloudflare'
         env:
