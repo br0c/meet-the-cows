@@ -578,7 +578,14 @@ def main() -> None:
 # changed source does not re-fetch the others (e.g. a new contribution must not re-pull the
 # 450 MB Austrian AIP ZIP or re-crawl the DFS tree). The cache dir (raw_dir) is persisted across
 # CI runs; see the "Restore/Save source download cache" steps in build-data-pack.yml.
-SOURCE_CACHE_TTL_S = 20 * 3600  # a daily cron always revalidates; intra-day rebuilds reuse.
+# How long a stable-URL source (a CUP, OpenAIP) is reused without asking the server. Local
+# iteration wants 20 h so repeated runs cost nothing; CI sets it to 0 (MTC_SOURCE_TTL_S in
+# build-data-pack.yml) so every rebuild revalidates with a conditional GET. CI cannot afford the
+# window: the source fingerprint HEADs the live URL, so a rebuild inside the TTL of a source
+# that just changed would BUILD from the old bytes while RECORDING the new ETag in state.json —
+# and every later run would compare against that ETag, agree nothing changed, and keep the stale
+# pack until the Sunday force-full. A 304 per rebuild is the cheap end of that trade.
+SOURCE_CACHE_TTL_S = float(os.environ.get("MTC_SOURCE_TTL_S", 20 * 3600))
 
 
 def _cache_meta_path(cache_path: Path) -> Path:

@@ -99,6 +99,39 @@ class SourceCacheTests(unittest.TestCase):
             self.assertEqual(build_pack.cached_http_get("https://x/g", path), b"v2")  # refetched
             self.assertEqual(len(self.calls), 2)
 
+    def test_zero_ttl_revalidates_every_call(self):
+        # CI runs with MTC_SOURCE_TTL_S=0: age never excuses a stable-URL source from a
+        # conditional GET. Unchanged costs a 304; changed bytes must actually replace the cache —
+        # this is the window where a rebuild used to pair old bytes with a new fingerprint.
+        self.install(lambda req: FakeResponse(b"v1", {"ETag": '"v1"'}))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guide.cupx"
+            self.assertEqual(build_pack.cached_http_get("https://x/g", path, ttl_s=0), b"v1")
+
+            def not_modified(req):
+                self.assertEqual(req.headers.get("If-none-match"), '"v1"')
+                raise urllib.error.HTTPError(req.full_url, 304, "Not Modified", {}, None)
+            self.calls.clear()
+            self.install(not_modified)
+            self.assertEqual(build_pack.cached_http_get("https://x/g", path, ttl_s=0), b"v1")
+            self.assertEqual(len(self.calls), 1)  # asked, answered 304, no download
+
+            self.install(lambda req: FakeResponse(b"v2", {"ETag": '"v2"'}))
+            self.assertEqual(build_pack.cached_http_get("https://x/g", path, ttl_s=0), b"v2")
+            self.assertEqual(path.read_bytes(), b"v2")  # the cache moved with the source
+
+    def test_ttl_env_override_reaches_the_module(self):
+        # The workflow sets MTC_SOURCE_TTL_S=0; prove the env var actually lands in the constant
+        # (read at import time, so check in a fresh interpreter).
+        import os
+        import subprocess
+        out = subprocess.run(
+            [sys.executable, "-c", "import build_pack; print(build_pack.SOURCE_CACHE_TTL_S)"],
+            capture_output=True, text=True, check=True,
+            cwd=Path(__file__).resolve().parent,
+            env={**os.environ, "MTC_SOURCE_TTL_S": "0"})
+        self.assertEqual(float(out.stdout.strip()), 0.0)
+
     def test_read_bytes_second_call_hits_cache(self):
         self.install(lambda req: FakeResponse(b"guide-bytes"))
         with tempfile.TemporaryDirectory() as tmp:
