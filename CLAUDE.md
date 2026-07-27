@@ -19,9 +19,11 @@
   The fetch is the part that matters. The snapshot restores `.git` too, so the stale
   remote-tracking refs agree with the stale HEAD and `HEAD == origin/dev` reports "in sync"
   while both are weeks behind. Fetch, then compare:
-  `git fetch origin dev && git rev-parse --short HEAD origin/dev` — if they differ,
-  `git checkout -B dev origin/dev` and re-apply, and re-run `git config user.name/email` because
-  the snapshot loses those too.
+  `git fetch origin dev && git status -sb` — the first line reads `## dev...origin/dev` when
+  current and `[behind N]` when the tree has rewound. (`git rev-parse --short HEAD origin/dev`
+  looks like the obvious check and is not one: `--short` takes a single revision and the command
+  just fails.) When behind: `git checkout -B dev origin/dev`, re-apply the edit, and re-run
+  `git config user.name/email` — the snapshot loses those too.
   The tells, when it happens without being noticed: files that existed are missing (`git ls-files`
   disagrees with what you remember), or a constant you changed is back to its old value.
 
