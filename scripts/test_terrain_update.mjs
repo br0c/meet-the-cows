@@ -241,6 +241,36 @@ console.log('\n3 — a rebuilt tile: stale serves free until the pilot downloads
     (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
 }
 
+// --- 3b. the AGL reference lives and dies with the downloaded tiles ------------------------------
+console.log('\n3b — AGL: available over downloaded terrain, gone when the tiles go');
+{
+  // Tiles for Cervinia are on the phone, so the ground under the simulated place is known.
+  await page.waitForSelector('#altUnitAgl:not([disabled])', { timeout: 5000 });
+  check('AGL becomes available once terrain covers the place', true);
+  await page.click('#altUnitAgl');
+  await page.waitForTimeout(400);
+  check('the note translates between the references',
+    /(Ground here|Sol ici|Boden hier)/.test(await page.$eval('#testAltitudeNote', el => el.textContent)),
+    await page.$eval('#testAltitudeNote', el => el.textContent));
+  check('the readout says which zero it counts from',
+    /AGL$/.test(await page.$eval('#testAltitudeValue', el => el.textContent.trim())),
+    await page.$eval('#testAltitudeValue', el => el.textContent));
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('mtc-settings-v2')));
+  check('the absolute altitude follows ground + AGL', stored.testAltitudeMode === 'agl'
+    && Math.abs(stored.testAltitudeM - (stored.testAglM + 2005)) < 40,
+    `${stored.testAltitudeM} m stored for ${stored.testAglM} m AGL`);
+  // Back to the altitude the remaining phases were written for.
+  await page.click('#altUnitAmsl');
+  await page.waitForTimeout(200);
+  await page.$eval('#testAltitudeM', el => {
+    el.value = 2800;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(600);
+  check('back on AMSL at the test altitude', (await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mtc-settings-v2')))).testAltitudeM === 2800);
+}
+
 // --- 4. remove terrain ---------------------------------------------------------------------------
 console.log('\n4 — with routing off, "Remove terrain" leaves no tile bytes behind');
 {
@@ -261,6 +291,10 @@ console.log('\n4 — with routing off, "Remove terrain" leaves no tile bytes beh
     (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
   await page.waitForTimeout(2000);
   check('and nothing trickles back with routing off', (await cachedTiles()).length === 0);
+  // The ground under the simulated place is unknown again — AGL must grey out and the altitude
+  // must be read against sea level, not against ground that is no longer there.
+  check('AGL greys out with the tiles gone', await page.$eval('#altUnitAgl', el => el.disabled));
+  check('the reference falls back to AMSL', await page.$eval('#altUnitAmsl', el => el.classList.contains('active')));
 }
 
 await context.close();

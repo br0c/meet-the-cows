@@ -445,3 +445,11 @@ body.modal-open { overflow: hidden; }
 .release-entry ul { margin: 8px 0 0; padding-left: 18px; }
 .release-entry li { margin: 4px 0; font-size: 14px; line-height: 1.45; }
 .meta-list a { color: var(--accent); }
+
+/* AMSL/AGL reference for the ground-testing altitude: one slider, two zeros. */
+.unit-toggle { display: flex; margin-left: auto; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.unit-toggle button { appearance: none; border: 0; background: var(--panel-2); color: var(--muted);
+  font: inherit; font-size: 12px; font-weight: 700; letter-spacing: .02em; padding: 4px 9px; cursor: pointer; }
+.unit-toggle button + button { border-left: 1px solid var(--line); }
+.unit-toggle button.active { background: rgba(56, 189, 248, .16); color: var(--accent); }
+.unit-toggle button:disabled { opacity: .45; cursor: default; }

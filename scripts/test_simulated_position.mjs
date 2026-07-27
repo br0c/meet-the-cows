@@ -87,11 +87,18 @@ await page.waitForTimeout(800);
 
 check('no manual-altitude control remains', await page.$('#useManualAltitude') === null && await page.$('#manualAltitudeM') === null);
 await page.click('#settingsToggle');
-await page.waitForSelector('#toggleTesting');
-check('testing section is collapsed by default', await page.$('#testPlace') === null);
-await page.click('#toggleTesting');
+await page.waitForSelector('#testMode');
+check('ground testing is a plain switch, no icon and no disclosure',
+  await page.$('#toggleTesting') === null
+  && !/🧪/.test(await page.$eval('#testMode', el => el.closest('.settings-card').textContent))
+  && /Ground testing/.test(await page.$eval('#testMode', el => el.closest('.settings-card').textContent)));
+check('the card is collapsed while the switch is off', await page.$('#testPlace') === null);
+await page.click('#testMode');
 await page.waitForSelector('#testPlace');
-check('testing section expands', true);
+check('switching on extends the card to place and altitude', await page.$('#testAltitudeM') !== null);
+check('AGL is offered but greyed out before a place is chosen',
+  await page.$eval('#altUnitAgl', el => el.disabled)
+  && await page.$eval('#testAltitudeNote', el => /Pick a place/.test(el.textContent)));
 
 // Type-ahead: no submit button, results appear from typing alone.
 check('there is no submit button to click', await page.$('#testSearch') === null);
@@ -124,6 +131,12 @@ await page.waitForTimeout(1200);
 check('simulated position banner appears', await page.$('.test-banner') !== null);
 const banner=await page.$eval('.test-banner',e=>e.innerText.replace(/\n/g,' '));
 check('banner names the place and says it is not real', /Breuil-Cervinia/.test(banner) && /Not your real position/.test(banner), banner.slice(0,80));
+
+// No terrain tiles in this fixture: the AGL reference must stay unavailable, and say why.
+check('AGL stays greyed out with no terrain for the place',
+  await page.$eval('#altUnitAgl', el => el.disabled)
+  && await page.$eval('#testAltitudeNote', el => /terrain/.test(el.textContent)));
+check('AMSL stays the active reference', await page.$eval('#altUnitAmsl', el => el.classList.contains('active')));
 
 await page.click('#settingsToggle');
 await page.waitForTimeout(300);

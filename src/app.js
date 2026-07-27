@@ -1,4 +1,4 @@
-import { TerrainStore, terrainSupported, terrainPaths, tileKeysForBounds } from './terrain.js';
+import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
 const APP_VERSION = '0.8.7-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
@@ -76,6 +76,9 @@ const DEFAULT_SETTINGS = {
   testLongitude: null,
   testAltitudeM: 2500,
   testLabel: '',
+  // How the test altitude is given: above sea level, or above the ground at the chosen place.
+  testAltitudeMode: 'amsl',
+  testAglM: 500,
   // Off until the pilot turns it on and accepts what it is. Terrain routing changes which fields
   // the app calls reachable, from data that is coarse and a solver that is new — that is not a
   // thing to switch on for someone while they are not looking.
@@ -289,7 +292,7 @@ const STRINGS = {
     noMedia: 'No media attached.', openPdf: 'Open PDF',
     source: 'Source', imported: 'imported', unknown: 'unknown',
     gpsSimulated: 'Simulated position — GPS is off',
-    testing: 'Testing',
+    groundTesting: 'Ground testing',
     testNote: 'Puts the app at a chosen place and altitude so glide figures can be checked on the ground. Needs a connection, stores nothing, and overrides GPS until you stop it.',
     testPlace: 'Place',
     testPlacePlaceholder: 'Search a town, airfield, peak…',
@@ -300,6 +303,10 @@ const STRINGS = {
     testSearchFailed: 'Search failed — this needs a connection.',
     testUnnamed: 'Chosen position',
     testAttribution: 'Place search by Photon, using OpenStreetMap data.',
+    testAmslLine: (ground, agl) => `Ground here ${ground} → ${agl} AGL`,
+    testAglLine: (ground, amsl) => `Ground here ${ground} → flying at ${amsl}`,
+    aglNeedsPlace: 'Pick a place first to use AGL.',
+    aglNeedsTerrain: 'AGL needs downloaded terrain covering this place.',
     testBanner: (where, altitude) => `⚠︎ Simulated position: ${where}, ${altitude}. Not your real position.`,
     altSimulated: 'simulated',
     altMissing: 'missing',
@@ -457,7 +464,7 @@ const STRINGS = {
     noMedia: 'Aucun média joint.', openPdf: 'Ouvrir le PDF',
     source: 'Source', imported: 'importé le', unknown: 'inconnu',
     gpsSimulated: 'Position simulée — GPS désactivé',
-    testing: 'Test',
+    groundTesting: 'Test au sol',
     testNote: "Place l'application à un lieu et une altitude choisis pour vérifier les finesses au sol. Nécessite une connexion, n'enregistre rien et remplace le GPS jusqu'à l'arrêt.",
     testPlace: 'Lieu',
     testPlacePlaceholder: 'Chercher une ville, un terrain, un sommet…',
@@ -468,6 +475,10 @@ const STRINGS = {
     testSearchFailed: 'Recherche impossible — une connexion est nécessaire.',
     testUnnamed: 'Position choisie',
     testAttribution: 'Recherche de lieux par Photon, données OpenStreetMap.',
+    testAmslLine: (ground, agl) => `Sol ici ${ground} → ${agl} AGL`,
+    testAglLine: (ground, amsl) => `Sol ici ${ground} → vol à ${amsl}`,
+    aglNeedsPlace: "Choisissez d'abord un lieu pour utiliser l'AGL.",
+    aglNeedsTerrain: 'AGL nécessite le relief téléchargé couvrant ce lieu.',
     testBanner: (where, altitude) => `⚠︎ Position simulée : ${where}, ${altitude}. Ce n'est pas votre position réelle.`,
     altSimulated: 'simulée',
     altMissing: 'absente',
@@ -624,7 +635,7 @@ const STRINGS = {
     noMedia: 'Keine Medien angehängt.', openPdf: 'PDF öffnen',
     source: 'Quelle', imported: 'importiert am', unknown: 'unbekannt',
     gpsSimulated: 'Simulierte Position — GPS aus',
-    testing: 'Test',
+    groundTesting: 'Bodentest',
     testNote: 'Versetzt die App an einen gewählten Ort und eine gewählte Höhe, um Gleitzahlen am Boden zu prüfen. Braucht eine Verbindung, speichert nichts und ersetzt das GPS bis zum Beenden.',
     testPlace: 'Ort',
     testPlacePlaceholder: 'Ort, Flugplatz, Gipfel suchen…',
@@ -635,6 +646,10 @@ const STRINGS = {
     testSearchFailed: 'Suche fehlgeschlagen — dafür ist eine Verbindung nötig.',
     testUnnamed: 'Gewählte Position',
     testAttribution: 'Ortssuche von Photon, mit OpenStreetMap-Daten.',
+    testAmslLine: (ground, agl) => `Boden hier ${ground} → ${agl} AGL`,
+    testAglLine: (ground, amsl) => `Boden hier ${ground} → Flug in ${amsl}`,
+    aglNeedsPlace: 'Zuerst einen Ort wählen, um AGL zu nutzen.',
+    aglNeedsTerrain: 'AGL braucht heruntergeladenes Gelände für diesen Ort.',
     testBanner: (where, altitude) => `⚠︎ Simulierte Position: ${where}, ${altitude}. Nicht deine echte Position.`,
     altSimulated: 'simuliert',
     altMissing: 'fehlt',
@@ -795,7 +810,9 @@ let state = {
   offlineSync: null,
   detailScrollTop: 0,
   dataUpdateAvailable: false,
-  showTesting: false,
+  // Ground elevation (m) at the simulated place, sampled from downloaded terrain; null when
+  // unknown (no place yet, or no tile covering it), which is what disables AGL.
+  testGroundM: null,
   testSearch: null,
   testQuery: '',
   activePacks: [],
@@ -833,6 +850,7 @@ async function init() {
   await loadPackIndex();
   await loadSelectedPacks();
   startGps();
+  if (state.settings.testMode) refreshTestGround();
   render();
 }
 
@@ -1076,7 +1094,7 @@ function startGps() {
   stopGps();
   // Simulated position wins and the receiver stays off, so a real fix can never arrive and
   // quietly replace the position under test halfway through a comparison.
-  if (state.settings.testMode) {
+  if (state.settings.testMode && Number.isFinite(state.settings.testLatitude)) {
     if (applyTestPosition()) onSimulatedPositionChanged();
     return;
   }
@@ -1308,7 +1326,68 @@ function startTestMode(place) {
   stopGps();
   applyTestPosition();
   onSimulatedPositionChanged();
+  refreshTestGround();
   render();
+}
+
+// --- ground under the simulated place, for the AGL altitude reference --------------------------
+
+let testGroundToken = 0;
+
+/**
+ * Sample the terrain under the chosen place from the downloaded tiles. Async and cancellable
+ * (a newer place wins); ends with testGroundM either the ground in metres or null, and null is
+ * what greys the AGL option out — a reference above unknown ground would be a made-up number.
+ */
+async function refreshTestGround() {
+  const token = ++testGroundToken;
+  const { testLatitude, testLongitude } = state.settings;
+  let ground = null;
+  if (Number.isFinite(testLatitude) && Number.isFinite(testLongitude)
+      && terrainSupported() && 'caches' in window) {
+    try {
+      // Strictly from tiles already on the phone — the note promises "downloaded terrain", and
+      // a greyed-out unit toggle is never worth a network fetch the pilot did not ask for
+      // (least of all right after they deleted the tiles).
+      const key = tileKeyFor(testLatitude, testLongitude);
+      const cache = await caches.open(DATA_CACHE);
+      const cachedTile = await cache.match(terrainTileUrls([key])[0], { ignoreSearch: true });
+      if (cachedTile) {
+        const store = terrainStore();
+        const tiles = await store.loadBounds({
+          south: testLatitude, north: testLatitude, west: testLongitude, east: testLongitude,
+        });
+        const tile = tiles.get(key);
+        if (tile) {
+          const row = Math.min(tile.samples - 1, Math.floor((tile.lat0 + 1 - testLatitude) * tile.samples));
+          const col = Math.min(tile.samples - 1, Math.floor((testLongitude - tile.lon0) * tile.samples));
+          const sample = tile.elevations[row * tile.samples + col];
+          if (sample !== TERRAIN_NODATA) ground = sample;
+        }
+      }
+    } catch { /* unreadable cache or tile: AGL stays unavailable */ }
+  }
+  if (token !== testGroundToken) return;
+  state.testGroundM = ground;
+  if (ground === null && state.settings.testAltitudeMode === 'agl') {
+    // The reference just lost its ground (place moved off the covered area): fall back to sea
+    // level rather than keep showing an AGL number that no longer means anything.
+    state.settings.testAltitudeMode = 'amsl';
+    saveSettings();
+  }
+  if (ground !== null && state.settings.testAltitudeMode === 'agl') applyTestAgl();
+  render();
+}
+
+/** In AGL mode the stored absolute altitude follows ground + AGL, so downstream needs no mode. */
+function applyTestAgl() {
+  if (!Number.isFinite(state.testGroundM)) return;
+  state.settings.testAltitudeM = state.testGroundM + (Number(state.settings.testAglM) || 0);
+  saveSettings();
+  if (state.settings.testMode && Number.isFinite(state.settings.testLatitude)) {
+    applyTestPosition();
+    onSimulatedPositionChanged();
+  }
 }
 
 function stopTestMode() {
@@ -1585,6 +1664,8 @@ async function downloadTerrain() {
   state.terrain.store?.dropDecodedTiles();
   state.terrain.available = null;
   invalidateTerrainRoutes();
+  // The ground under a simulated place may just have become known — the AGL reference follows.
+  if (state.settings.testMode) refreshTestGround();
   render();
   refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
 }
@@ -1605,6 +1686,8 @@ async function removeTerrain() {
   state.terrain.store?.dropDecodedTiles();
   await checkTerrainCacheStatus();
   invalidateTerrainRoutes();
+  // Without tiles the ground under a simulated place is unknown again; AGL falls back to AMSL.
+  if (state.settings.testMode) refreshTestGround();
   render();
   refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
 }
@@ -1955,8 +2038,11 @@ function gpsLabel() {
 function renderTestBanner() {
   if (!testModeActive()) return '';
   const where = state.settings.testLabel || `${state.settings.testLatitude.toFixed(3)}, ${state.settings.testLongitude.toFixed(3)}`;
+  const agl = state.settings.testAltitudeMode === 'agl' && Number.isFinite(state.testGroundM);
+  const altitudeText = fmtM(state.position.altitudeM ?? 0)
+    + (agl ? ` (${fmtM(Number(state.settings.testAglM) || 0)} AGL)` : '');
   return `<div class="test-banner">
-      <span>${escapeHtml(t('testBanner', where, fmtM(state.position.altitudeM ?? 0)))}</span>
+      <span>${escapeHtml(t('testBanner', where, altitudeText))}</span>
       <button id="testBannerStop">${t('testStop')}</button>
     </div>`;
 }
@@ -2315,12 +2401,8 @@ function renderTestingCard() {
 
   return `
       <div class="settings-card">
-        <button class="disclosure" id="toggleTesting" aria-expanded="${state.showTesting ? 'true' : 'false'}">
-          <span>🧪 ${t('testing')}</span>
-          <span class="disclosure-mark">${state.showTesting ? '▾' : '▸'}</span>
-        </button>
-        ${state.showTesting ? `
-        <p class="settings-note">${escapeHtml(t('testNote'))}</p>
+        ${switchRow('testMode', t('groundTesting'), t('testNote'), settings.testMode)}
+        ${settings.testMode ? `
         ${active ? `
         <div class="test-active">
           <div><strong>${escapeHtml(settings.testLabel || t('testUnnamed'))}</strong></div>
@@ -2331,17 +2413,44 @@ function renderTestingCard() {
                value="${escapeHtml(state.testQuery || '')}"
                placeholder="${escapeHtml(t('testPlacePlaceholder'))}" />
         <div class="test-results" id="testResults">${renderTestResults()}</div>
-        ${sliderRow({
-          id: 'testAltitudeM',
-          valueId: 'testAltitudeValue',
-          label: t('testAltitude'),
-          value: Number(settings.testAltitudeM) || 0,
-          display: fmtM(Number(settings.testAltitudeM) || 0),
-          min: 0, max: 6000, step: 100,
-        })}
-        ${active ? `<div class="button-row single"><button id="stopTesting">${t('testStop')}</button></div>` : ''}
+        ${renderTestAltitudeRow()}
         <p class="settings-note">${escapeHtml(t('testAttribution'))}</p>` : ''}
       </div>`;
+}
+
+// The altitude for the simulated position, given against one of two references: AMSL (sea
+// level, the default) or AGL (the ground at the chosen place). One slider whose meaning the
+// small toggle switches, with a line underneath always translating into the other reference —
+// so whichever way the pilot thinks, both numbers are in view. AGL needs the ground, so it is
+// greyed out until a place is chosen and a downloaded tile covers it.
+function renderTestAltitudeRow() {
+  const settings = state.settings;
+  const ground = state.testGroundM;
+  const aglAvailable = Number.isFinite(ground);
+  const agl = settings.testAltitudeMode === 'agl' && aglAvailable;
+  const value = agl ? (Number(settings.testAglM) || 0) : (Number(settings.testAltitudeM) || 0);
+
+  let note = '';
+  if (agl) {
+    note = t('testAglLine', fmtM(ground), fmtM(ground + value));
+  } else if (aglAvailable) {
+    note = t('testAmslLine', fmtM(ground), fmtM(Math.max(0, value - ground)));
+  } else {
+    note = Number.isFinite(settings.testLatitude) ? t('aglNeedsTerrain') : t('aglNeedsPlace');
+  }
+  return `
+        <div class="set-row">
+          <div class="set-top">
+            <label for="testAltitudeM">${t('testAltitude')}</label>
+            <div class="unit-toggle" role="group">
+              <button id="altUnitAmsl" type="button" class="${agl ? '' : 'active'}" aria-pressed="${!agl}">AMSL</button>
+              <button id="altUnitAgl" type="button" class="${agl ? 'active' : ''}" aria-pressed="${agl}" ${aglAvailable ? '' : 'disabled'}>AGL</button>
+            </div>
+            <output id="testAltitudeValue" for="testAltitudeM" class="set-value">${agl ? `${fmtM(value)} AGL` : fmtM(value)}</output>
+          </div>
+          <input id="testAltitudeM" type="range" min="0" max="${agl ? 3000 : 6000}" step="${agl ? 50 : 100}" value="${value}" />
+          <p class="set-sub" id="testAltitudeNote">${escapeHtml(note)}</p>
+        </div>`;
 }
 
 
@@ -3540,8 +3649,18 @@ function attachEvents() {
       render();
     });
   }
-  document.querySelector('#toggleTesting')?.addEventListener('click', () => {
-    state.showTesting = !state.showTesting;
+  // The ground-testing switch. On: the card extends to pick a place and altitude, and a place
+  // remembered from last time resumes at once. Off: back to the real GPS.
+  document.querySelector('#testMode')?.addEventListener('change', e => {
+    if (!e.target.checked) { stopTestMode(); return; }
+    state.settings.testMode = true;
+    saveSettings();
+    if (Number.isFinite(state.settings.testLatitude)) {
+      stopGps();
+      applyTestPosition();
+      onSimulatedPositionChanged();
+    }
+    refreshTestGround();
     render();
   });
   document.querySelector('#testPlace')?.addEventListener('input', e => queuePlaceSearch(e.target.value));
@@ -3554,22 +3673,48 @@ function attachEvents() {
     }
   });
   attachTestResultEvents();
+  // The AMSL/AGL reference toggle: same number line, different zero.
+  document.querySelector('#altUnitAmsl')?.addEventListener('click', () => {
+    if (state.settings.testAltitudeMode === 'amsl') return;
+    state.settings.testAltitudeMode = 'amsl';
+    saveSettings();
+    render();
+  });
+  document.querySelector('#altUnitAgl')?.addEventListener('click', () => {
+    if (state.settings.testAltitudeMode === 'agl' || !Number.isFinite(state.testGroundM)) return;
+    state.settings.testAltitudeMode = 'agl';
+    applyTestAgl();
+    render();
+  });
   // Dragging updates the readout only; the position is re-adopted on release, same reasoning as
   // the terrain clearance slider.
   document.querySelector('#testAltitudeM')?.addEventListener('input', e => {
+    const agl = state.settings.testAltitudeMode === 'agl' && Number.isFinite(state.testGroundM);
+    const value = Number(e.target.value);
     const readout = document.querySelector('#testAltitudeValue');
-    if (readout) readout.textContent = fmtM(Number(e.target.value));
+    if (readout) readout.textContent = agl ? `${fmtM(value)} AGL` : fmtM(value);
+    const note = document.querySelector('#testAltitudeNote');
+    if (note && Number.isFinite(state.testGroundM)) {
+      note.textContent = agl
+        ? t('testAglLine', fmtM(state.testGroundM), fmtM(state.testGroundM + value))
+        : t('testAmslLine', fmtM(state.testGroundM), fmtM(Math.max(0, value - state.testGroundM)));
+    }
   });
   document.querySelector('#testAltitudeM')?.addEventListener('change', e => {
-    state.settings.testAltitudeM = Number(e.target.value);
-    saveSettings();
-    if (state.settings.testMode) {
-      applyTestPosition();
-      onSimulatedPositionChanged();
+    const value = Number(e.target.value);
+    if (state.settings.testAltitudeMode === 'agl' && Number.isFinite(state.testGroundM)) {
+      state.settings.testAglM = value;
+      applyTestAgl();
+    } else {
+      state.settings.testAltitudeM = value;
+      saveSettings();
+      if (state.settings.testMode && Number.isFinite(state.settings.testLatitude)) {
+        applyTestPosition();
+        onSimulatedPositionChanged();
+      }
     }
     render();
   });
-  document.querySelector('#stopTesting')?.addEventListener('click', stopTestMode);
   document.querySelector('#testBannerStop')?.addEventListener('click', stopTestMode);
   document.querySelector('#downloadPack')?.addEventListener('click', downloadOfflinePack);
   document.querySelector('#exportCup')?.addEventListener('click', exportCup);
