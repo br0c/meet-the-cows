@@ -6,6 +6,23 @@ name = "mtc-contrib-intake"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 
+# Workers Logs. Declared here rather than toggled in the dashboard on purpose: this Worker is
+# redeployed by .github/workflows/deploy-worker.yml on every push to main, and a deploy applies
+# the config it is given — a dashboard toggle can be reverted by a later merge, silently, which
+# is the worst way to lose a signal you thought you had.
+#
+# This is the only Worker in the repo worth observing. The site and app Workers serve static
+# assets with no entry script, so nothing of theirs ever executes; here the failure paths are
+# real and currently invisible — a contribution that cannot reach GitHub or R2, and the nightly
+# repo backup below, which has no other way of telling anyone it stopped working.
+#
+# Sampling stays at 1: a handful of contributions a day plus one cron is nowhere near the point
+# where volume matters. If logging is ever added, log outcomes — never request bodies, photo
+# contents, coordinates, or anything derived from GITHUB_TOKEN or TURNSTILE_SECRET.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [vars]
 REPO = "br0c/meet-the-cows"          # owner/repo the PR is opened against
 BASE_BRANCH = "main"                 # branch PRs target
