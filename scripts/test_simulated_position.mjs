@@ -62,14 +62,21 @@ await ctx.addInitScript(()=>localStorage.setItem('mtc-settings-v2',JSON.stringif
   packIds:['alps-test'],language:'en',safetyMarginM:250,showC:true,showD:true,
   testMode:false,testLatitude:null,testLongitude:null,testAltitudeM:2500,testLabel:'',
 })));
-// Stub the geocoder so the test does not depend on a third party being up.
-await ctx.route('https://photon.komoot.io/**', route => route.fulfill({
-  status:200, contentType:'application/json',
-  body: JSON.stringify({features:[
-    {geometry:{coordinates:[7.6304,45.9356]},properties:{name:'Breuil-Cervinia',city:'Valtournenche',state:"Valle d'Aosta",country:'Italia',osm_value:'village'}},
-    {geometry:{coordinates:[2.5556,48.5376]},properties:{name:'Cervinia',city:'Seine-Port',country:'France',osm_value:'yes'}},
-  ]}),
-}));
+// Stub the geocoder so the test does not depend on a third party being up. photonDropNext
+// models the dodgy-connection case: that many requests are reset before one succeeds.
+let photonCalls = 0;
+let photonDropNext = 0;
+await ctx.route('https://photon.komoot.io/**', route => {
+  photonCalls += 1;
+  if (photonDropNext > 0) { photonDropNext -= 1; return route.abort('connectionreset'); }
+  return route.fulfill({
+    status:200, contentType:'application/json',
+    body: JSON.stringify({features:[
+      {geometry:{coordinates:[7.6304,45.9356]},properties:{name:'Breuil-Cervinia',city:'Valtournenche',state:"Valle d'Aosta",country:'Italia',osm_value:'village'}},
+      {geometry:{coordinates:[2.5556,48.5376]},properties:{name:'Cervinia',city:'Seine-Port',country:'France',osm_value:'yes'}},
+    ]}),
+  });
+});
 const page=await ctx.newPage();
 const errors=[]; page.on('pageerror',e=>errors.push(String(e)));
 // This fixture publishes no terrain, so the store's probe for packs/_terrain/index.json 404s by
@@ -77,10 +84,11 @@ const errors=[]; page.on('pageerror',e=>errors.push(String(e)));
 page.on('console',m=>{
   if(m.type()!=='error') return;
   if(/404/.test(m.text()) && /_terrain/.test(m.location()?.url || '')) return;
+  if(/photon\.komoot\.io/.test(m.location()?.url || '') || /photon\.komoot\.io/.test(m.text())) return;   // this test resets those on purpose
   errors.push(m.text());
 });
 page.on('response',r=>{
-  if(r.status()>=400 && !/_terrain/.test(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`);
+  if(r.status()>=400 && !/_terrain/.test(r.url()) && !/photon/.test(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`);
 });
 await page.goto(base);
 await page.waitForTimeout(800);
@@ -160,6 +168,35 @@ await page.click('#testBannerStop');
 await page.waitForTimeout(600);
 check('stopping clears the banner', await page.$('.test-banner') === null);
 check('stopping clears the stored flag', (await page.evaluate(()=>JSON.parse(localStorage.getItem('mtc-settings-v2')).testMode))===false);
+
+// --- the dodgy connection: dropped requests are retried, and a dead end has a retry button ----
+await page.click('#settingsToggle');
+await page.waitForSelector('#testMode');
+await page.click('#testMode');
+await page.waitForSelector('#testPlace');
+
+// Two resets, then the third attempt lands: the pilot just sees results, late.
+photonDropNext = 2;
+let callsBefore = photonCalls;
+await page.fill('#testPlace','');
+await page.type('#testPlace','Chamonix',{delay:30});
+await page.waitForSelector('.test-result',{timeout:15000});
+check('a search that loses two requests still lands on the third',
+  photonCalls - callsBefore === 3, `${photonCalls - callsBefore} attempts`);
+
+// Nothing but resets: an honest message that does NOT claim they are offline, and one-tap retry.
+photonDropNext = 99;
+await page.fill('#testPlace','');
+await page.type('#testPlace','Grenoble',{delay:30});
+await page.waitForSelector('#retryPlaceSearch',{timeout:20000});
+const failText = await page.$eval('#testResults', el => el.innerText);
+check('three failures end in the flaky-connection message, not "you are offline"',
+  /three tries|search service/.test(failText) && !/needs a connection/.test(failText), failText.slice(0,70));
+photonDropNext = 0;
+await page.click('#retryPlaceSearch');
+await page.waitForSelector('.test-result',{timeout:15000});
+check('the retry button re-runs the same search', true);
+
 check('no page errors', errors.length===0, errors.slice(0,2).join(' | '));
 await browser.close(); srv.close();
 await rm(ROOT, { recursive: true, force: true });

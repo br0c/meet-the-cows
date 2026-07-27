@@ -301,6 +301,8 @@ const STRINGS = {
     testStop: 'Stop testing',
     testNoResults: 'Nothing found for that.',
     testSearchFailed: 'Search failed — this needs a connection.',
+    testSearchFlaky: 'Search failed after three tries — flaky connection, or the search service.',
+    testSearchRetryBtn: 'Try again',
     testUnnamed: 'Chosen position',
     testAttribution: 'Place search by Photon, using OpenStreetMap data.',
     testAmslLine: (ground, agl) => `Ground here ${ground} → ${agl} AGL`,
@@ -473,6 +475,8 @@ const STRINGS = {
     testStop: 'Arrêter le test',
     testNoResults: 'Aucun résultat.',
     testSearchFailed: 'Recherche impossible — une connexion est nécessaire.',
+    testSearchFlaky: 'Recherche échouée après trois essais — connexion instable ou service indisponible.',
+    testSearchRetryBtn: 'Réessayer',
     testUnnamed: 'Position choisie',
     testAttribution: 'Recherche de lieux par Photon, données OpenStreetMap.',
     testAmslLine: (ground, agl) => `Sol ici ${ground} → ${agl} AGL`,
@@ -644,6 +648,8 @@ const STRINGS = {
     testStop: 'Test beenden',
     testNoResults: 'Nichts gefunden.',
     testSearchFailed: 'Suche fehlgeschlagen — dafür ist eine Verbindung nötig.',
+    testSearchFlaky: 'Suche nach drei Versuchen fehlgeschlagen — instabile Verbindung oder Dienst nicht erreichbar.',
+    testSearchRetryBtn: 'Erneut versuchen',
     testUnnamed: 'Gewählte Position',
     testAttribution: 'Ortssuche von Photon, mit OpenStreetMap-Daten.',
     testAmslLine: (ground, agl) => `Boden hier ${ground} → ${agl} AGL`,
@@ -1227,14 +1233,33 @@ function computeRows() {
 // therefore unusable from a browser. Both are OpenStreetMap data; Photon is Komoot's.
 const GEOCODER_URL = 'https://photon.komoot.io/api/';
 
+// One try per pause in typing was the whole error handling: any single dropped packet became
+// "this needs a connection", on the kind of link where email still trickles through because
+// mail clients retry and this did not. Three attempts, short backoff, and a timeout per attempt
+// so a hung socket cannot pin "Searching…" forever.
+const PLACE_SEARCH_ATTEMPT_DELAYS_MS = [0, 1000, 3000];
+const PLACE_SEARCH_TIMEOUT_MS = 6000;
+
 async function searchPlaces(query) {
   const url = new URL(GEOCODER_URL);
   url.searchParams.set('q', query);
   url.searchParams.set('limit', '6');
   const language = resolveLang();
   if (['en', 'fr', 'de'].includes(language)) url.searchParams.set('lang', language);
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), PLACE_SEARCH_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(url, { cache: 'no-store', signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`);
+    // A rejected request (4xx short of rate limiting) will not get better by asking again.
+    error.permanent = response.status >= 400 && response.status < 500 && response.status !== 429;
+    throw error;
+  }
   const data = await response.json();
   return (data.features || []).map(feature => {
     const properties = feature.properties || {};
@@ -1275,15 +1300,33 @@ async function runPlaceSearch(query) {
   const seq = ++placeSearchSeq;
   state.testSearch = { status: 'searching', results: [], error: '' };
   updateTestResults();
-  try {
-    const results = await searchPlaces(text);
-    if (seq !== placeSearchSeq) return;
-    state.testSearch = { status: 'done', results, error: results.length ? '' : t('testNoResults') };
-  } catch (error) {
-    if (seq !== placeSearchSeq) return;
-    console.warn('Place search failed', error);
-    state.testSearch = { status: 'done', results: [], error: t('testSearchFailed') };
+
+  let lastError = null;
+  for (const delay of PLACE_SEARCH_ATTEMPT_DELAYS_MS) {
+    if (delay) await new Promise(resolve => window.setTimeout(resolve, delay));
+    if (seq !== placeSearchSeq) return;   // superseded by newer typing, even mid-backoff
+    try {
+      const results = await searchPlaces(text);
+      if (seq !== placeSearchSeq) return;
+      state.testSearch = { status: 'done', results, error: results.length ? '' : t('testNoResults') };
+      updateTestResults();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (error.permanent) break;
+    }
   }
+  if (seq !== placeSearchSeq) return;
+  console.warn('Place search failed', lastError);
+  // Only claim "needs a connection" when the browser agrees there is none; a failure while
+  // online is just as likely the search service, and telling a pilot with working email that
+  // they are offline reads as a lie. Either way the typed text is kept and retry is one tap.
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  state.testSearch = {
+    status: 'done', results: [],
+    error: offline ? t('testSearchFailed') : t('testSearchFlaky'),
+    retry: true,
+  };
   updateTestResults();
 }
 
@@ -1292,7 +1335,10 @@ function renderTestResults() {
   const search = state.testSearch;
   if (!search) return '';
   if (search.status === 'searching') return `<p class="settings-note">${escapeHtml(t('testSearching'))}</p>`;
-  if (search.error) return `<p class="settings-note">${escapeHtml(search.error)}</p>`;
+  if (search.error) {
+    return `<p class="settings-note">${escapeHtml(search.error)}</p>`
+      + (search.retry ? `<div class="button-row single"><button id="retryPlaceSearch">${t('testSearchRetryBtn')}</button></div>` : '');
+  }
   return search.results.map((place, index) => `
       <button class="test-result" data-test-index="${index}">
         <span class="test-result-name">${escapeHtml(place.label)}</span>
@@ -1312,6 +1358,7 @@ function attachTestResultEvents() {
     const place = state.testSearch?.results?.[Number(button.dataset.testIndex)];
     if (place) startTestMode(place);
   }));
+  document.querySelector('#retryPlaceSearch')?.addEventListener('click', () => runPlaceSearch(state.testQuery));
 }
 
 /** Adopt a searched place as the simulated position. */
