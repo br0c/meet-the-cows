@@ -1440,7 +1440,33 @@ async function refreshTestGround() {
     saveSettings();
   }
   if (ground !== null && state.settings.testAltitudeMode === 'agl') applyTestAgl();
+  // A new place can have its ground above the altitude carried over from the last one. Lift the
+  // altitude to meet it rather than leave the handle pinned below the start of its own track,
+  // where the slider would show one number and the solver would use another.
+  if (state.settings.testAltitudeMode !== 'agl' && ground !== null
+      && Number(state.settings.testAltitudeM) < ground) {
+    state.settings.testAltitudeM = ground;
+    saveSettings();
+    if (state.settings.testMode && Number.isFinite(state.settings.testLatitude)) {
+      applyTestPosition();
+      onSimulatedPositionChanged();
+    }
+  }
   render();
+}
+
+/**
+ * Lowest altitude the AMSL slider may offer: the ground at the chosen place, when it is known.
+ *
+ * Underground is not a position a glide can be computed from — every field would come back
+ * unreachable and the reason would be invisible. AGL has no equivalent problem: its zero IS the
+ * ground, and a negative AGL is not reachable on a slider that starts at zero.
+ *
+ * Sea level when the ground is unknown, which is the only honest floor available then.
+ */
+function testAltitudeFloorM() {
+  const ground = state.testGroundM;
+  return Number.isFinite(ground) ? ground : 0;
 }
 
 /** In AGL mode the stored absolute altitude follows ground + AGL, so downstream needs no mode. */
@@ -2493,6 +2519,13 @@ function renderTestAltitudeRow() {
   const aglAvailable = Number.isFinite(ground);
   const agl = settings.testAltitudeMode === 'agl' && aglAvailable;
   const value = agl ? (Number(settings.testAglM) || 0) : (Number(settings.testAltitudeM) || 0);
+  // In AMSL the track starts at the ground rather than at the sea, so the handle cannot be put
+  // underground. Kept as the exact ground, not rounded up to a step: sitting at 0 AGL is a real
+  // thing to want to check, and rounding would quietly make the lowest 99 m unreachable.
+  const floor = testAltitudeFloorM();
+  // Somewhere with ground above the usual 6000 m ceiling would otherwise get a slider with no
+  // travel at all.
+  const ceiling = Math.max(6000, floor + 1000);
 
   let note = '';
   if (agl) {
@@ -2512,7 +2545,7 @@ function renderTestAltitudeRow() {
             </div>
             <output id="testAltitudeValue" for="testAltitudeM" class="set-value">${agl ? `${fmtM(value)} AGL` : fmtM(value)}</output>
           </div>
-          <input id="testAltitudeM" type="range" min="0" max="${agl ? 3000 : 6000}" step="${agl ? 50 : 100}" value="${value}" />
+          <input id="testAltitudeM" type="range" min="${agl ? 0 : floor}" max="${agl ? 3000 : ceiling}" step="${agl ? 50 : 100}" value="${Math.max(agl ? 0 : floor, value)}" />
           <p class="set-sub" id="testAltitudeNote">${escapeHtml(note)}</p>
         </div>`;
 }
@@ -3770,7 +3803,10 @@ function attachEvents() {
       state.settings.testAglM = value;
       applyTestAgl();
     } else {
-      state.settings.testAltitudeM = value;
+      // The browser clamps the handle to the track, but the value can still arrive from a stale
+      // render or a scripted change — the floor is enforced here so the stored altitude and the
+      // slider can never tell different stories.
+      state.settings.testAltitudeM = Math.max(testAltitudeFloorM(), value);
       saveSettings();
       if (state.settings.testMode && Number.isFinite(state.settings.testLatitude)) {
         applyTestPosition();

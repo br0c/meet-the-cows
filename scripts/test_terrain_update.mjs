@@ -259,16 +259,43 @@ console.log('\n3b — AGL: available over downloaded terrain, gone when the tile
   check('the absolute altitude follows ground + AGL', stored.testAltitudeMode === 'agl'
     && Math.abs(stored.testAltitudeM - (stored.testAglM + 2005)) < 40,
     `${stored.testAltitudeM} m stored for ${stored.testAglM} m AGL`);
+  // The AMSL track must start at the ground, not at the sea: underground is not a position a
+  // glide can be computed from, and every field coming back unreachable with no visible reason
+  // is the worst way to learn that.
+  await page.click('#altUnitAmsl');
+  await page.waitForTimeout(300);
+  const track = await page.$eval('#testAltitudeM', el => ({ min: Number(el.min), value: Number(el.value) }));
+  check('the AMSL slider starts at the ground, not at 0', track.min > 1900 && track.min < 2100,
+    `min ${track.min} m (Cervinia ground ~2010 m)`);
+  check('and the handle cannot already be below it', track.value >= track.min,
+    `value ${track.value} vs min ${track.min}`);
+  // Driving it under the floor by hand must not stick.
+  await page.$eval('#testAltitudeM', el => {
+    el.value = 500;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(500);
+  const stored500 = (await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mtc-settings-v2')))).testAltitudeM;
+  check('an altitude forced below the ground is lifted back to it', stored500 >= 1900,
+    `${stored500} m stored`);
+
   // Back to the altitude the remaining phases were written for.
   await page.click('#altUnitAmsl');
   await page.waitForTimeout(200);
+  // Note the slider now steps FROM the ground, so the reachable values are ground + n*100 rather
+  // than round hundreds — asking for 2800 over 2010 m of ground lands on 2810. Assert the stored
+  // altitude agrees with the handle, which is the property that matters, not a literal.
   await page.$eval('#testAltitudeM', el => {
     el.value = 2800;
     el.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await page.waitForTimeout(600);
-  check('back on AMSL at the test altitude', (await page.evaluate(() =>
-    JSON.parse(localStorage.getItem('mtc-settings-v2')))).testAltitudeM === 2800);
+  const handle = await page.$eval('#testAltitudeM', el => Number(el.value));
+  const storedAlt = (await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('mtc-settings-v2')))).testAltitudeM;
+  check('back on AMSL, and the stored altitude matches the handle',
+    storedAlt === handle && storedAlt >= 2800 && storedAlt < 2900, `${storedAlt} m / handle ${handle}`);
 }
 
 // --- 4. remove terrain ---------------------------------------------------------------------------
