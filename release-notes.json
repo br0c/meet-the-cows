@@ -3,181 +3,157 @@
     "version": "0.8.6-beta",
     "date": "2026-07-26",
     "en": [
-      "Fixed a serious one: flying close to the ground — thermalling beside a face, as everyone does — could empty the field list completely. The clearance margin was being applied to the ground beside the glider, not just to the ground ahead, so the router refused to plan a first step in any direction. It now builds up over the first couple of kilometres: what is beside you is your judgement, what is ahead of you is what the margin is for",
-      "Fixed: airfields imported without a published code showed an internal key such as IT_ANDREA_BOZZO_44P864_7P407 where an identifier belongs. They now show no code at all, in the list, on the field page and in the exported waypoint file",
-      "Fewer duplicate entries: an airfield carried by two sources under different names — “#73 Busano” and “Pegasus” for the same grass — is now recognised as one place by its runway heading, elevation and position, and merged with both sources' photos and notes kept",
-      "Opens straight away on a weak connection: anything already downloaded is used immediately instead of waiting on the radio, so a bad signal now costs no more than no signal at all. New field data still arrives on its own, a moment later",
-      "Terrain updates now reach the phone: rebuilt tiles are recognised by content, downloaded individually, and tiles fetched before this version are kept without re-downloading them",
-      "New in Settings: Remove terrain, to free the space the tiles occupy",
-      "Settings now says “Show C fields” and “Show D fields”, both off, instead of “Hide C/D fields”, both on — the same behaviour, phrased like every other switch. Whatever you had chosen is kept",
-      "Removed the “Nearest distance” sort. The list is always ordered by the glide you would need, because proximity ranks a field you cannot reach above one you can; distance still has its own column on every row, and when there is no altitude to work from the list falls back to nearest first on its own",
-      "The waypoint export is no longer named after one app: “Export CUP”, described as a waypoints file for your preferred navigation app. The file itself is unchanged"
+      "Fixed: flying close to terrain could leave the field list empty",
+      "Opens straight away on a weak connection",
+      "Duplicate entries for the same airfield are merged, and internal codes no longer show up as identifiers",
+      "Settings: “Show C fields” and “Show D fields” replace “Hide C/D fields”; new “Remove terrain” frees the space tiles use",
+      "The list is always sorted by required glide — the “Nearest distance” option is gone",
+      "Bug fixes"
     ],
     "fr": [
-      "Correction importante : voler près du relief — spiraler le long d'une face, comme tout le monde — pouvait vider complètement la liste des terrains. La marge de garde s'appliquait au relief situé à côté du planeur et non seulement à celui qui est devant, si bien que le calcul refusait le moindre premier pas. Elle monte désormais progressivement sur les deux premiers kilomètres : ce qui est à côté de vous relève de votre jugement, ce qui est devant relève de la marge",
-      "Correction : les aérodromes importés sans code publié affichaient une clé interne du type IT_ANDREA_BOZZO_44P864_7P407 à la place d'un identifiant. Ils n'affichent désormais aucun code, dans la liste, sur la fiche du terrain et dans le fichier de points de virage exporté",
-      "Moins de doublons : un aérodrome présent dans deux sources sous des noms différents — « #73 Busano » et « Pegasus » pour la même piste — est désormais reconnu comme un seul lieu grâce à son orientation de piste, son altitude et sa position, puis fusionné en conservant les photos et les notes des deux sources",
-      "Ouverture immédiate avec une connexion faible : tout ce qui est déjà téléchargé est utilisé sans attendre le réseau, si bien qu'un mauvais signal ne coûte pas plus cher que pas de signal du tout. Les nouvelles données de terrains arrivent ensuite d'elles-mêmes",
-      "Les mises à jour du relief atteignent désormais le téléphone : les tuiles reconstruites sont reconnues à leur contenu, téléchargées individuellement, et les tuiles récupérées avant cette version sont conservées sans nouveau téléchargement",
-      "Nouveau dans les Réglages : Supprimer le relief, pour libérer l'espace occupé par les tuiles",
-      "Les Réglages proposent désormais « Afficher les terrains C » et « Afficher les terrains D », tous deux désactivés, au lieu de « Masquer les terrains C/D », tous deux activés — même comportement, formulé comme les autres options. Votre choix précédent est conservé",
-      "Le tri « Distance la plus courte » a été retiré. La liste est toujours classée par la finesse qu'il vous faudrait, car la proximité place un terrain inatteignable au-dessus d'un terrain atteignable ; la distance conserve sa colonne sur chaque ligne, et sans altitude connue la liste revient d'elle-même au plus proche d'abord",
-      "L'export de points de virage ne porte plus le nom d'une seule application : « Exporter CUP », décrit comme un fichier de points de virage pour l'application de navigation de votre choix. Le fichier lui-même est inchangé"
+      "Corrigé : voler près du relief pouvait vider la liste des terrains",
+      "Ouverture immédiate avec une connexion faible",
+      "Les doublons d’un même aérodrome sont fusionnés, et les codes internes n’apparaissent plus comme identifiants",
+      "Réglages : « Afficher les terrains C » et « Afficher les terrains D » remplacent « Masquer les terrains C/D » ; « Supprimer le relief » libère l’espace des tuiles",
+      "La liste est toujours triée par finesse requise — l’option « Distance la plus courte » disparaît",
+      "Corrections diverses"
     ],
     "de": [
-      "Ein gravierender Fehler behoben: Flug nahe am Gelände — Kreisen entlang einer Wand, wie es alle tun — konnte die Feldliste vollständig leeren. Die Sicherheitsmarge wurde auf das Gelände NEBEN dem Segler angewandt, nicht nur auf das vorausliegende, sodass der Router in keiner Richtung einen ersten Schritt plante. Sie baut sich nun über die ersten zwei Kilometer auf: was neben Ihnen liegt, ist Ihr Urteil, was vor Ihnen liegt, dafür ist die Marge da",
-      "Behoben: Ohne veröffentlichten Code importierte Flugplätze zeigten dort, wo eine Kennung stehen sollte, einen internen Schlüssel wie IT_ANDREA_BOZZO_44P864_7P407. Sie zeigen nun gar keinen Code mehr – in der Liste, auf der Platzseite und in der exportierten Wegpunktdatei",
-      "Weniger doppelte Einträge: Ein Flugplatz, den zwei Quellen unter verschiedenen Namen führen – „#73 Busano“ und „Pegasus“ für dieselbe Graspiste – wird nun anhand von Pistenrichtung, Höhe und Position als ein Ort erkannt und zusammengeführt, wobei Fotos und Hinweise beider Quellen erhalten bleiben",
-      "Öffnet bei schwacher Verbindung sofort: Bereits heruntergeladene Daten werden genutzt, ohne auf den Funk zu warten — schlechter Empfang kostet damit nicht mehr als gar kein Empfang. Neue Felddaten treffen kurz darauf von selbst ein",
-      "Gelände-Updates erreichen jetzt das Telefon: Neu gebaute Kacheln werden am Inhalt erkannt und einzeln geladen; vor dieser Version geladene Kacheln bleiben ohne erneuten Download erhalten",
-      "Neu in den Einstellungen: Gelände entfernen, um den belegten Speicher freizugeben",
-      "Die Einstellungen zeigen jetzt „C-Felder anzeigen“ und „D-Felder anzeigen“, beide aus, statt „C-/D-Felder ausblenden“, beide ein — gleiches Verhalten, formuliert wie jeder andere Schalter. Ihre bisherige Wahl bleibt erhalten",
-      "Die Sortierung „Kürzeste Entfernung“ entfällt. Die Liste ist immer nach der erforderlichen Gleitzahl geordnet, denn Nähe stellt ein unerreichbares Feld über ein erreichbares; die Entfernung behält ihre eigene Spalte in jeder Zeile, und ohne bekannte Höhe fällt die Liste von selbst auf „nächstes zuerst“ zurück",
-      "Der Wegpunkt-Export trägt nicht mehr den Namen einer einzelnen App: „CUP exportieren“, beschrieben als Wegpunktdatei für die Navigations-App Ihrer Wahl. Die Datei selbst bleibt unverändert"
+      "Behoben: Flug nahe am Gelände konnte die Feldliste leeren",
+      "Öffnet bei schwacher Verbindung sofort",
+      "Doppelte Einträge desselben Flugplatzes werden zusammengeführt, und interne Schlüssel erscheinen nicht mehr als Kennung",
+      "Einstellungen: „C-Felder anzeigen“ und „D-Felder anzeigen“ ersetzen „C-/D-Felder ausblenden“; neu „Gelände entfernen“ gibt den Speicher der Kacheln frei",
+      "Die Liste ist immer nach erforderlicher Gleitzahl sortiert — die Option „Kürzeste Entfernung“ entfällt",
+      "Fehlerbehebungen"
     ]
   },
   {
     "version": "0.8.5-beta",
     "date": "2026-07-26",
     "en": [
-      "Fixed: enabling terrain routing on a poor connection could leave the list showing straight-line glides until the app was closed and reopened, even after the terrain had downloaded",
-      "Terrain that was unreachable is now retried when you switch terrain on or finish a download, and the Settings page brings its controls back to life on its own once the data is available again",
-      "The mountain marker now sits to the left of the glide ratio, so the ratios line up down the list whether or not a row is routed"
+      "Fixed: terrain routing could stay inactive until the app was restarted",
+      "Glide ratios now line up down the list"
     ],
     "fr": [
-      "Correction : activer le calcul autour du relief avec une mauvaise connexion pouvait laisser la liste afficher des finesses en ligne droite jusqu'à la fermeture et la réouverture de l'application, même une fois le relief téléchargé",
-      "Le relief injoignable est désormais redemandé lorsque vous activez le relief ou terminez un téléchargement, et la page Réglages réactive ses commandes d'elle-même dès que les données redeviennent disponibles",
-      "Le repère de montagne se place maintenant à gauche de la finesse, pour que les valeurs s'alignent dans la liste, qu'une ligne soit calculée sur le relief ou non"
+      "Corrigé : le calcul autour du relief pouvait rester inactif jusqu’au redémarrage de l’application",
+      "Les finesses sont désormais alignées dans la liste"
     ],
     "de": [
-      "Behoben: Wurde die Geländeführung bei schlechter Verbindung eingeschaltet, konnte die Liste weiterhin Gleitzahlen der geraden Linie anzeigen, bis die App geschlossen und neu geöffnet wurde – selbst nach dem Herunterladen des Geländes",
-      "Nicht erreichbares Gelände wird jetzt erneut angefragt, sobald Sie das Gelände einschalten oder einen Download abschließen, und die Einstellungsseite aktiviert ihre Bedienelemente von selbst wieder, sobald die Daten verfügbar sind",
-      "Die Bergmarkierung steht nun links von der Gleitzahl, damit die Werte in der Liste bündig stehen – ob eine Zeile über das Gelände geführt wird oder nicht"
+      "Behoben: Die Geländeführung konnte bis zum Neustart der App inaktiv bleiben",
+      "Die Gleitzahlen stehen jetzt bündig untereinander"
     ]
   },
   {
     "version": "0.8.4-beta",
     "date": "2026-07-25",
     "en": [
-      "New: the required glide ratio now follows a path that stays clear of the ground instead of a straight line — a field down a valley can become reachable, and one behind a ridge can stop being",
-      "New: the field detail sheet shows the route, and the point that actually limits the glide",
-      "New: Settings → Terrain turns this on or off, with a slider for how far above the ground a routed glide has to stay (100–500 m, 200 m by default)",
-      "Terrain has to be downloaded before it works offline — Settings → Terrain shows the size",
-      "New: the detail sheet gives the height the routed glide arrives over the field with, and how far below you the limiting point sits — a glide sized for a col reaches the field with far more than the safety margin, which a bare ratio hides",
-      "Settings now uses switches for its on/off options, and shows each setting's value beside its name",
-      "Terrain routing ships switched off, and turning it on asks first: it is experimental, it can be wrong, and the choice of trajectory and landing site stays yours. The Route block and the Terrain settings carry an Experimental tag wherever its figures are read",
-      "On the old address, Settings now keeps a permanent “How to move” entry. Dismissing the banner used to hide the instructions until the next reminder, which was no help to anyone who meant “not right now”"
+      "New: the required glide can follow a path around terrain instead of a straight line. Settings → Terrain — experimental, off by default, and the data has to be downloaded",
+      "The field page shows the route and the point that limits the glide",
+      "Settings redesigned",
+      "On the old address, Settings keeps a permanent “How to move” entry"
     ],
     "fr": [
-      "Nouveau : la finesse requise suit désormais un trajet dégagé du sol au lieu d'une ligne droite — un terrain au fond d'une vallée peut devenir atteignable, un terrain derrière une crête peut cesser de l'être",
-      "Nouveau : la fiche du terrain affiche le trajet et le point qui limite réellement la finesse",
-      "Nouveau : Réglages → Relief active ou désactive le calcul, avec un curseur pour la garde au sol des trajets (100–500 m, 200 m par défaut)",
-      "Le relief doit être téléchargé pour fonctionner hors ligne — Réglages → Relief indique la taille",
-      "Nouveau : la fiche indique la hauteur d'arrivée du trajet au-dessus du terrain, et de combien le point limitant se trouve sous vous — un trajet calé sur un col arrive bien au-dessus de la marge de sécurité, ce qu'une simple finesse masque",
-      "Les réglages utilisent désormais des interrupteurs pour les options oui/non, et affichent la valeur de chaque réglage à côté de son nom",
-      "Le calcul en contournant le relief est désactivé par défaut, et l'activer demande confirmation : c'est expérimental, cela peut être faux, et le choix de la trajectoire et du terrain reste le vôtre. Le bloc Trajet et les réglages Relief portent une étiquette Expérimental partout où ces chiffres sont lus",
-      "Sur l'ancienne adresse, les réglages gardent désormais une entrée permanente « Comment déménager ». Fermer le bandeau masquait les instructions jusqu'au rappel suivant, ce qui n'aidait personne ayant simplement voulu dire « pas maintenant »"
+      "Nouveau : la finesse requise peut suivre un trajet contournant le relief au lieu d’une ligne droite. Réglages → Relief — expérimental, désactivé par défaut, et les données doivent être téléchargées",
+      "La fiche du terrain montre le trajet et le point qui limite la finesse",
+      "Réglages redessinés",
+      "Sur l’ancienne adresse, les Réglages conservent une entrée permanente « Comment migrer »"
     ],
     "de": [
-      "Neu: Die erforderliche Gleitzahl folgt jetzt einem vom Boden freien Pfad statt einer Luftlinie — ein Feld talabwärts kann erreichbar werden, eines hinter einem Grat nicht mehr",
-      "Neu: Das Felddetail zeigt den Pfad und die Stelle, die die Gleitzahl tatsächlich begrenzt",
-      "Neu: Einstellungen → Gelände schaltet das ein oder aus, mit einem Schieberegler für die Geländefreiheit der Pfade (100–500 m, Standard 200 m)",
-      "Gelände muss heruntergeladen werden, damit es offline funktioniert — Einstellungen → Gelände zeigt die Größe",
-      "Neu: Das Felddetail nennt die Ankunftshöhe des Pfades über dem Feld und wie weit die begrenzende Stelle unter dir liegt — ein auf einen Col ausgelegter Gleitpfad kommt weit über der Sicherheitsreserve an, was eine blosse Gleitzahl verbirgt",
-      "Die Einstellungen verwenden jetzt Schalter für Ja/Nein-Optionen und zeigen den Wert jeder Einstellung neben ihrem Namen",
-      "Geländeführung ist ab Werk aus, und das Einschalten fragt vorher: sie ist experimentell, sie kann falsch sein, und die Wahl von Flugweg und Landefeld bleibt bei dir. Der Pfad-Block und die Gelände-Einstellungen tragen überall dort ein Experimentell-Etikett, wo diese Zahlen gelesen werden",
-      "Unter der alten Adresse behalten die Einstellungen jetzt dauerhaft einen Eintrag „Wie du umziehst“. Das Wegklicken des Banners versteckte die Anleitung bis zur nächsten Erinnerung, was niemandem half, der nur „nicht jetzt“ meinte"
+      "Neu: Die erforderliche Gleitzahl kann einem Pfad um das Gelände folgen statt einer Luftlinie. Einstellungen → Gelände — experimentell, standardmäßig aus, die Daten müssen geladen werden",
+      "Die Platzseite zeigt den Weg und den Punkt, der die Gleitzahl begrenzt",
+      "Einstellungen überarbeitet",
+      "Unter der alten Adresse behalten die Einstellungen einen dauerhaften Eintrag „Wie umziehen“"
     ]
   },
   {
     "version": "0.8.3-beta",
     "date": "2026-07-25",
     "en": [
-      "Sharper, correctly coloured home-screen icon on iOS, which previously had only an SVG to work from"
+      "Sharper home-screen icon on iOS"
     ],
     "fr": [
-      "Icône d'écran d'accueil plus nette et aux bonnes couleurs sur iOS, qui ne disposait auparavant que d'un SVG"
+      "Icône d’écran d’accueil plus nette sur iOS"
     ],
     "de": [
-      "Schärferes, farblich korrektes Startbildschirm-Symbol unter iOS, dem bisher nur ein SVG zur Verfügung stand"
+      "Schärferes Startbildschirm-Symbol unter iOS"
     ]
   },
   {
     "version": "0.8.2-beta",
     "date": "2026-07-25",
     "en": [
-      "Fixed: app updates could sit unseen for up to four hours because the new version was being answered from the browser's cache"
+      "Fixed: app updates could take hours to appear"
     ],
     "fr": [
-      "Corrigé : les mises à jour de l'application pouvaient rester invisibles jusqu'à quatre heures, la nouvelle version étant servie depuis le cache du navigateur"
+      "Corrigé : les mises à jour de l’application pouvaient mettre des heures à apparaître"
     ],
     "de": [
-      "Behoben: App-Updates konnten bis zu vier Stunden unbemerkt bleiben, weil die neue Version aus dem Browser-Cache beantwortet wurde"
+      "Behoben: App-Updates konnten Stunden brauchen, bis sie erschienen"
     ]
   },
   {
     "version": "0.8.1-beta",
     "date": "2026-07-25",
     "en": [
-      "Housekeeping: this copy now knows where the app really lives, so an old bookmark can tell you how to move across"
+      "The old address now tells you where the app has moved"
     ],
     "fr": [
-      "Maintenance : cette copie sait désormais où se trouve réellement l'application, afin qu'un ancien favori puisse vous expliquer comment migrer"
+      "L’ancienne adresse indique désormais où l’application a déménagé"
     ],
     "de": [
-      "Wartung: Diese Kopie weiß jetzt, wo die App wirklich liegt, damit ein altes Lesezeichen dir den Wechsel erklären kann"
+      "Die alte Adresse zeigt jetzt an, wohin die App umgezogen ist"
     ]
   },
   {
     "version": "0.8.0-beta",
     "date": "2026-07-24",
     "en": [
-      "New: Meet the Cows is moving to its own address — if you're on the old one, the app now tells you how to move across (do it on Wi-Fi: your offline packs have to be downloaded again)"
+      "New: Meet the Cows is moving to its own address. The old one tells you how to move across — do it on Wi-Fi, your offline packs need downloading again"
     ],
     "fr": [
-      "Nouveau : Meet the Cows déménage vers sa propre adresse — si vous êtes sur l'ancienne, l'application vous explique comment migrer (à faire en Wi-Fi : vos packs hors ligne doivent être retéléchargés)"
+      "Nouveau : Meet the Cows déménage à sa propre adresse. L’ancienne explique comment migrer — faites-le en Wi-Fi, vos packs hors ligne doivent être retéléchargés"
     ],
     "de": [
-      "Neu: Meet the Cows zieht auf eine eigene Adresse um — auf der alten erklärt dir die App jetzt den Wechsel (im WLAN erledigen: deine Offline-Pakete müssen neu geladen werden)"
+      "Neu: Meet the Cows zieht auf eine eigene Adresse um. Die alte erklärt den Umzug — machen Sie es im WLAN, Ihre Offline-Pakete müssen neu geladen werden"
     ]
   },
   {
     "version": "0.7.8-beta",
     "date": "2026-07-24",
     "en": [
-      "Changed: Fields without a difficulty rating now show a compact grey \"?\" badge instead of the word \"unknown\" overflowing into the glide-ratio column"
+      "Fields with no difficulty rating show a grey “?” badge"
     ],
     "fr": [
-      "Modifié : Les terrains sans niveau de difficulté affichent désormais un badge gris compact « ? » au lieu du mot « inconnu » qui débordait sur la colonne de finesse"
+      "Les terrains sans note de difficulté affichent une pastille grise « ? »"
     ],
     "de": [
-      "Geändert: Felder ohne Schwierigkeitsbewertung zeigen jetzt ein kompaktes graues \"?\"-Abzeichen statt des Worts \"unbekannt\", das in die Gleitzahl-Spalte hineinragte"
+      "Felder ohne Schwierigkeitsbewertung zeigen eine graue „?“-Plakette"
     ]
   },
   {
     "version": "0.7.7-beta",
     "date": "2026-07-23",
     "en": [
-      "Changed: The data-source mention returns at the bottom of field details, as plain text"
+      "Data sources are credited at the bottom of field details again"
     ],
     "fr": [
-      "Modifié : La mention de la source de données revient en bas de la fiche d'un terrain, en texte simple"
+      "Les sources de données sont de nouveau créditées au bas des fiches"
     ],
     "de": [
-      "Geändert: Der Datenquellen-Hinweis kehrt unten in den Felddetails zurück, als einfacher Text"
+      "Datenquellen werden wieder unten auf der Platzseite genannt"
     ]
   },
   {
     "version": "0.7.6-beta",
     "date": "2026-07-23",
     "en": [
-      "Changed: Field details no longer show a data-source line; sources are credited in the README and each pack's manifest"
+      "Field details no longer show a data-source line"
     ],
     "fr": [
-      "Modifié : La fiche d'un terrain n'affiche plus la ligne de source de données ; les sources sont créditées dans le README et le manifeste de chaque pack"
+      "Les fiches n’affichent plus de ligne de source de données"
     ],
     "de": [
-      "Geändert: Die Felddetails zeigen keine Datenquellen-Zeile mehr; die Quellen werden im README und im Manifest jedes Pakets genannt"
+      "Die Platzseiten zeigen keine Datenquellen-Zeile mehr"
     ]
   },
   {

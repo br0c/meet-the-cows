@@ -16,3 +16,22 @@
   `git config user.name "Fabien Broquet" && git config user.email "fbroquet@pm.me"`
   (sessions start from a fresh clone, so this must be re-applied every session). Keep the
   `Co-Authored-By: Claude …` trailer in commit messages so authorship stays honest.
+
+## Release notes
+
+`release-notes.json` is read by pilots in the app, not by maintainers. Every release must have an
+entry for its `APP_VERSION` — CI refuses to deploy without one — but the entry should be short.
+
+- **One short line per change, saying what changed.** Never why, never how. The mechanism belongs
+  in the commit message, where someone debugging it will actually look for it.
+- **Small technical fixes collapse into a single "Bug fixes" line.** A pilot does not need to know
+  that a cache key was wrong, only that the thing works now.
+- **Group related changes onto one line** rather than listing each switch and label separately.
+- **A second sentence only where a caveat changes what a pilot does** — "experimental, off by
+  default", "do it on Wi-Fi". Otherwise one sentence is the whole entry.
+- **Safety-relevant fixes stay explicit,** briefly. Someone who hit the bug in the air should
+  recognise it in the list; that costs a dozen words, not a paragraph.
+- Write all three languages (`en`, `fr`, `de`) to the same shape. Do not translate a long English
+  line — write the short line in each.
+
+For scale: 0.8.6-beta covered nine changes in six lines and 72 words.
