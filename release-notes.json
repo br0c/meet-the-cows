@@ -4,15 +4,18 @@
     "date": "2026-07-27",
     "en": [
       "The app now notices new versions when you reopen it, and offers to reload",
-      "Ground testing: a plain switch, with the test altitude given as AMSL or AGL"
+      "Ground testing: a plain switch, with the test altitude given as AMSL or AGL",
+      "Bug fixes"
     ],
     "fr": [
       "L’application détecte les nouvelles versions à la réouverture et propose de recharger",
-      "Test au sol : un simple interrupteur, avec l'altitude en AMSL ou AGL"
+      "Test au sol : un simple interrupteur, avec l'altitude en AMSL ou AGL",
+      "Corrections diverses"
     ],
     "de": [
       "Die App erkennt neue Versionen beim erneuten Öffnen und bietet das Neuladen an",
-      "Bodentest: ein einfacher Schalter, Höhe wahlweise als AMSL oder AGL"
+      "Bodentest: ein einfacher Schalter, Höhe wahlweise als AMSL oder AGL",
+      "Fehlerbehebungen"
     ]
   },
   {
