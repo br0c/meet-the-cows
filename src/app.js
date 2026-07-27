@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeysForBounds } from './terrain.js';
 
-const APP_VERSION = '0.8.6-beta';
+const APP_VERSION = '0.8.7-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -328,6 +328,7 @@ const STRINGS = {
     searchPlaceholder: 'Search a field by name or code', clearSearch: 'Clear search',
     searchResults: 'Search results', noMatches: q => `No fields match “${q}”.`,
     whatsNew: 'What’s new', updatedTo: v => `🆕 Updated to ${v}`,
+    updateReady: '🆕 A new version is ready.', reloadNow: 'Reload',
     migBanner: 'Meet the Cows has a new home. Same app, new address — move when you’re on Wi-Fi.',
     migDetails: 'Details', migTitle: 'The app is moving',
     migIntro: 'Meet the Cows now lives on its own address. This one keeps working for now, but updates and new features land on the new one.',
@@ -495,6 +496,7 @@ const STRINGS = {
     searchPlaceholder: 'Rechercher un terrain (nom ou code)', clearSearch: 'Effacer la recherche',
     searchResults: 'Résultats de recherche', noMatches: q => `Aucun terrain ne correspond à « ${q} ».`,
     whatsNew: 'Nouveautés', updatedTo: v => `🆕 Mise à jour ${v}`,
+    updateReady: '🆕 Une nouvelle version est prête.', reloadNow: 'Recharger',
     migBanner: 'Meet the Cows a une nouvelle adresse. Même application — déménagez en Wi-Fi.',
     migDetails: 'Détails', migTitle: 'L’application déménage',
     migIntro: 'Meet the Cows a désormais sa propre adresse. Celle-ci continue de fonctionner, mais les mises à jour et les nouveautés arrivent sur la nouvelle.',
@@ -661,6 +663,7 @@ const STRINGS = {
     searchPlaceholder: 'Feld suchen (Name oder Code)', clearSearch: 'Suche löschen',
     searchResults: 'Suchergebnisse', noMatches: q => `Keine Felder für „${q}“.`,
     whatsNew: 'Neuigkeiten', updatedTo: v => `🆕 Aktualisiert auf ${v}`,
+    updateReady: '🆕 Eine neue Version ist bereit.', reloadNow: 'Neu laden',
     migBanner: 'Meet the Cows hat eine neue Adresse. Gleiche App — wechsle im WLAN.',
     migDetails: 'Details', migTitle: 'Die App zieht um',
     migIntro: 'Meet the Cows hat jetzt eine eigene Adresse. Diese hier funktioniert vorerst weiter, aber Updates und neue Funktionen kommen auf der neuen.',
@@ -780,6 +783,8 @@ let state = {
   releaseNotes: [],
   showReleaseNotes: false,
   updateNoteAvailable: false,
+  // A newer build is installed and cached, but this document is still running the old one.
+  updateReadyOnReload: false,
   view: 'main',
   searchQuery: '',
   computedRows: [],
@@ -814,12 +819,17 @@ let state = {
 
 const app = document.querySelector('#app');
 
+// Declared here rather than beside registerServiceWorker: init() runs before the rest of the
+// module body, so anything it reaches must already be initialised.
+let swRegistration = null;
+
 init();
 
 async function init() {
   render();
   registerServiceWorker();
   initReleaseNotes();
+  watchForResume();
   await loadPackIndex();
   await loadSelectedPacks();
   startGps();
@@ -1964,6 +1974,7 @@ function renderMainPage() {
   return `
     ${renderSearchBox()}
     ${renderMigrationBanner()}
+    ${renderReloadBanner()}
     ${renderReleaseBanner()}
     ${renderUpdateBanner()}
     ${renderWarnings()}
@@ -2085,6 +2096,19 @@ function renderReleaseBanner() {
     <div class="update-banner">
       <span>${escapeHtml(t('updatedTo', APP_VERSION))}</span>
       <button id="releaseBannerBtn" class="primary">${t('whatsNew')}</button>
+    </div>
+  `;
+}
+
+// Shown when a new build has been downloaded but this document still runs the old one — the
+// case an installed app hits when it is resumed for weeks without ever being relaunched.
+// Reloading is the pilot's call: doing it unasked would discard whatever they were reading.
+function renderReloadBanner() {
+  if (!state.updateReadyOnReload) return '';
+  return `
+    <div class="update-banner">
+      <span>${escapeHtml(t('updateReady'))}</span>
+      <button id="reloadAppBtn" class="primary">${escapeHtml(t('reloadNow'))}</button>
     </div>
   `;
 }
@@ -3400,6 +3424,7 @@ function attachEvents() {
   }
   if (state.showNewField) wireNewFieldForm();
   document.querySelector('#releaseBannerBtn')?.addEventListener('click', openReleaseNotes);
+  document.querySelector('#reloadAppBtn')?.addEventListener('click', () => location.reload());
   document.querySelector('#whatsNewLink')?.addEventListener('click', e => { e.preventDefault(); openReleaseNotes(); });
   document.querySelector('#closeNotes')?.addEventListener('click', () => { state.showReleaseNotes = false; render(); });
   document.querySelector('#notesBackdrop')?.addEventListener('click', e => {
@@ -3570,8 +3595,62 @@ async function registerServiceWorker() {
   // has just updated, so this costs no round trip and cannot stall.
   navigator.serviceWorker.addEventListener('message', event => {
     if (event.data?.type === 'mtc-pack-changed') schedulePackReread();
+    if (event.data?.type === 'mtc-notes-changed') rereadReleaseNotes();
   });
-  try { await navigator.serviceWorker.register(new URL('service-worker.js', BASE_URL)); } catch (e) { console.warn(e); }
+  // On a first-ever visit the worker claims this page as soon as it activates, which is also a
+  // controllerchange — but nothing about the running code is stale, so only a page that ALREADY
+  // had a controller is looking at a genuinely new build.
+  let controlled = !!navigator.serviceWorker.controller;
+  // A new worker taking over means the cache now holds code this document is not running. Never
+  // reload from under the pilot — say so and let them pick the moment.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (controlled) {
+      state.updateReadyOnReload = true;
+      render();
+    }
+    controlled = true;
+  });
+  try {
+    swRegistration = await navigator.serviceWorker.register(new URL('service-worker.js', BASE_URL));
+  } catch (e) { console.warn(e); }
+}
+
+// An installed app is not reloaded, it is resumed: iOS keeps it suspended in the app switcher
+// and hands the same document back, so init() runs once and may not run again for days. Nothing
+// below happens on its own in that document — the update check and the notes re-read are the two
+// things a launch would have done.
+const RESUME_CHECK_MS = 60000;
+let lastResumeCheck = 0;
+
+function watchForResume() {
+  document.addEventListener('visibilitychange', checkForUpdatesOnResume);
+  // A bfcache restore fires pageshow with persisted=true and no visibilitychange at all.
+  window.addEventListener('pageshow', event => { if (event.persisted) checkForUpdatesOnResume(); });
+}
+
+function checkForUpdatesOnResume() {
+  if (document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  // App-switching is constant in the cockpit; a check per switch would be a request per switch.
+  if (now - lastResumeCheck < RESUME_CHECK_MS) return;
+  lastResumeCheck = now;
+  // Re-fetch the worker script. A changed build installs, claims the page, and tells us via
+  // controllerchange. Failure is the normal offline case and needs no handling.
+  swRegistration?.update().catch(() => {});
+  rereadReleaseNotes();
+}
+
+// Read the notes again. The worker serves them from the cache, so this is free when nothing
+// moved; when the worker has just refreshed them it is the updated copy, still with no round trip.
+async function rereadReleaseNotes() {
+  try {
+    const res = await fetch(RELEASE_NOTES_URL);
+    if (!res.ok) return;
+    const notes = await res.json();
+    if (!Array.isArray(notes) || !notes.length) return;
+    state.releaseNotes = notes;
+    render();
+  } catch { /* offline: keep what we have */ }
 }
 
 // Several files change together on a rebuild — packs.json and every manifest — so the worker

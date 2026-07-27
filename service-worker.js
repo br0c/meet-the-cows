@@ -1,4 +1,4 @@
-const APP_VERSION = '0.8.6-beta';
+const APP_VERSION = '0.8.7-beta';
 // Shell cache is versioned and replaced on app update. Data cache is stable so downloaded
 // media/docs survive app updates (an app update must never wipe a pilot's offline pack).
 const SHELL_CACHE = `mtc-shell-${APP_VERSION}`;
@@ -48,6 +48,10 @@ const SCOPE_URL = new URL(SCOPE);
 // Told to the page when a background refresh finds the published pack data has moved. Kept in
 // step with the listener in src/app.js.
 const PACK_CHANGED = 'mtc-pack-changed';
+// Same idea for the release notes. Cache-first means the copy this page read is the one from
+// before the deploy; without this the app would only show the new notes on the NEXT launch, and
+// an installed PWA that resumes rather than relaunches may not have a next launch for days.
+const NOTES_CHANGED = 'mtc-notes-changed';
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
@@ -93,6 +97,10 @@ const HASHED_ASSET_RE = /\.[0-9a-f]{10}\.(?:js|css)$/;
 // fields.json is not, because its pack's manifest version moves with it.
 const VERSION_BEARING_RE = /\/(?:packs\.json|manifest\.json)$/;
 
+// The shell file whose content the app displays rather than merely uses, so a background
+// refresh that changes it is worth reporting.
+const NOTES_BEARING_RE = /\/release-notes\.json$/;
+
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
@@ -119,14 +127,18 @@ self.addEventListener('fetch', event => {
       event.respondWith(cacheOnlyFirst(SHELL_CACHE, event.request, true));
       return;
     }
-    event.respondWith(cacheFirst(SHELL_CACHE, event.request, { revalidate: true, event }));
+    event.respondWith(cacheFirst(SHELL_CACHE, event.request, {
+      revalidate: true,
+      notify: NOTES_BEARING_RE.test(requestUrl.pathname) ? NOTES_CHANGED : '',
+      event,
+    }));
     return;
   }
   if (!packData) return;
 
   if (isPackCoreJson(requestUrl)) {
     event.respondWith(cacheFirst(DATA_CACHE, event.request,
-      { notify: VERSION_BEARING_RE.test(requestUrl.pathname), event }));
+      { notify: VERSION_BEARING_RE.test(requestUrl.pathname) ? PACK_CHANGED : '', event }));
     return;
   }
   if (isPackMediaOrDoc(requestUrl)) {
@@ -154,13 +166,13 @@ const RACE_LOST = Symbol('race-lost');
  * between an app that opens in the air and one that does not: the request may still be made,
  * but nobody waits on it. event.waitUntil keeps the worker alive long enough to finish it.
  *
- * `notify` reports a background refresh that actually changed something, so the app can offer
- * the pilot the new field data rather than swapping the list out from under them.
+ * `notify` is the message type to post when a background refresh actually changed something, so
+ * the app can offer the pilot the new data rather than swapping the list out from under them.
  *
  * With no cached copy there is nothing to serve and the network has to be awaited — bounded by
  * FRESH_RACE_MS, because a hanging fetch on a first visit is a blank page for as long as it hangs.
  */
-async function cacheFirst(cacheName, request, { fallbackUrl = '', revalidate = false, notify = false, event = null } = {}) {
+async function cacheFirst(cacheName, request, { fallbackUrl = '', revalidate = false, notify = '', event = null } = {}) {
   const cache = await caches.open(cacheName);
 
   // 'no-cache' means "ask the server, but a 304 is fine" — not "download it again". Rebuilt from
@@ -170,7 +182,7 @@ async function cacheFirst(cacheName, request, { fallbackUrl = '', revalidate = f
     if (!isCacheable(response)) return response;
     if (notify && previous && await bodiesDiffer(previous, response.clone())) {
       const windows = await self.clients.matchAll({ type: 'window' });
-      for (const client of windows) client.postMessage({ type: PACK_CHANGED, url: request.url });
+      for (const client of windows) client.postMessage({ type: notify, url: request.url });
     }
     await cache.put(request, response.clone());
     return response;
