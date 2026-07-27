@@ -1,4 +1,4 @@
-name: Build data pack and deploy Pages
+name: Build data pack
 
 on:
   push:
@@ -26,8 +26,20 @@ permissions:
   id-token: write
   actions: write
 
+# Its own group, not one shared with deploy-app. They used to share `pages-deploy` because both
+# published an app shell and must not have raced each other to publish it. That reason is gone —
+# the shell now goes to a Worker, deployed by deploy-app alone — and sharing it had a cost: a
+# merge that touched both the app and the pack builder queued the app BEHIND a full rebuild, so
+# a fix a pilot was waiting on sat pending for as long as the data took. That happened with the
+# terrain-clearance fix. Separate groups let the app ship in minutes while the data takes its
+# time; each still serialises against itself, which is the part that matters.
+#
+# The one assumption: with DEPLOY_TARGET=cloudflare the two write to different places —
+# this one to the R2 bucket, deploy-app to the Worker. Both still carry GitHub Pages steps
+# for the non-Cloudflare configuration, and under THAT setting they would both publish to
+# the repo's single Pages site. If DEPLOY_TARGET ever goes back, put them on one group again.
 concurrency:
-  group: pages-deploy
+  group: data-pack-build
   cancel-in-progress: false
 
 jobs:
@@ -322,39 +334,20 @@ jobs:
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
 
-      # --- Cloudflare Pages ------------------------------------------------------------------
-      # When packs are served from R2 the shell no longer needs them, so they are left out of
-      # the upload: a deployment becomes a few hundred KB instead of 300 MB.
-      - name: Deploy to Cloudflare Pages
-        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET == 'cloudflare'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if [ -n "${{ vars.PACKS_BASE_URL }}" ]; then rm -rf dist/site/packs; fi
-          PROJECT="${{ vars.CF_PAGES_PROJECT || 'meet-the-cows' }}"
-          # Create the direct-upload project on first run. A create failure is NOT automatically
-          # harmless: on accounts where Pages project creation is disabled (Pages is being folded
-          # into Workers) it fails with API error 8000000, and blindly continuing produced a
-          # confusing "project does not exist" error two steps later. Distinguish the cases.
-          if ! npx --yes wrangler@latest pages project create "$PROJECT" --production-branch main; then
-            if npx --yes wrangler@latest pages project list 2>/dev/null | grep -q "$PROJECT"; then
-              echo "project '$PROJECT' already exists — continuing"
-            else
-              echo "::error::Pages project '$PROJECT' does not exist and could not be created."
-              exit 1
-            fi
-          fi
-          npx --yes wrangler@latest pages deploy dist/site \
-            --project-name "$PROJECT" \
-            --branch "${{ github.ref_name }}" \
-            --commit-dirty=true
+      # No Cloudflare deploy here on purpose. This workflow used to push dist/site to a Cloudflare
+      # PAGES project on every rebuild — 25 seconds a run, uploading an app shell that nothing
+      # serves: app.meetthecows.org has been a Worker since the migration, deploy-app.yml dropped
+      # its own copy of this step then, and this one was simply missed. Removing it also removes
+      # the last thing these two workflows both wrote to, which is what let their concurrency
+      # groups come apart. The pack data reaches production through "Publish packs to R2" above;
+      # the shell reaches it through deploy-app.yml.
 
       - name: Show URL
         if: steps.build.outputs.changed != 'false'
         run: |
           if [ "${{ vars.DEPLOY_TARGET }}" = "cloudflare" ]; then
-            echo "Deployed to Cloudflare Pages (branch ${{ github.ref_name }})"
+            echo "Packs published to R2 (bucket ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }})."
+            echo "The app shell is deployed separately by deploy-app.yml."
           else
             echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
           fi

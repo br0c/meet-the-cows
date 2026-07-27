@@ -36,8 +36,10 @@ permissions:
   id-token: write
   actions: read
 
+# Its own group, so an app deploy is never queued behind a data-pack rebuild. See the matching
+# note in build-data-pack.yml for what the two used to share and why they no longer need to.
 concurrency:
-  group: pages-deploy
+  group: app-deploy
   cancel-in-progress: false
 
 jobs:
@@ -75,8 +77,8 @@ jobs:
       # version skipped itself when data-pack files changed in the same push, assuming the data
       # workflow would deploy the complete site; but that workflow short-circuits when the pack
       # sources are unchanged, and the app shell never shipped (0.7.1-beta went out this way).
-      # The shared pages-deploy concurrency group serializes the two workflows, so the rare
-      # double deploy on a mixed push is harmless — the later run ships the same packs again.
+      # The two no longer serialise against each other and no longer need to: this one is the
+      # only thing that publishes the shell, and build-data-pack publishes only the pack data.
       # Packs only travel with the app shell while they are served from the same origin. Once
       # PACKS_BASE_URL points at a data host, these two steps would download ~300 MB and upload
       # it again for nothing, so they are skipped and an app deploy becomes a few hundred KB.
