@@ -45,6 +45,10 @@ const PACK_CORE = [
 const APP_SHELL_SET = new Set(APP_SHELL);
 const SCOPE_URL = new URL(SCOPE);
 
+// Told to the page when a background refresh finds the published pack data has moved. Kept in
+// step with the listener in src/app.js.
+const PACK_CHANGED = 'mtc-pack-changed';
+
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const shell = await caches.open(SHELL_CACHE);
@@ -73,19 +77,21 @@ self.addEventListener('activate', event => {
   })());
 });
 
-// How long a fresh answer gets to beat the cached one. The number serves the cockpit case: on a
-// marginal connection a fetch does not fail, it HANGS — tens of seconds per file with one
-// flickering bar — and every load below used to await it with no limit, so the app could take a
-// minute to open in the air it is built for. Offline proper is unaffected (fetch rejects at
-// once, the cache answers immediately, as before); this only caps how long "maybe" may stall a
-// pilot who already has a working copy on the phone. The losing fetch is not cancelled — it
-// finishes in the background and refreshes the cache for the next load.
+// How long to wait for the network when there is NOTHING cached to fall back on. On a marginal
+// connection a fetch does not fail, it hangs, so a first-ever visit with one flickering bar would
+// otherwise sit on a blank page indefinitely. Anything already cached never waits this long — it
+// never waits at all; see cacheFirst.
 const FRESH_RACE_MS = 3500;
 
 // Names minted by scripts/hash_assets.py: a 10-hex content hash before the extension. The bytes
 // cannot change under such a URL, so revalidating one is a round trip that can only confirm what
 // the name already guarantees — these are answered from the cache outright.
 const HASHED_ASSET_RE = /\.[0-9a-f]{10}\.(?:js|css)$/;
+
+// Files whose CONTENT decides whether the pilot is offered new field data. A background
+// revalidation that finds one of these changed is worth telling the app about; a changed
+// fields.json is not, because its pack's manifest version moves with it.
+const VERSION_BEARING_RE = /\/(?:packs\.json|manifest\.json)$/;
 
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
@@ -94,33 +100,33 @@ self.addEventListener('fetch', event => {
   const packData = isUnderPacksBase(requestUrl);
   if (!packData && !isSameScope(requestUrl)) return;
 
+  // Everything below is cache-first when a copy exists, and refreshes that copy in the
+  // background. The reason is the whole point of the app: a pilot opening it in the air has
+  // already downloaded what they need, and asking the radio first meant a stalled connection —
+  // strictly worse than no connection — held a fully-working app behind six sequential timeouts.
+  // What the network can still do is update the cache for next time, and say when the published
+  // field data has moved so the app can offer it. Neither needs anyone to wait.
   if (event.request.mode === 'navigate') {
-    event.respondWith(networkFirst(SHELL_CACHE, event.request, u('index.html'),
-      { revalidate: true, raceMs: FRESH_RACE_MS, event }));
+    event.respondWith(cacheFirst(SHELL_CACHE, event.request,
+      { fallbackUrl: u('index.html'), revalidate: true, event }));
     return;
   }
 
   const key = requestUrl.toString();
   if (APP_SHELL_SET.has(key)) {
+    // A hashed asset cannot change under its name, so it is not even revalidated.
     if (HASHED_ASSET_RE.test(requestUrl.pathname)) {
       event.respondWith(cacheOnlyFirst(SHELL_CACHE, event.request, true));
       return;
     }
-    // The unhashed shell (index, manifest, release notes, icon): never answered from a stale
-    // HTTP cache entry whatever max-age the host decided — but never allowed to stall a pilot
-    // who has a copy, either. Usually a conditional request and a 304.
-    event.respondWith(networkFirst(SHELL_CACHE, event.request, '',
-      { revalidate: true, raceMs: FRESH_RACE_MS, event }));
+    event.respondWith(cacheFirst(SHELL_CACHE, event.request, { revalidate: true, event }));
     return;
   }
   if (!packData) return;
 
   if (isPackCoreJson(requestUrl)) {
-    // The same cap as the shell, for the same reason: the field list IS this data, and a pilot
-    // opening the app in the air must get yesterday's packs.json in seconds, not this morning's
-    // after a minute of stalling.
-    event.respondWith(networkFirst(DATA_CACHE, event.request, '',
-      { raceMs: FRESH_RACE_MS, event }));
+    event.respondWith(cacheFirst(DATA_CACHE, event.request,
+      { notify: VERSION_BEARING_RE.test(requestUrl.pathname), event }));
     return;
   }
   if (isPackMediaOrDoc(requestUrl)) {
@@ -141,52 +147,66 @@ async function cacheOptional(cache, urls) {
 
 const RACE_LOST = Symbol('race-lost');
 
-async function networkFirst(cacheName, request, fallbackUrl = '', { revalidate = false, raceMs = 0, event = null } = {}) {
+/**
+ * Answer from the cache when there is a copy, and refresh that copy in the background.
+ *
+ * The cached branch never touches the network before responding, which is the difference
+ * between an app that opens in the air and one that does not: the request may still be made,
+ * but nobody waits on it. event.waitUntil keeps the worker alive long enough to finish it.
+ *
+ * `notify` reports a background refresh that actually changed something, so the app can offer
+ * the pilot the new field data rather than swapping the list out from under them.
+ *
+ * With no cached copy there is nothing to serve and the network has to be awaited — bounded by
+ * FRESH_RACE_MS, because a hanging fetch on a first visit is a blank page for as long as it hangs.
+ */
+async function cacheFirst(cacheName, request, { fallbackUrl = '', revalidate = false, notify = false, event = null } = {}) {
   const cache = await caches.open(cacheName);
-  // 'no-cache' means "ask the server, but a 304 is fine" — not "download it again". Offline
-  // this still rejects and the cached copy below answers, exactly as before.
-  //
-  // Rebuilt from the URL, not from the request: constructing a Request from one whose mode is
-  // 'navigate' throws, so the old `new Request(request, …)` spelling silently made every
-  // navigation cache-only — the throw landed in the catch below and the cached shell answered.
-  // Nothing looked wrong, because the worker's own install refreshes the shell on every version
-  // bump; but "revalidate" was a word this code said, not a thing it did. For a same-origin GET
-  // the URL is the whole request, so this loses nothing.
-  const network = (async () => {
-    const response = await fetch(revalidate ? new Request(request.url, { cache: 'no-cache' }) : request);
-    if (isCacheable(response)) await cache.put(request, response.clone());
-    return response;
-  })();
 
-  if (raceMs) {
-    const cached = await cache.match(request)
-      || (fallbackUrl ? await cache.match(fallbackUrl) : null);
-    if (cached) {
-      // A rejected fetch (offline) resolves to null and loses instantly; only an actual response
-      // inside the window wins. When the cache answers, the network fetch is deliberately left
-      // running — event.waitUntil keeps the worker alive to finish it, so the cache is fresh for
-      // the next load even though this one did not wait.
-      const winner = await Promise.race([
-        network.catch(() => null),
-        new Promise(resolve => setTimeout(() => resolve(RACE_LOST), raceMs)),
-      ]);
-      if (winner && winner !== RACE_LOST) return winner;
-      const settle = network.catch(() => {});
-      if (event) event.waitUntil(settle);
-      return cached;
+  // 'no-cache' means "ask the server, but a 304 is fine" — not "download it again". Rebuilt from
+  // the URL, not the request: constructing a Request from one whose mode is 'navigate' throws.
+  const refresh = async previous => {
+    const response = await fetch(revalidate ? new Request(request.url, { cache: 'no-cache' }) : request);
+    if (!isCacheable(response)) return response;
+    if (notify && previous && await bodiesDiffer(previous, response.clone())) {
+      const windows = await self.clients.matchAll({ type: 'window' });
+      for (const client of windows) client.postMessage({ type: PACK_CHANGED, url: request.url });
     }
+    await cache.put(request, response.clone());
+    return response;
+  };
+
+  const cached = await cache.match(request)
+    || (fallbackUrl ? await cache.match(fallbackUrl) : null);
+  if (cached) {
+    // Snapshot before returning: the page consumes `cached`, and the comparison runs later.
+    const previous = cached.clone();
+    if (event) event.waitUntil(refresh(previous).catch(() => {}));
+    else refresh(previous).catch(() => {});
+    return cached;
   }
 
+  const network = refresh(null);
+  const winner = await Promise.race([
+    network.catch(() => RACE_LOST),
+    new Promise(resolve => setTimeout(() => resolve(RACE_LOST), FRESH_RACE_MS)),
+  ]);
+  if (winner !== RACE_LOST) return winner;
+  if (event) event.waitUntil(network.catch(() => {}));
+  // Nothing cached and nothing arrived: let the failure be the failure. Awaiting the fetch is
+  // what surfaces the real network error to the page rather than inventing one.
+  return network;
+}
+
+/** Did a background refresh actually change anything? ETag when the host offers one, else bytes. */
+async function bodiesDiffer(previous, fresh) {
+  const before = previous.headers.get('etag');
+  const after = fresh.headers.get('etag');
+  if (before && after) return before !== after;
   try {
-    return await network;
-  } catch (error) {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    if (fallbackUrl) {
-      const fallback = await cache.match(fallbackUrl);
-      if (fallback) return fallback;
-    }
-    throw error;
+    return (await previous.text()) !== (await fresh.text());
+  } catch {
+    return false;
   }
 }
 

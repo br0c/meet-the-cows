@@ -3563,9 +3563,32 @@ function attachEvents() {
 }
 
 async function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    try { await navigator.serviceWorker.register(new URL('service-worker.js', BASE_URL)); } catch (e) { console.warn(e); }
-  }
+  if (!('serviceWorker' in navigator)) return;
+  // The worker answers pack data from the cache and refreshes it behind us, so the manifest this
+  // page loaded may already be yesterday's by the time it renders. When the refresh finds the
+  // published data has actually moved, the worker says so and we re-read it — from the cache it
+  // has just updated, so this costs no round trip and cannot stall.
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data?.type === 'mtc-pack-changed') schedulePackReread();
+  });
+  try { await navigator.serviceWorker.register(new URL('service-worker.js', BASE_URL)); } catch (e) { console.warn(e); }
+}
+
+// Several files change together on a rebuild — packs.json and every manifest — so the worker
+// reports several times in a row. Coalesce: one re-read after the last of them.
+let packRereadTimer = null;
+function schedulePackReread() {
+  clearTimeout(packRereadTimer);
+  packRereadTimer = setTimeout(async () => {
+    packRereadTimer = null;
+    try {
+      await loadPackIndex();
+      await loadSelectedPacks();
+      render();
+    } catch (error) {
+      console.warn('Pack re-read failed', error);
+    }
+  }, 400);
 }
 
 async function clearPackCache(packId) {
