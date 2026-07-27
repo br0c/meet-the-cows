@@ -2,6 +2,18 @@
 # Pages project — see site/wrangler.toml for why — but still its own deployment, so the page
 # and the PWA at app.meetthecows.org stay on different origins and cannot share a
 # service-worker scope, cache or localStorage.
+#
+# HOSTNAMES. Only the apex is bound to the Worker, as a Custom Domain. www is a 301 Redirect
+# Rule to the apex and is deliberately NOT bound: a Worker answers the hostnames attached to it,
+# not whatever DNS happens to point its way, so a bare CNAME from www to the apex reaches
+# Cloudflare, matches no Worker, and gets error 522 from an origin that does not exist. Adding
+# www to the Worker would have fixed the 522 too, but then two hostnames serve identical pages
+# and the canonical tags carry the whole burden; the redirect keeps one address authoritative.
+# Both pages already declare <link rel="canonical"> pointing at the apex, so the two agree.
+#
+# Worth knowing when a change looks like it did not ship: this deploy does not purge the
+# Cloudflare cache, and error responses can be held at the edge as well as good ones. Ask the
+# origin directly before believing the internet — curl -H "Cache-Control: no-cache" <url>.
 name: Deploy landing site
 
 on:
@@ -38,6 +50,11 @@ jobs:
 
       - name: Show URL
         run: |
-          echo "Landing site deployed."
-          echo "Attach meetthecows.org to the 'meet-the-cows-site' Worker:"
-          echo "  Cloudflare dashboard -> Compute (Workers) -> meet-the-cows-site -> Settings -> Domains & Routes -> Add custom domain"
+          echo "Landing site deployed to https://meetthecows.org/"
+          echo
+          echo "Hostname setup, if this is a fresh account (see the note at the top of this file):"
+          echo "  apex  meetthecows.org      -> Worker custom domain: Cloudflare dashboard ->"
+          echo "                                Compute (Workers) -> meet-the-cows-site ->"
+          echo "                                Settings -> Domains & Routes -> Add custom domain"
+          echo "  www   www.meetthecows.org  -> Rules -> Redirect Rules -> 301 to the apex,"
+          echo "                                preserving path and query. NOT bound to the Worker."
