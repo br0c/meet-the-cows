@@ -5,17 +5,20 @@
     "en": [
       "The three pinned picks now include fields needing up to a 25 glide, not 20",
       "Fields with no difficulty rating are hidden unless both C and D fields are shown",
-      "Ground testing: the altitude slider no longer goes below the ground at the chosen place"
+      "Ground testing: the altitude slider no longer goes below the ground at the chosen place",
+      "Terrain updates show up when published, not one app restart later"
     ],
     "fr": [
       "Les trois choix épinglés incluent désormais les terrains jusqu’à une finesse de 25, au lieu de 20",
       "Les terrains sans cotation sont masqués, sauf si les terrains C et D sont affichés",
-      "Test au sol : l’altitude ne descend plus sous le sol du lieu choisi"
+      "Test au sol : l’altitude ne descend plus sous le sol du lieu choisi",
+      "Les mises à jour du relief apparaissent dès leur publication, sans redémarrage supplémentaire"
     ],
     "de": [
       "Die drei angehefteten Vorschläge umfassen jetzt Felder bis Gleitzahl 25 statt 20",
       "Felder ohne Schwierigkeitsbewertung sind ausgeblendet, außer wenn C- und D-Felder angezeigt werden",
-      "Bodentest: Die Höhe geht nicht mehr unter den Boden des gewählten Orts"
+      "Bodentest: Die Höhe geht nicht mehr unter den Boden des gewählten Orts",
+      "Gelände-Updates erscheinen bei Veröffentlichung, nicht erst nach einem weiteren Neustart"
     ]
   },
   {

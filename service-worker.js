@@ -101,6 +101,15 @@ const VERSION_BEARING_RE = /\/(?:packs\.json|manifest\.json)$/;
 // refresh that changes it is worth reporting.
 const NOTES_BEARING_RE = /\/release-notes\.json$/;
 
+// The terrain index is version-bearing too: it names which tile bytes are current, and it is
+// the one such file this list originally missed. Without the report, the app ran every session
+// on the PREVIOUS session's index — cache-first served the old copy, the background refresh
+// quietly updated the cache, and Settings counted rebuilt tiles as still current until the next
+// launch. Same contract as PACK_CHANGED: the worker only says it moved; re-reading is the app's
+// decision, and the re-read is answered from the cache this refresh just wrote.
+const TERRAIN_INDEX_RE = /\/_terrain\/index\.json$/;
+const TERRAIN_CHANGED = 'mtc-terrain-index-changed';
+
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
@@ -137,8 +146,9 @@ self.addEventListener('fetch', event => {
   if (!packData) return;
 
   if (isPackCoreJson(requestUrl)) {
-    event.respondWith(cacheFirst(DATA_CACHE, event.request,
-      { notify: VERSION_BEARING_RE.test(requestUrl.pathname) ? PACK_CHANGED : '', event }));
+    const notify = VERSION_BEARING_RE.test(requestUrl.pathname) ? PACK_CHANGED
+      : TERRAIN_INDEX_RE.test(requestUrl.pathname) ? TERRAIN_CHANGED : '';
+    event.respondWith(cacheFirst(DATA_CACHE, event.request, { notify, event }));
     return;
   }
   if (isPackMediaOrDoc(requestUrl)) {

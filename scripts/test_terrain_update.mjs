@@ -197,16 +197,29 @@ console.log('\n3 — a rebuilt tile: stale serves free until the pilot downloads
 {
   const victim = indexJson.tiles.find(t => t.key === 'N45E007');
   const oldVersion = victim.sha256.slice(0, 10);
+  await closeSettings();
+
+  // Put the CURRENT index into DATA_CACHE under service-worker control first. This is the state
+  // every real launch after the first is in — and the state this phase silently depended on NOT
+  // having: an uncontrolled first-load fetch usually left the cache empty, the rebuilt index
+  // arrived fresh, and the phase passed without ever exercising the stale path. When the
+  // first-load race went the other way (about one run in ten), the app served the old index all
+  // session and four checks failed. Forcing the ordering makes the phase test the mechanism
+  // that actually protects pilots: the worker's changed-index report.
+  await page.reload();
+  await page.waitForSelector('.field-row', { timeout: 20000 });
+  await page.waitForTimeout(1500);
+
   // "Rebuild" the tile: the index now claims different bytes. (The served bytes stay the same —
   // what is under test is the addressing, not the decoder.)
   victim.sha256 = 'b'.repeat(64);
 
-  await closeSettings();
   const mark = asked.length;
-  // The index is fetched no-cache on load, so a reload is the moment a real pilot picks the
-  // rebuild up. The solve that follows must SERVE the superseded tile rather than fetch the new
-  // one — spending a pilot's bytes is the download button's explicit doing, never a solve's —
-  // and it must keep routing: yesterday's ground beats no ground.
+  // On reload the worker serves the CACHED (pre-rebuild) index — cache-first is the point — and
+  // its background refresh finds the change and reports it; the app must pick the rebuild up in
+  // THIS session, not the next one. The solve must SERVE the superseded tile rather than fetch
+  // the new one — spending a pilot's bytes is the download button's explicit doing, never a
+  // solve's — and it must keep routing: yesterday's ground beats no ground.
   await page.reload();
   await page.waitForFunction(() => document.querySelector('.field-glide.routed') !== null,
     null, { timeout: 25000 }).catch(() => {});
@@ -216,10 +229,20 @@ console.log('\n3 — a rebuilt tile: stale serves free until the pilot downloads
   check('and the solve paid nothing over the network for it', tileRequestsSince(mark).length === 0,
     tileRequestsSince(mark).join(' '));
 
+  // The worker's report is what updates the app: assert the app's own index moved to the new
+  // version without a further reload.
+  await page.waitForFunction(() =>
+    window.__mtcState?.terrain?.store?.tileVersions?.get('N45E007') === 'bbbbbbbbbb',
+    null, { timeout: 10000 }).catch(() => {});
+  check('the changed-index report reaches the app in this session',
+    (await page.evaluate(() => window.__mtcState?.terrain?.store?.tileVersions?.get('N45E007'))) === 'bbbbbbbbbb');
+
   await page.click('#settingsToggle');
-  await page.waitForFunction(() => /\d+ (of|sur|von) \d+/.test(
+  // Waited for at its CORRECT value, not just any count: the card may honestly say "2 of 2" for
+  // a beat before the report lands and the recount runs.
+  await page.waitForFunction(() => /1 (of|sur|von) 2/.test(
     document.querySelector('.settings-card:has(#downloadTerrain)')?.innerText || ''),
-    null, { timeout: 8000 }).catch(() => {});
+    null, { timeout: 10000 }).catch(() => {});
   const before = await page.$eval('.settings-card:has(#downloadTerrain)', el => el.innerText);
   check('settings counts the rebuilt tile as out of date', /1 (of|sur|von) 2/.test(before),
     (before.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);

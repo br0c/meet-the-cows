@@ -256,6 +256,17 @@ export class TerrainStore {
   }
 
   /** Tile keys the index actually offers, so callers never queue a download that 404s. */
+  /**
+   * Forget the held index so the next loadIndex asks again. For when the service worker reports
+   * the published index has moved: its background refresh has already put the new copy in the
+   * cache, so the re-read this provokes is answered locally — no round trip, nothing to stall.
+   */
+  dropIndex() {
+    this.index = null;
+    this.tileVersions = new Map();
+    this.indexRetryAt = 0;
+  }
+
   async availableKeys() {
     const index = await this.loadIndex();
     return new Set((index?.tiles || []).map(entry => entry.key));

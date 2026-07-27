@@ -3852,6 +3852,7 @@ async function registerServiceWorker() {
   navigator.serviceWorker.addEventListener('message', event => {
     if (event.data?.type === 'mtc-pack-changed') schedulePackReread();
     if (event.data?.type === 'mtc-notes-changed') rereadReleaseNotes();
+    if (event.data?.type === 'mtc-terrain-index-changed') scheduleTerrainIndexReread();
   });
   // On a first-ever visit the worker claims this page as soon as it activates, which is also a
   // controllerchange — but nothing about the running code is stale, so only a page that ALREADY
@@ -3907,6 +3908,32 @@ async function rereadReleaseNotes() {
     state.releaseNotes = notes;
     render();
   } catch { /* offline: keep what we have */ }
+}
+
+// The published terrain index moved: forget the held copy and recount what is offline against
+// the new one. Routes are NOT invalidated — the cached tiles still carry their versioned URLs
+// and still route; what changes is the accounting, so Settings can say "1 of 2 tiles offline"
+// and the download button has work again, in this session rather than the next one. Debounced
+// like the pack re-read, and for the same reason.
+let terrainIndexRereadTimer = null;
+function scheduleTerrainIndexReread() {
+  clearTimeout(terrainIndexRereadTimer);
+  terrainIndexRereadTimer = setTimeout(async () => {
+    terrainIndexRereadTimer = null;
+    try {
+      const store = state.terrain.store;
+      if (!store) return;
+      store.dropIndex();
+      // Reload before recounting: checkTerrainCacheStatus reads store.index as a property and
+      // loads nothing itself. The fetch is answered by the copy the worker's refresh just
+      // cached, so this settles locally.
+      await store.loadIndex();
+      await checkTerrainCacheStatus();
+      render();
+    } catch (error) {
+      console.warn('Terrain index re-read failed', error);
+    }
+  }, 400);
 }
 
 // Several files change together on a rebuild — packs.json and every manifest — so the worker
