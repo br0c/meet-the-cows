@@ -1,13 +1,19 @@
 // Cross-language check on the terrain pipeline: the JavaScript decoder must reproduce, byte for
 // byte, what the Python builder wrote, and the solver must get the mountains right.
 //
-// Run against a tile built by scripts/build_terrain_tiles.py:
-//   python scripts/build_terrain_tiles.py --bbox 45 7 46 8 --out /tmp/t
+// Run against tiles built by scripts/build_terrain_tiles.py:
+//   python scripts/build_terrain_tiles.py --bbox 45 7 46 8 --out /tmp/t   # Cervinia cases
+//   python scripts/build_terrain_tiles.py --bbox 44 6 45 7 --out /tmp/t   # Seyne + Barles cases
+//   python scripts/build_terrain_tiles.py --bbox 46 7 47 8 --out /tmp/t   # Valais enclosure
 //   node scripts/test_terrain_js.mjs /tmp/t/_terrain
 //
-// The routing cases are the ones that motivated the feature. Cervinia sits in a bowl under the
-// Matterhorn with the Aosta valley reachable down-valley but a 3000 m ridge on the direct line,
-// so a straight-line glide computation refuses a glide that is in fact comfortable.
+// The routing cases are the ones that motivated the feature, plus the field-verified edge cases
+// from the 2026-07 ridge assessment. Cervinia sits in a bowl under the Matterhorn with the Aosta
+// valley reachable down-valley but a 3000 m ridge on the direct line, so a straight-line glide
+// computation refuses a glide that is in fact comfortable. The Seyne, Barles and Zermatt blocks
+// pin the behaviours measured against a native-resolution reference: routed around below a
+// crest and never through it, honestly unreachable below a gorge floor, and a main chain that
+// stays closed until the physical crossing altitude while same-side fields stay listed.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +22,7 @@ import path from 'node:path';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const terrainDir = process.argv[2] || path.join(here, '..', 'data', 'packs', '_terrain');
 
-const { decodeTile, tileKeyFor, NODATA } = await import(path.join(here, '..', 'src', 'terrain.js'));
+const { decodeTile, tileKey, tileKeyFor, NODATA } = await import(path.join(here, '..', 'src', 'terrain.js'));
 
 let failures = 0;
 const check = (label, ok, detail = '') => {
@@ -24,18 +30,31 @@ const check = (label, ok, detail = '') => {
   if (!ok) failures += 1;
 };
 
+// --- tiles -------------------------------------------------------------------------------------
+
+// Every tile the cases below need. Missing any is a setup problem, not a failure — the message
+// says which build produces it.
+const REQUIRED_TILES = {
+  N45E007: 'python scripts/build_terrain_tiles.py --bbox 45 7 46 8 --out <dir>',
+  N44E006: 'python scripts/build_terrain_tiles.py --bbox 44 6 45 7 --out <dir>',
+  N46E007: 'python scripts/build_terrain_tiles.py --bbox 46 7 47 8 --out <dir>',
+};
+const missing = Object.keys(REQUIRED_TILES).filter(k => !existsSync(path.join(terrainDir, `${k}.terr`)));
+if (missing.length) {
+  console.error(`Missing tiles in ${terrainDir}:`);
+  for (const k of missing) console.error(`  ${k}.terr — build with: ${REQUIRED_TILES[k]}`);
+  process.exit(2);
+}
+const tiles = new Map();
+for (const k of Object.keys(REQUIRED_TILES)) {
+  const raw = readFileSync(path.join(terrainDir, `${k}.terr`));
+  tiles.set(k, await decodeTile(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength)));
+}
+
 // --- decode ------------------------------------------------------------------------------------
 
 const key = tileKeyFor(45.9, 7.6);
-const tilePath = path.join(terrainDir, `${key}.terr`);
-if (!existsSync(tilePath)) {
-  console.error(`No tile at ${tilePath}. Build one first:\n` +
-    `  python scripts/build_terrain_tiles.py --bbox 45 7 46 8 --out <dir>`);
-  process.exit(2);
-}
-
-const bytes = readFileSync(tilePath);
-const tile = await decodeTile(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+const tile = tiles.get(key);
 check('tile key for 45.9N 7.6E', key === 'N45E007', key);
 check('tile geometry', tile.lat0 === 45 && tile.lon0 === 7 && tile.samples === 1200,
   `lat0=${tile.lat0} lon0=${tile.lon0} samples=${tile.samples}`);
@@ -64,7 +83,7 @@ const SAMPLES = 1200;
 const LAT_DECIMATE = 3;
 const METRES_PER_DEGREE_LAT = 111320;
 
-/** Stand-in for TerrainStore.routingGrid over a single already-decoded tile. */
+/** Stand-in for TerrainStore.routingGrid over the loaded tiles (NODATA outside them). */
 function routingGrid(centreLat, centreLon, radiusM) {
   const cosLat = Math.cos(centreLat * Math.PI / 180);
   const latPad = radiusM / METRES_PER_DEGREE_LAT;
@@ -87,13 +106,14 @@ function routingGrid(centreLat, centreLon, radiusM) {
       for (let sr = 0; sr < LAT_DECIMATE; sr += 1) {
         const gr = rowStart + r * LAT_DECIMATE + sr;
         const tileRowIndex = Math.floor(gr / SAMPLES);
-        if (89 - tileRowIndex !== tile.lat0) continue;
+        const lat0 = 89 - tileRowIndex;
         const localRow = gr - tileRowIndex * SAMPLES;
         for (let sc = 0; sc < lonDecimate; sc += 1) {
           const gc = colStart + c * lonDecimate + sc;
           const tileColIndex = Math.floor(gc / SAMPLES);
-          if (tileColIndex - 180 !== tile.lon0) continue;
-          const value = tile.elevations[localRow * SAMPLES + (gc - tileColIndex * SAMPLES)];
+          const source = tiles.get(tileKey(lat0, tileColIndex - 180));
+          if (!source) continue;
+          const value = source.elevations[localRow * SAMPLES + (gc - tileColIndex * SAMPLES)];
           if (value !== NODATA && value > best) best = value;
         }
       }
@@ -244,6 +264,105 @@ const flat = solve({
 check('a field underfoot needs no glide at all',
   flat.self && flat.self.requiredGlideRatio < 0.5,
   flat.self ? flat.self.requiredGlideRatio.toFixed(2) : 'unreachable');
+
+// --- the ridge, from the field assessment (Seyne-les-Alpes <-> Barcelonnette) ------------------
+//
+// A pilot riding the NE flank of the dividing ridge below its 2386 m crest cannot cross to
+// Seyne; the honest answer is the ~23 km route around the west end of the massif, and the
+// same-side valley stays cheap. High above the crest the direct line must win. Verified against
+// a native-93 m reference: the routed answers agree within the ladder bracket, so a change that
+// moves them outside these bands is a solver change, not tile noise.
+{
+  console.log('\nSeyne ridge: below the crest is routed around, never through');
+  const SEYNE = { id: 'seyne', latitude: 44.3435, longitude: 6.3706, elevationM: 1186 };
+  const LFMR = { id: 'barcelo', latitude: 44.3883, longitude: 6.6097, elevationM: 1131 };
+  const ridgeHug = { latitude: 44.3567, longitude: 6.4407 };   // 600 m out on the NE flank
+  const seyneGrid = routingGrid(44.40, 6.49, 30000);
+
+  const below = solve({
+    grid: seyneGrid, ...ridgeHug, altitudeM: 2257,   // 150 m over the slope, 129 m below the crest
+    clearanceM: 200, safetyMarginM: 250, targets: [SEYNE, LFMR],
+  });
+  check('the far side of the ridge is still offered', Boolean(below.seyne));
+  check('but around, never through the crest', below.seyne && !below.seyne.direct
+    && below.seyne.pathLengthM > 15000,
+    below.seyne ? `${(below.seyne.pathLengthM / 1000).toFixed(1)} km vs 5.8 km straight` : 'n/a');
+  check('at a price in the measured band', below.seyne
+    && below.seyne.requiredGlideRatio > 24 && below.seyne.requiredGlideRatio < 42,
+    below.seyne ? below.seyne.requiredGlideRatio.toFixed(1) : 'n/a');
+  check('the same-side valley stays sanely priced', below.barcelo
+    && below.barcelo.requiredGlideRatio > 12 && below.barcelo.requiredGlideRatio < 26,
+    below.barcelo ? below.barcelo.requiredGlideRatio.toFixed(1) : 'n/a');
+
+  const above = solve({
+    grid: seyneGrid, ...ridgeHug, altitudeM: 2786,   // crest + 400 m
+    clearanceM: 200, safetyMarginM: 250, targets: [SEYNE],
+  });
+  check('well above the crest the straight line wins', Boolean(above.seyne) && above.seyne.direct
+    && above.seyne.requiredGlideRatio < 8,
+    above.seyne ? `${above.seyne.requiredGlideRatio.toFixed(1)} ${above.seyne.direct ? 'direct' : 'routed'}` : 'n/a');
+}
+
+// --- the gorge (Barles -> La Javie through the Clues de Barles) --------------------------------
+//
+// The clues are far narrower than a routing cell, so the corridor floor the grid records is the
+// pooled 1136 m, not the 1040 m the native data carries — and neither can certify a slot canyon
+// anyway. Low over Barles the only honest answer is no answer; higher, the shoulder route
+// appears at a price a pilot reads correctly.
+{
+  console.log('\nBarles gorge: unreachable below the corridor floor, honest above it');
+  const JAVIE = { id: 'javie', latitude: 44.1708, longitude: 6.3350, elevationM: 800 };
+  const overBarles = { latitude: 44.2740, longitude: 6.2680 };
+  const gorgeGrid = routingGrid(44.22, 6.32, 25000);
+
+  const low = solve({
+    grid: gorgeGrid, ...overBarles, altitudeM: 1400,
+    clearanceM: 200, safetyMarginM: 250, targets: [JAVIE],
+  });
+  check('344 m over the basin, the gorge promises nothing', !low.javie,
+    low.javie ? `claimed ${low.javie.requiredGlideRatio.toFixed(1)}` : 'unreachable, correct');
+
+  const high = solve({
+    grid: gorgeGrid, ...overBarles, altitudeM: 1800,
+    clearanceM: 200, safetyMarginM: 250, targets: [JAVIE],
+  });
+  check('744 m over the basin, the way out is offered', Boolean(high.javie) && !high.javie.direct);
+  check('at a price in the measured band', high.javie
+    && high.javie.requiredGlideRatio > 20 && high.javie.requiredGlideRatio < 40,
+    high.javie ? high.javie.requiredGlideRatio.toFixed(1) : 'n/a');
+}
+
+// --- the main-chain enclosure (Zermatt: Chamois behind Theodul, Rhône side open) ---------------
+//
+// Coming back from the Rhône east of the Matterhorn there is no cheap way round: the Theodul
+// saddle is 3295 m, and within this window nothing lower crosses the chain. Below the crossing
+// altitude the Italian side must show nothing at all — while the pilot's own valley stays
+// listed, which is the difference between an honest enclosure and the empty-list bug.
+{
+  console.log('\nValais enclosure: Italy dark below the crossing altitude, the Rhône side never');
+  const CHAMOIS = { id: 'chamois', latitude: 45.8336, longitude: 7.6175, elevationM: 1740 };
+  const ST_NIKLAUS = { id: 'stn', latitude: 46.1760, longitude: 7.8040, elevationM: 1105 };
+  const overZermatt = { latitude: 46.0170, longitude: 7.7480 };
+  const valaisGrid = routingGrid(overZermatt.latitude, overZermatt.longitude, 22000);
+
+  const low = solve({
+    grid: valaisGrid, ...overZermatt, altitudeM: 3000,
+    clearanceM: 200, safetyMarginM: 250, targets: [CHAMOIS, ST_NIKLAUS],
+  });
+  check('at 3000 m the far side of Theodul shows nothing', !low.chamois,
+    low.chamois ? `claimed ${low.chamois.requiredGlideRatio.toFixed(1)}` : 'unreachable, correct');
+  check('while the pilot\'s own valley stays listed', Boolean(low.stn)
+    && low.stn.requiredGlideRatio > 4 && low.stn.requiredGlideRatio < 18,
+    low.stn ? low.stn.requiredGlideRatio.toFixed(1) : 'n/a');
+
+  const high = solve({
+    grid: valaisGrid, ...overZermatt, altitudeM: 3900,   // Theodul 3295 + clearance + bracket
+    clearanceM: 200, safetyMarginM: 250, targets: [CHAMOIS],
+  });
+  check('at 3900 m the crossing is open', Boolean(high.chamois)
+    && high.chamois.requiredGlideRatio > 12 && high.chamois.requiredGlideRatio < 30,
+    high.chamois ? high.chamois.requiredGlideRatio.toFixed(1) : 'n/a');
+}
 
 console.log(`\n${failures ? `${failures} check(s) FAILED` : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);
