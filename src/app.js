@@ -1444,8 +1444,8 @@ async function refreshTestGround() {
   // altitude to meet it rather than leave the handle pinned below the start of its own track,
   // where the slider would show one number and the solver would use another.
   if (state.settings.testAltitudeMode !== 'agl' && ground !== null
-      && Number(state.settings.testAltitudeM) < ground) {
-    state.settings.testAltitudeM = ground;
+      && Number(state.settings.testAltitudeM) < testAltitudeFloorM()) {
+    state.settings.testAltitudeM = testAltitudeFloorM();
     saveSettings();
     if (state.settings.testMode && Number.isFinite(state.settings.testLatitude)) {
       applyTestPosition();
@@ -1455,18 +1455,30 @@ async function refreshTestGround() {
   render();
 }
 
+// The AMSL slider's granularity. The floor is rounded to it, so the two cannot drift apart and
+// leave a track whose values are all offset by the odd metres of some hillside.
+const TEST_AMSL_STEP_M = 100;
+
 /**
- * Lowest altitude the AMSL slider may offer: the ground at the chosen place, when it is known.
+ * Lowest altitude the AMSL slider may offer: the ground at the chosen place, rounded UP to the
+ * slider's step.
  *
  * Underground is not a position a glide can be computed from — every field would come back
  * unreachable and the reason would be invisible. AGL has no equivalent problem: its zero IS the
  * ground, and a negative AGL is not reachable on a slider that starts at zero.
  *
+ * Rounded up rather than exact because a range input steps from its own minimum: an exact floor
+ * of 2010 m makes every reachable value 2010, 2110, 2210, and asking for 3000 is then simply
+ * impossible. Rounding up keeps the round numbers a pilot actually thinks in, costs at most 99 m
+ * at the very bottom of the track, and errs upward — the safe direction, since the point is to
+ * stay out of the ground rather than to hug it.
+ *
  * Sea level when the ground is unknown, which is the only honest floor available then.
  */
 function testAltitudeFloorM() {
   const ground = state.testGroundM;
-  return Number.isFinite(ground) ? ground : 0;
+  if (!Number.isFinite(ground)) return 0;
+  return Math.ceil(ground / TEST_AMSL_STEP_M) * TEST_AMSL_STEP_M;
 }
 
 /** In AGL mode the stored absolute altitude follows ground + AGL, so downstream needs no mode. */
@@ -2520,8 +2532,7 @@ function renderTestAltitudeRow() {
   const agl = settings.testAltitudeMode === 'agl' && aglAvailable;
   const value = agl ? (Number(settings.testAglM) || 0) : (Number(settings.testAltitudeM) || 0);
   // In AMSL the track starts at the ground rather than at the sea, so the handle cannot be put
-  // underground. Kept as the exact ground, not rounded up to a step: sitting at 0 AGL is a real
-  // thing to want to check, and rounding would quietly make the lowest 99 m unreachable.
+  // underground. See testAltitudeFloorM for why it is the ground rounded up to the step.
   const floor = testAltitudeFloorM();
   // Somewhere with ground above the usual 6000 m ceiling would otherwise get a slider with no
   // travel at all.
@@ -2545,7 +2556,7 @@ function renderTestAltitudeRow() {
             </div>
             <output id="testAltitudeValue" for="testAltitudeM" class="set-value">${agl ? `${fmtM(value)} AGL` : fmtM(value)}</output>
           </div>
-          <input id="testAltitudeM" type="range" min="${agl ? 0 : floor}" max="${agl ? 3000 : ceiling}" step="${agl ? 50 : 100}" value="${Math.max(agl ? 0 : floor, value)}" />
+          <input id="testAltitudeM" type="range" min="${agl ? 0 : floor}" max="${agl ? 3000 : ceiling}" step="${agl ? 50 : TEST_AMSL_STEP_M}" value="${Math.max(agl ? 0 : floor, value)}" />
           <p class="set-sub" id="testAltitudeNote">${escapeHtml(note)}</p>
         </div>`;
 }

@@ -265,8 +265,10 @@ console.log('\n3b — AGL: available over downloaded terrain, gone when the tile
   await page.click('#altUnitAmsl');
   await page.waitForTimeout(300);
   const track = await page.$eval('#testAltitudeM', el => ({ min: Number(el.min), value: Number(el.value) }));
-  check('the AMSL slider starts at the ground, not at 0', track.min > 1900 && track.min < 2100,
-    `min ${track.min} m (Cervinia ground ~2010 m)`);
+  check('the AMSL slider starts at the ground, not at 0', track.min === 2100,
+    `min ${track.min} m (Cervinia ground 2010 m, rounded up to the 100 m step)`);
+  check('and the floor is a round number, so round altitudes stay selectable',
+    track.min % 100 === 0, `min ${track.min}`);
   check('and the handle cannot already be below it', track.value >= track.min,
     `value ${track.value} vs min ${track.min}`);
   // Driving it under the floor by hand must not stick.
@@ -277,15 +279,15 @@ console.log('\n3b — AGL: available over downloaded terrain, gone when the tile
   await page.waitForTimeout(500);
   const stored500 = (await page.evaluate(() =>
     JSON.parse(localStorage.getItem('mtc-settings-v2')))).testAltitudeM;
-  check('an altitude forced below the ground is lifted back to it', stored500 >= 1900,
+  check('an altitude forced below the ground is lifted back to the floor', stored500 === 2100,
     `${stored500} m stored`);
 
   // Back to the altitude the remaining phases were written for.
   await page.click('#altUnitAmsl');
   await page.waitForTimeout(200);
-  // Note the slider now steps FROM the ground, so the reachable values are ground + n*100 rather
-  // than round hundreds — asking for 2800 over 2010 m of ground lands on 2810. Assert the stored
-  // altitude agrees with the handle, which is the property that matters, not a literal.
+  // The floor is rounded to the step, so round altitudes are on the track and 2800 is reachable
+  // exactly. Still asserted against the handle as well as the literal: the two agreeing is the
+  // property worth holding if the step or the rounding ever moves.
   await page.$eval('#testAltitudeM', el => {
     el.value = 2800;
     el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -294,8 +296,8 @@ console.log('\n3b — AGL: available over downloaded terrain, gone when the tile
   const handle = await page.$eval('#testAltitudeM', el => Number(el.value));
   const storedAlt = (await page.evaluate(() =>
     JSON.parse(localStorage.getItem('mtc-settings-v2')))).testAltitudeM;
-  check('back on AMSL, and the stored altitude matches the handle',
-    storedAlt === handle && storedAlt >= 2800 && storedAlt < 2900, `${storedAlt} m / handle ${handle}`);
+  check('back on AMSL, and a round altitude is reachable exactly',
+    storedAlt === handle && storedAlt === 2800, `${storedAlt} m / handle ${handle}`);
 }
 
 // --- 4. remove terrain ---------------------------------------------------------------------------
