@@ -178,10 +178,14 @@ console.log(`  pinned picks: ${pinned === -1 ? 'NONE — the shot loses its poin
 const rowCount = await page.$$eval('.field-row', n => n.length);
 const routedCount = await page.$$eval('.field-glide.routed', n => n.length);
 // A raw OpenAIP id in the subtitle (IT_MERLO_ROMANO_44P834_7P364) is machine noise on a hero shot.
-const rawCodes = await page.$$eval('.field-row', rows => rows.slice(0, 6)
-  .map(r => r.querySelector('.field-sub')?.textContent || '')
-  .filter(s => /\d+P\d+/.test(s)).length);
-console.log(`  routed ${routedCount}/${rowCount} rows · raw-id codes in the top 6: ${rawCodes}`);
+// Checked across every row, not just the pinned ones: the shot this replaced was approved on its
+// top 6 and shipped with three of them at rows 15-17, in frame the whole time.
+const rawIds = await page.$$eval('.field-row', rows => rows
+  .map(r => ({ name: r.querySelector('.field-name')?.textContent?.trim(),
+               sub: r.querySelector('.field-sub')?.textContent || '' }))
+  .filter(r => /\d+P\d+/.test(r.sub)));
+console.log(`  routed ${routedCount}/${rowCount} rows · raw-id codes anywhere in the list: ${rawIds.length}`);
+for (const r of rawIds) problems.push(`raw OpenAIP id on screen: ${r.name} — ${r.sub.trim()}`);
 
 await page.screenshot({ path: path.join(outDir, shotName('list')), quality: 88, type: 'jpeg' });
 
