@@ -11,6 +11,20 @@
   This is enforced by the `PreToolUse` hook in `.claude/settings.json`
   (`.claude/hooks/guard-push-to-main.sh`), which prompts for confirmation before any push to
   `main` — but honor it regardless of whether the hook is active in the current session.
+- **Check HEAD against the remote before the first edit of any task — and `git fetch` first.**
+  The container can be restored mid-session from an older snapshot: work you already pushed is
+  safe, but the working tree silently rewinds and then accepts edits without complaint. A change
+  made on a stale base looks fine in the diff while quietly reverting everything committed since
+  the snapshot. Observed several times in one session, always back to the same commit.
+  The fetch is the part that matters. The snapshot restores `.git` too, so the stale
+  remote-tracking refs agree with the stale HEAD and `HEAD == origin/dev` reports "in sync"
+  while both are weeks behind. Fetch, then compare:
+  `git fetch origin dev && git rev-parse --short HEAD origin/dev` — if they differ,
+  `git checkout -B dev origin/dev` and re-apply, and re-run `git config user.name/email` because
+  the snapshot loses those too.
+  The tells, when it happens without being noticed: files that existed are missing (`git ls-files`
+  disagrees with what you remember), or a constant you changed is back to its old value.
+
 - **Commit as the repo owner, not as Claude.** At the start of any session, before the first
   commit, run:
   `git config user.name "Fabien Broquet" && git config user.email "fbroquet@pm.me"`
