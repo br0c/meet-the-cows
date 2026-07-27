@@ -169,6 +169,48 @@ check('required glide ratio is plausible for a valley run',
   aosta ? aosta.requiredGlideRatio.toFixed(1) : 'n/a');
 check('solver finishes fast enough for a live list', elapsed < 4000, `${elapsed} ms`);
 
+// --- hugging the ridge, which is where gliders actually are -------------------------------------
+//
+// A pilot working lift beside a face is metres from rock by choice. Routing cells max-pool ~278 m
+// of hillside, so the ground recorded all around them is the top of that rock; subtract the
+// clearance margin from it and every neighbouring cell reports negative headroom, the wavefront
+// cannot take a first step in any direction, and every field goes unreachable. Reported from the
+// air over Cervinia: 143 m above the ground, Valtournenche 5.8 km away needing a glide of under
+// 5, and an empty list. The margin was not shaping these routes, it was deleting them.
+{
+  const RIDGE = { latitude: 45.91, longitude: 7.68, altitudeM: 3000 };
+  const VALTOURNENCHE = { id: 'valtournenche', latitude: 45.8770, longitude: 7.6220, elevationM: 1524 };
+  const ridgeGrid = routingGrid(RIDGE.latitude, RIDGE.longitude, 45000);
+  const cells = new Int16Array(ridgeGrid.elevations);
+  const cell = cells[Math.floor((ridgeGrid.north - RIDGE.latitude) / ridgeGrid.latStepDeg) * ridgeGrid.cols
+    + Math.floor((RIDGE.longitude - ridgeGrid.west) / ridgeGrid.lonStepDeg)];
+  const above = RIDGE.altitudeM - cell;
+  console.log(`\nRidge-hugging: ${RIDGE.altitudeM} m over a cell that max-pools ${cell} m (${above} m above it)`);
+  check('the test position really is inside a 200 m clearance of the ground',
+    above > 0 && above < 200, `${above} m above the cell`);
+
+  const hugging = solve({
+    grid: ridgeGrid, latitude: RIDGE.latitude, longitude: RIDGE.longitude,
+    altitudeM: RIDGE.altitudeM, clearanceM: 200, safetyMarginM: 250, targets: [VALTOURNENCHE],
+  }).valtournenche;
+  console.log(`  Valtournenche: ${hugging ? 'L/D ' + hugging.requiredGlideRatio.toFixed(1) : 'UNREACHABLE'}`);
+  check('a field 6 km down the valley is still offered while hugging the ridge', Boolean(hugging));
+  check('and at a glide a pilot would recognise, not an invented one',
+    hugging && hugging.requiredGlideRatio > 3 && hugging.requiredGlideRatio < 20,
+    hugging ? hugging.requiredGlideRatio.toFixed(1) : 'n/a');
+
+  // The margin must still be worth having: it may not block the pilot's own position, but it must
+  // still make the reported number stricter than bare physics would.
+  const bare = solve({
+    grid: ridgeGrid, latitude: RIDGE.latitude, longitude: RIDGE.longitude,
+    altitudeM: RIDGE.altitudeM, clearanceM: 0, safetyMarginM: 250, targets: [VALTOURNENCHE],
+  }).valtournenche;
+  check('the clearance still costs something in the answer',
+    bare && hugging && hugging.requiredGlideRatio >= bare.requiredGlideRatio,
+    `${bare ? bare.requiredGlideRatio.toFixed(1) : 'n/a'} with no margin -> ` +
+    `${hugging ? hugging.requiredGlideRatio.toFixed(1) : 'n/a'} with 200 m`);
+}
+
 // The point of the feature: a ridge on the direct line must make the straight-line number worse
 // than the routed one, or at minimum must not be better.
 if (aosta && aosta.directGlideRatio) {

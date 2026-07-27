@@ -3,6 +3,7 @@
     "version": "0.8.6-beta",
     "date": "2026-07-26",
     "en": [
+      "Fixed a serious one: flying close to the ground — thermalling beside a face, as everyone does — could empty the field list completely. The clearance margin was being applied to the ground beside the glider, not just to the ground ahead, so the router refused to plan a first step in any direction. It now builds up over the first couple of kilometres: what is beside you is your judgement, what is ahead of you is what the margin is for",
       "Fixed: airfields imported without a published code showed an internal key such as IT_ANDREA_BOZZO_44P864_7P407 where an identifier belongs. They now show no code at all, in the list, on the field page and in the exported waypoint file",
       "Fewer duplicate entries: an airfield carried by two sources under different names — “#73 Busano” and “Pegasus” for the same grass — is now recognised as one place by its runway heading, elevation and position, and merged with both sources' photos and notes kept",
       "Opens straight away on a weak connection: anything already downloaded is used immediately instead of waiting on the radio, so a bad signal now costs no more than no signal at all. New field data still arrives on its own, a moment later",
@@ -13,6 +14,7 @@
       "The waypoint export is no longer named after one app: “Export CUP”, described as a waypoints file for your preferred navigation app. The file itself is unchanged"
     ],
     "fr": [
+      "Correction importante : voler près du relief — spiraler le long d'une face, comme tout le monde — pouvait vider complètement la liste des terrains. La marge de garde s'appliquait au relief situé à côté du planeur et non seulement à celui qui est devant, si bien que le calcul refusait le moindre premier pas. Elle monte désormais progressivement sur les deux premiers kilomètres : ce qui est à côté de vous relève de votre jugement, ce qui est devant relève de la marge",
       "Correction : les aérodromes importés sans code publié affichaient une clé interne du type IT_ANDREA_BOZZO_44P864_7P407 à la place d'un identifiant. Ils n'affichent désormais aucun code, dans la liste, sur la fiche du terrain et dans le fichier de points de virage exporté",
       "Moins de doublons : un aérodrome présent dans deux sources sous des noms différents — « #73 Busano » et « Pegasus » pour la même piste — est désormais reconnu comme un seul lieu grâce à son orientation de piste, son altitude et sa position, puis fusionné en conservant les photos et les notes des deux sources",
       "Ouverture immédiate avec une connexion faible : tout ce qui est déjà téléchargé est utilisé sans attendre le réseau, si bien qu'un mauvais signal ne coûte pas plus cher que pas de signal du tout. Les nouvelles données de terrains arrivent ensuite d'elles-mêmes",
@@ -23,6 +25,7 @@
       "L'export de points de virage ne porte plus le nom d'une seule application : « Exporter CUP », décrit comme un fichier de points de virage pour l'application de navigation de votre choix. Le fichier lui-même est inchangé"
     ],
     "de": [
+      "Ein gravierender Fehler behoben: Flug nahe am Gelände — Kreisen entlang einer Wand, wie es alle tun — konnte die Feldliste vollständig leeren. Die Sicherheitsmarge wurde auf das Gelände NEBEN dem Segler angewandt, nicht nur auf das vorausliegende, sodass der Router in keiner Richtung einen ersten Schritt plante. Sie baut sich nun über die ersten zwei Kilometer auf: was neben Ihnen liegt, ist Ihr Urteil, was vor Ihnen liegt, dafür ist die Marge da",
       "Behoben: Ohne veröffentlichten Code importierte Flugplätze zeigten dort, wo eine Kennung stehen sollte, einen internen Schlüssel wie IT_ANDREA_BOZZO_44P864_7P407. Sie zeigen nun gar keinen Code mehr – in der Liste, auf der Platzseite und in der exportierten Wegpunktdatei",
       "Weniger doppelte Einträge: Ein Flugplatz, den zwei Quellen unter verschiedenen Namen führen – „#73 Busano“ und „Pegasus“ für dieselbe Graspiste – wird nun anhand von Pistenrichtung, Höhe und Position als ein Ort erkannt und zusammengeführt, wobei Fotos und Hinweise beider Quellen erhalten bleiben",
       "Öffnet bei schwacher Verbindung sofort: Bereits heruntergeladene Daten werden genutzt, ohne auf den Funk zu warten — schlechter Empfang kostet damit nicht mehr als gar kein Empfang. Neue Felddaten treffen kurz darauf von selbst ein",

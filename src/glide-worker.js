@@ -55,6 +55,10 @@ var NODATA = -32768;
 // up to 30 and coarse above it: that halves the median for about 30% more compute. Going finer
 // than that buys accuracy only where the answer is already "no".
 var DEFAULT_LADDER = [8, 10, 12, 14, 17, 20, 24, 28, 33, 40, 50, 65];
+
+// Distance over which the clearance margin grows from nothing to its full setting — see
+// headroomAt for what goes wrong without it.
+var CLEARANCE_RAMP_M = 2000;
 // Enough to draw a readable profile on a phone, few enough to post cheaply for every field.
 var PROFILE_SAMPLES = 96;
 
@@ -179,13 +183,33 @@ Solver.prototype.latLonOf = function (index) {
   };
 };
 
-/** Height available over a cell before the clearance floor: negative means the ground is in the way. */
-Solver.prototype.headroomAt = function (index) {
+/**
+ * Height available over a cell before its floor: negative means the ground is in the way.
+ *
+ * The clearance margin grows from nothing at the glider's own position to its full setting over
+ * CLEARANCE_RAMP_M. Applied flat it did not shape routes, it deleted them — and silently.
+ *
+ * A glider working lift beside a face is metres from rock by choice, and a routing cell max-pools
+ * ~278 m of hillside, so the ground recorded all around the pilot is the top of the rock they are
+ * climbing alongside. Subtract a 200 m margin from that and every neighbouring cell reports
+ * negative headroom, which fails `s <= G * headroom` at every rung of the ladder. The wavefront
+ * then visits exactly one cell — its own — and every field in every direction comes back
+ * unreachable. That is what a pilot circling over Cervinia at 3000 m saw: 143 m above the ground
+ * beneath them, Valtournenche 5.8 km away needing a glide of 4.7, and an empty list.
+ *
+ * What does not ramp is the ground itself. `alt - s/G > terrain` holds at every distance, so the
+ * solver may plan closer to a hillside the pilot is looking out of the canopy at than to one
+ * 40 km ahead, but it may never plan through one. The margin exists for ground the pilot is
+ * trusting this app about; alongside the glider they are trusting their eyes, which are better.
+ */
+Solver.prototype.headroomAt = function (index, travelledM) {
   var floor = this.targetFloor[index];
   if (!isNaN(floor)) return this.altitudeM - floor;
   var terrain = this.elevations[index];
   if (terrain === NODATA) return NaN;   // unknown ground: not passable, not a hard refusal either
-  return this.altitudeM - terrain - this.clearanceM;
+  var reach = travelledM === undefined ? CLEARANCE_RAMP_M : travelledM;
+  var clearance = this.clearanceM * Math.min(1, reach / CLEARANCE_RAMP_M);
+  return this.altitudeM - terrain - clearance;
 };
 
 /**
@@ -232,7 +256,7 @@ Solver.prototype.flood = function (glideRatio) {
       if (candidate >= this.dist[next]) continue;
       // The whole terrain constraint, in one line: at glide ratio G you arrive over this cell
       // alt - candidate/G high, and that must clear its floor.
-      var headroom = this.headroomAt(next);
+      var headroom = this.headroomAt(next, candidate);
       if (!(headroom > 0) || candidate > glideRatio * headroom) continue;
 
       this.dist[next] = candidate;
@@ -272,7 +296,7 @@ Solver.prototype.walkSegment = function (fromIndex, toIndex, travelledM, skipLas
     var row = Math.round(fromRow + (toRow - fromRow) * step / stepCount);
     var col = Math.round(fromCol + (toCol - fromCol) * step / stepCount);
     var index = row * cols + col;
-    var headroom = this.headroomAt(index);
+    var headroom = this.headroomAt(index, result.travelledM);
     if (!(headroom > 0)) return null;
     var ratio = result.travelledM / headroom;
     if (ratio > result.worst) {
