@@ -1,0 +1,52 @@
+# Weekly usage summary for meetthecows.org, from Cloudflare's analytics API.
+#
+# Read-only: it queries, it never changes anything. The report lands in the run summary rather
+# than in an issue or an email, so it accumulates in one place and nobody has to unsubscribe
+# from it.
+#
+# TOKEN. This uses the same CLOUDFLARE_API_TOKEN secret the deploy workflows use, which is
+# normally scoped to Workers Scripts only. If the first run fails saying it needs Zone -> Read
+# and Analytics -> Read, either add those permissions to that token or give this workflow its
+# own — the script prints exactly which permission was refused. Failing loudly is deliberate: a
+# report that silently stops is worse than no report.
+name: Usage report
+
+on:
+  schedule:
+    # Monday 06:00 UTC — a full week is in the window and the numbers are there before the day.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days to report on"
+        type: string
+        default: "7"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usage-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Query Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python3 scripts/cf_usage_report.py \
+            --days "${{ inputs.days || '7' }}" \
+            --markdown | tee -a "$GITHUB_STEP_SUMMARY"
