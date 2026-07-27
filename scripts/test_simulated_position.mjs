@@ -48,9 +48,19 @@ await writeFile(path.join(ROOT,'packs','packs.json'), JSON.stringify({ schemaVer
     manifestUrl:'packs/alps-test/manifest.json', sizeBytes:100, fieldsCount:1 }] }));
 const T={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json',
   '.svg':'image/svg+xml','.ico':'image/x-icon','.webmanifest':'application/manifest+json','.png':'image/png'};
+// The REAL Content-Security-Policy on the document, exactly as deployed (same-origin packs):
+// the place search talks to an external geocoder, and a policy that omits it blocks the fetch
+// before any network stub can answer — which is precisely the failure this must catch. It
+// shipped once: 0.8.6-beta's CSP listed every origin except Photon, and search died in
+// production while this test, serving no CSP, stayed green.
+const CSP=(await readFile(path.join(repo,'deploy','app-csp.txt'),'utf8'))
+  .split('\n').filter(l=>!l.startsWith('#')).join(' ')
+  .replaceAll('__PACKS_ORIGIN__','').replace(/ +/g,' ').trim();
 const srv=http.createServer(async(rq,rs)=>{
   const f=path.join(ROOT,new URL(rq.url,'http://x').pathname==='/'?'index.html':new URL(rq.url,'http://x').pathname);
-  try{const b=await readFile(f);rs.writeHead(200,{'content-type':T[path.extname(f)]||'application/octet-stream'});rs.end(b);}
+  try{const b=await readFile(f);const h={'content-type':T[path.extname(f)]||'application/octet-stream'};
+    if(h['content-type']==='text/html')h['content-security-policy']=CSP;
+    rs.writeHead(200,h);rs.end(b);}
   catch{rs.writeHead(404);rs.end('nf');}});
 await new Promise(r=>srv.listen(0,r));
 const base=`http://127.0.0.1:${srv.address().port}/`;
