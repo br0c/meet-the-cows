@@ -32,6 +32,9 @@ const FIELDS = [
   { id: 'b1', name: 'Bravo', difficulty: 'B', latitude: 45.89, longitude: 7.61 },
   { id: 'c1', name: 'Charlie', difficulty: 'C', latitude: 45.88, longitude: 7.62 },
   { id: 'd1', name: 'Delta', difficulty: 'D', latitude: 45.87, longitude: 7.63 },
+  // What the builder emits when no source rated the field (build_pack.py). It renders a "?"
+  // badge, and is treated as difficult rather than easy — see the filter in computeRows.
+  { id: 'u1', name: 'Unrated', difficulty: 'UNKNOWN', latitude: 45.86, longitude: 7.64 },
 ].map(f => ({ ...f, kind: 'outlanding', code: '', rawDifficulty: f.difficulty, elevationM: 500,
   lengthM: 800, widthM: 60, runwayDirectionDeg: 90, notes: '', media: [],
   source: { name: 'fixture' } }));
@@ -192,9 +195,39 @@ console.log('\n4 — a pilot who had hidden both keeps them hidden; a first visi
   // least visible, because the list simply gets shorter.
   const both = await open({ ...BASE_SETTINGS, hideC: false, hideD: false });
   check('a pilot who had revealed both keeps both',
-    (await names(both.page)).join(',') === 'Alpha,Bravo,Charlie,Delta',
+    (await names(both.page)).join(',') === 'Alpha,Bravo,Charlie,Delta,Unrated',
     (await names(both.page)).join(','));
   await both.context.close();
+}
+
+// --- unrated fields travel with the difficult ones ------------------------------------------------
+console.log('\n5 — a field nobody rated is offered only when C and D both are');
+{
+  // The point of the rule: "no rating" is not a mild rating. Until someone has assessed it the
+  // field could be worse than a D, so it is only offered to a pilot who has already said they
+  // want to see difficult ground — and it goes away again if either grade is put back.
+  const cases = [
+    [{ showC: false, showD: false }, false, 'neither grade shown'],
+    [{ showC: true, showD: false }, false, 'only C shown'],
+    [{ showC: false, showD: true }, false, 'only D shown'],
+    [{ showC: true, showD: true }, true, 'both shown'],
+  ];
+  for (const [settings, expected, label] of cases) {
+    const { context, page } = await open({ ...BASE_SETTINGS, ...settings });
+    const listed = await names(page);
+    check(`${label}: unrated is ${expected ? 'offered' : 'hidden'}`,
+      listed.includes('Unrated') === expected, listed.join(','));
+    await context.close();
+  }
+
+  // It must be the rating that decides, not the row being dropped for some other reason.
+  const { context, page } = await open({ ...BASE_SETTINGS, showC: true, showD: true });
+  const badge = await page.$$eval('.field-row', rows => {
+    const row = rows.find(r => /Unrated/.test(r.querySelector('.field-name')?.textContent || ''));
+    return row?.querySelector('.badge')?.textContent?.trim();
+  });
+  check('and it is the "?" badge that identifies it', badge === '?', String(badge));
+  await context.close();
 }
 
 await browser.close();

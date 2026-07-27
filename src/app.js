@@ -1213,6 +1213,13 @@ function computeRows() {
   rows = rows.filter(row => {
     if (!state.settings.showD && row.field.difficulty === 'D') return false;
     if (!state.settings.showC && row.field.difficulty === 'C') return false;
+    // An unrated field is not an easy one, it is one nobody has assessed — it could be anything,
+    // including worse than a D. So it travels with the difficult grades rather than with A and B:
+    // offered only once the pilot has asked to see both C and D, and hidden the moment either is
+    // put away. Keyed on the badge the row actually shows, so anything rendering "?" is covered
+    // however its source spelled it; altiport and vélisurface keep their own labels and stay.
+    if (difficultyLabel(row.field) === '?'
+      && !(state.settings.showC && state.settings.showD)) return false;
     return true;
   });
   rows = rows.map(applyTerrainRoute);

@@ -3,13 +3,16 @@
     "version": "0.8.9-beta",
     "date": "2026-07-27",
     "en": [
-      "The three pinned picks now include fields needing up to a 25 glide, not 20"
+      "The three pinned picks now include fields needing up to a 25 glide, not 20",
+      "Fields with no difficulty rating are hidden unless both C and D fields are shown"
     ],
     "fr": [
-      "Les trois choix épinglés incluent désormais les terrains jusqu’à une finesse de 25, au lieu de 20"
+      "Les trois choix épinglés incluent désormais les terrains jusqu’à une finesse de 25, au lieu de 20",
+      "Les terrains sans cotation sont masqués, sauf si les terrains C et D sont affichés"
     ],
     "de": [
-      "Die drei angehefteten Vorschläge umfassen jetzt Felder bis Gleitzahl 25 statt 20"
+      "Die drei angehefteten Vorschläge umfassen jetzt Felder bis Gleitzahl 25 statt 20",
+      "Felder ohne Schwierigkeitsbewertung sind ausgeblendet, außer wenn C- und D-Felder angezeigt werden"
     ]
   },
   {
