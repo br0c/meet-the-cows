@@ -55,6 +55,21 @@ jobs:
       - name: Check the tile format
         run: python scripts/test_terrain_format.py
 
+      # Same ref-decides-the-channel rule as build-data-pack: from main this publishes the
+      # production terrain (packs/_terrain); from any other ref it publishes the dev channel's
+      # copy (dev/packs/_terrain), which next.meetthecows.org reads. Tiles are byte-identical
+      # across channels — the ground has no branches — so the split only exists so a terrain
+      # change can be proven on the dev app before it reaches production. After a terrain
+      # change ships: dispatch on dev to test, merge, dispatch on main to publish for real.
+      - name: Resolve data channel
+        id: channel
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "prefix=packs/_terrain" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=dev/packs/_terrain" >> "$GITHUB_OUTPUT"
+          fi
+
       # Tiles are keyed by geography, not by build, so a re-run after a network failure should
       # resume rather than re-download the world.
       - name: Restore previously built tiles
@@ -77,7 +92,7 @@ jobs:
             --dem "${{ inputs.dem }}" \
             --out data/packs \
             --jobs 6 \
-            ${{ vars.PACKS_BASE_URL != '' && format('--merge-index-url {0}packs/_terrain/index.json', vars.PACKS_BASE_URL) || '' }} \
+            ${{ vars.PACKS_BASE_URL != '' && format('--merge-index-url {0}{1}/index.json', vars.PACKS_BASE_URL, steps.channel.outputs.prefix) || '' }} \
             ${{ inputs.force && '--force' || '' }}
 
       # Named cols come from a different source on a different schedule, and a failure here must
@@ -141,7 +156,7 @@ jobs:
         run: |
           python scripts/publish_packs_r2.py \
             --dir data/packs/_terrain \
-            --prefix packs/_terrain \
+            --prefix "${{ steps.channel.outputs.prefix }}" \
             --bucket "${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }}"
 
       - name: Summary
