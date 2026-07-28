@@ -377,7 +377,7 @@ const STRINGS = {
     sevDifficult: 'difficult', sevVeryDifficult: 'very difficult',
     noPackYet: 'No pack loaded yet.', noCacheApi: 'Cache Storage is not available in this browser.',
     cacheReady: 'ready', cacheDownloading: 'downloading', cacheRefreshing: 'refreshing',
-    dlSaving: 'Saving offline', dlFailed: 'failed',
+    dlSaving: 'Saving offline', dlFailed: 'failed', dlChecking: 'Checking files',
     cacheIncomplete: 'incomplete', cacheNotDownloaded: 'not downloaded', cacheErrorStatus: 'error',
     cacheUnknown: 'unknown',
     cpNoMedia: 'No media/docs to cache', cpNoPack: 'No pack loaded',
@@ -551,7 +551,7 @@ const STRINGS = {
     sevDifficult: 'difficiles', sevVeryDifficult: 'très difficiles',
     noPackYet: 'Aucun pack chargé pour le moment.', noCacheApi: "Le stockage de cache n'est pas disponible dans ce navigateur.",
     cacheReady: 'prêt', cacheDownloading: 'téléchargement', cacheRefreshing: 'actualisation',
-    dlSaving: 'Enregistrement hors ligne', dlFailed: 'échec(s)',
+    dlSaving: 'Enregistrement hors ligne', dlFailed: 'échec(s)', dlChecking: 'Vérification des fichiers',
     cacheIncomplete: 'incomplet', cacheNotDownloaded: 'non téléchargé', cacheErrorStatus: 'erreur',
     cacheUnknown: 'inconnu',
     cpNoMedia: 'Aucun média/doc à mettre en cache', cpNoPack: 'Aucun pack chargé',
@@ -724,7 +724,7 @@ const STRINGS = {
     sevDifficult: 'schwierig', sevVeryDifficult: 'sehr schwierig',
     noPackYet: 'Noch kein Paket geladen.', noCacheApi: 'Cache-Speicher ist in diesem Browser nicht verfügbar.',
     cacheReady: 'bereit', cacheDownloading: 'lädt', cacheRefreshing: 'aktualisiert',
-    dlSaving: 'Offline speichern', dlFailed: 'fehlgeschlagen',
+    dlSaving: 'Offline speichern', dlFailed: 'fehlgeschlagen', dlChecking: 'Dateien werden geprüft',
     cacheIncomplete: 'unvollständig', cacheNotDownloaded: 'nicht geladen', cacheErrorStatus: 'Fehler',
     cacheUnknown: 'unbekannt',
     cpNoMedia: 'Keine Medien/Dokumente zum Zwischenspeichern', cpNoPack: 'Kein Paket geladen',
@@ -2088,15 +2088,28 @@ function updateStatusStrip() {
   if (el) el.innerHTML = renderStatus();
 }
 
+// Percent of the current phase. Weighted by bytes when the phase carries sizes (the media
+// download: files span two orders of magnitude, and a count-based bar crawls through
+// thumbnails then freezes on a chart PDF then leaps); by item count otherwise (the checking
+// phase and terrain tiles, where items cost roughly the same).
+function offlineBarPct(s) {
+  if (s.totalWeight) return Math.round((s.doneWeight / s.totalWeight) * 100);
+  return s.total ? Math.round((s.done / s.total) * 100) : 0;
+}
+
 function renderOfflineBar() {
   const s = state.offlineSync;
   if (!s) return '';
-  const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+  const pct = offlineBarPct(s);
   const failed = s.failed ? ` · ${s.failed} ${t('dlFailed')}` : '';
+  // The checking phase (see downloadOfflinePack) counts cache lookups, not downloads: with
+  // every pack selected there are a few thousand of them, and until this bar existed they
+  // were seconds of nothing happening after the tap.
+  const label = s.checking ? t('dlChecking') : t('dlSaving');
   return `
     <div class="offline-bar" role="status" aria-live="polite">
       <div class="offline-bar-track"><div class="offline-bar-fill" id="offlineBarFill" style="width:${pct}%"></div></div>
-      <div class="offline-bar-label" id="offlineBarLabel">${escapeHtml(t('dlSaving'))} · ${pct}%${failed}</div>
+      <div class="offline-bar-label" id="offlineBarLabel">${escapeHtml(label)} · ${pct}%${failed}</div>
     </div>`;
 }
 
@@ -2105,11 +2118,11 @@ function renderOfflineBar() {
 function updateOfflineBar() {
   const s = state.offlineSync;
   if (!s) return;
-  const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+  const pct = offlineBarPct(s);
   const fill = document.querySelector('#offlineBarFill');
   const label = document.querySelector('#offlineBarLabel');
   if (fill) fill.style.width = pct + '%';
-  if (label) label.textContent = `${t('dlSaving')} · ${pct}%${s.failed ? ` · ${s.failed} ${t('dlFailed')}` : ''}`;
+  if (label) label.textContent = `${s.checking ? t('dlChecking') : t('dlSaving')} · ${pct}%${s.failed ? ` · ${s.failed} ${t('dlFailed')}` : ''}`;
 }
 
 function render() {
@@ -4093,10 +4106,22 @@ async function downloadOfflinePack() {
     const synced = localStorage.getItem(syncedVersionKey(pack.id)) || '';
     return !synced || synced !== (manifest?.version || '');
   });
+  // The scan below is thousands of sequential cache lookups when every pack is selected —
+  // seconds of dead air on a phone. Show the bar for it, in its "checking" phase, from the
+  // first frame after the tap.
   const cachedUrls = new Set((await cache.keys()).map(request => request.url));
+  state.offlineSync = { done: 0, total: targets.size, failed: 0, checking: true };
+  render();
   const toFetch = [];
   let kept = 0;
+  let scanned = 0;
   for (const [url, expectedBytes] of targets) {
+    scanned += 1;
+    if (scanned % 100 === 0) {
+      state.offlineSync = { done: scanned, total: targets.size, failed: 0, checking: true };
+      updateOfflineBar();
+      await new Promise(resolve => setTimeout(resolve, 0)); // let the bar paint
+    }
     if (!cachedUrls.has(url)) { toFetch.push(url); continue; }
     if (anyDrift && expectedBytes) {
       const cached = await cache.match(url);
@@ -4109,14 +4134,24 @@ async function downloadOfflinePack() {
   let ok = kept;
   let failed = 0;
   if (toFetch.length) {
-    // One token covers the whole download; ensureChartToken renews it well before expiry so a
-    // long pack does not start failing charts partway through.
-    if (toFetch.some(isChartUrl)) await ensureChartToken();
-    state.offlineSync = { done: 0, total: toFetch.length, failed: 0 };
+    // Byte weights for the bar: the size the build stamped on each file, and the average of
+    // the known sizes for anything unstamped (packs from before the bytes stamp), so a mixed
+    // list still reaches 100% exactly when the last file lands.
+    const sizes = toFetch.map(url => targets.get(url) || 0);
+    const knownSizes = sizes.filter(Boolean);
+    const averageSize = knownSizes.length ? knownSizes.reduce((a, b) => a + b, 0) / knownSizes.length : 1;
+    const weights = sizes.map(size => size || averageSize);
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    let doneWeight = 0;
+    state.offlineSync = { done: 0, total: toFetch.length, failed: 0, doneWeight, totalWeight };
     render();  // once: shows the floating bar; per-file updates below are in place (no re-render)
     for (let i = 0; i < toFetch.length; i += 1) {
       const url = toFetch[i];
       try {
+        // Re-checked per chart, not once for the whole run: an all-packs download on cockpit
+        // bandwidth can outlive the token's hour, and ensureChartToken is a no-op until the
+        // expiry gets close.
+        if (isChartUrl(url)) await ensureChartToken();
         const response = await fetch(isChartUrl(url) ? tokenedChartUrl(url) : url, { cache: 'reload' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         // Stored under the token-free URL on purpose — see chartUrl.
@@ -4132,7 +4167,8 @@ async function downloadOfflinePack() {
         }
       }
 
-      state.offlineSync = { done: i + 1, total: toFetch.length, failed };
+      doneWeight += weights[i];  // progress is work attempted; a failed file still advances
+      state.offlineSync = { done: i + 1, total: toFetch.length, failed, doneWeight, totalWeight };
       updateOfflineBar();
       await new Promise(resolve => setTimeout(resolve, 0));
     }

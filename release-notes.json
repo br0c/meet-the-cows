@@ -3,6 +3,7 @@
     "version": "0.8.9-beta",
     "date": "2026-07-27",
     "en": [
+      "New Spain and Pyrenees packs: fields from the APVV Guide des champs pyrénéens (with the clubs' photos) plus Spanish airfields from OpenAIP",
       "The three pinned picks now include fields needing up to a 25 glide, not 20",
       "Fields with no difficulty rating are hidden unless both C and D fields are shown",
       "Ground testing: the altitude slider no longer goes below the ground at the chosen place",
@@ -10,6 +11,7 @@
       "Aerodrome charts now come from a protected chart store; downloaded charts keep working offline"
     ],
     "fr": [
+      "Nouveaux packs Espagne et Pyrénées : terrains du Guide des champs pyrénéens de l’APVV (avec les photos des clubs) et aérodromes espagnols d’OpenAIP",
       "Les trois choix épinglés incluent désormais les terrains jusqu’à une finesse de 25, au lieu de 20",
       "Les terrains sans cotation sont masqués, sauf si les terrains C et D sont affichés",
       "Test au sol : l’altitude ne descend plus sous le sol du lieu choisi",
@@ -17,6 +19,7 @@
       "Les cartes d’aérodrome proviennent désormais d’un espace protégé ; les cartes téléchargées restent disponibles hors ligne"
     ],
     "de": [
+      "Neue Pakete Spanien und Pyrenäen: Felder aus dem APVV-Führer (mit den Fotos der Vereine) und spanische Flugplätze aus OpenAIP",
       "Die drei angehefteten Vorschläge umfassen jetzt Felder bis Gleitzahl 25 statt 20",
       "Felder ohne Schwierigkeitsbewertung sind ausgeblendet, außer wenn C- und D-Felder angezeigt werden",
       "Bodentest: Die Höhe geht nicht mehr unter den Boden des gewählten Orts",
