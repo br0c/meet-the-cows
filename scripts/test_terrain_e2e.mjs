@@ -317,7 +317,7 @@ check('the fallback never points a direction', !/of track|\bN[EW]?\b|\bS[EW]?\b|
 await page.click('#settingsToggle');
 await page.waitForSelector('#terrainRouting');
 const card = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);
-check('settings states the terrain download size', /tiles ·/.test(card));
+check('settings states the terrain size on the attribution line', /Terrain: .*(MB|KB|B) · Elevation/.test(card), card.split('\n').pop());
 check('settings states the clearance in force', /at least 200 m above the ground/.test(card));
 
 // The clearance control is a slider: dragging must update the readout live without re-rendering,
