@@ -302,6 +302,7 @@ jobs:
         if: steps.build.outputs.changed != 'false'
         env:
           PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
+          CHARTS_BASE_URL: ${{ vars.CHARTS_BASE_URL }}
           # NB: `x == 'main' && '' || x` does NOT work — '' is falsy, so the || arm always
           # wins and every deployment is labelled with its branch. Test the negative instead.
           CHANNEL: ${{ github.ref_name != 'main' && github.ref_name || '' }}
@@ -310,6 +311,7 @@ jobs:
           import json, os
           cfg = {
               "packsBase": os.environ.get("PACKS_BASE_URL", ""),
+              "chartsBase": os.environ.get("CHARTS_BASE_URL", ""),
               "channel": os.environ.get("CHANNEL", ""),
           }
           print("// Generated at deploy time — see config.js in the repo for the field docs.")
@@ -332,6 +334,33 @@ jobs:
         run: |
           python -m pip install --quiet boto3
           python scripts/publish_packs_r2.py --dir dist/site/packs --prefix packs --bucket "$BUCKET"
+
+      # --- Charts to the PRIVATE charts bucket ------------------------------------------------
+      # Most charts carry no redistribution right (DFS, ENAV), so they are served by the Worker
+      # from a private bucket rather than read straight off the public data origin. Keys here
+      # are what the pack's chartKey points at: vac/<ICAO>.pdf.
+      #
+      # The copies in the public pack tree are still published above, on purpose: an app shell
+      # cached from before this change resolves the chart's published URL and nothing else, and
+      # a pilot mid-season should not lose charts because their phone has not relaunched the
+      # app yet. Withdrawing them is a separate, deliberate step once shells have turned over —
+      # drop `docs/vac` from the public upload and the public copies stop being refreshed.
+      - name: Publish charts to the private R2 bucket
+        if: steps.build.outputs.changed != 'false' && vars.CHARTS_BASE_URL != ''
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CHARTS_BUCKET: ${{ vars.R2_CHARTS_BUCKET || 'mtc-charts' }}
+        run: |
+          if [ -d dist/site/packs/_shared/docs/vac ]; then
+            python scripts/publish_packs_r2.py \
+              --dir dist/site/packs/_shared/docs/vac \
+              --prefix vac \
+              --bucket "$CHARTS_BUCKET"
+          else
+            echo "no charts in this build; nothing to publish"
+          fi
 
       # --- GitHub Pages (default) ------------------------------------------------------------
       - name: Setup Pages

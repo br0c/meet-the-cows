@@ -7,6 +7,11 @@
 #   script-src/frame-src/connect-src challenges.cloudflare.com — the Turnstile widget on the
 #     contribution form: its loader script, its iframe, and its own verification calls.
 #   frame-src also carries the data host: VAC/AD chart PDFs render in an <iframe>.
+#   api.meetthecows.org appears in BOTH frame-src and connect-src, and needs to: charts moved
+#     to a private bucket served by that Worker, so the app fetch()es a token and the media
+#     download, then renders the chart itself in an <iframe>. Miss either directive and charts
+#     fail in a way no test without a CSP would catch — which is exactly how the photon
+#     omission below reached production.
 #   connect-src also carries the contribution Worker (form posts are fetch()) and
 #     photon.komoot.io — the ground-testing place search. Its omission shipped in
 #     0.8.6-beta and blocked every search in production while the tests, serving no CSP,
@@ -18,4 +23,4 @@
 #     and friends). Inline STYLE, never inline script: script-src stays 'self' + Turnstile.
 #   worker-src 'self' — the glide solver and the service worker.
 #   frame-ancestors 'none' — nothing has any business framing a cockpit aid.
-default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com __PACKS_ORIGIN__; connect-src 'self' https://challenges.cloudflare.com https://mtc-contrib-intake.br0c.workers.dev https://photon.komoot.io __PACKS_ORIGIN__; img-src 'self' data: blob: __PACKS_ORIGIN__; style-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com https://api.meetthecows.org __PACKS_ORIGIN__; connect-src 'self' https://challenges.cloudflare.com https://mtc-contrib-intake.br0c.workers.dev https://api.meetthecows.org https://photon.komoot.io __PACKS_ORIGIN__; img-src 'self' data: blob: __PACKS_ORIGIN__; style-src 'self' 'unsafe-inline'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

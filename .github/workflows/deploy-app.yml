@@ -129,6 +129,7 @@ jobs:
       - name: Write deployment config
         env:
           PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
+          CHARTS_BASE_URL: ${{ vars.CHARTS_BASE_URL }}
           # NB: `x == 'main' && '' || x` does NOT work — '' is falsy, so the || arm always
           # wins and every deployment is labelled with its branch. Test the negative instead.
           CHANNEL: ${{ github.ref_name != 'main' && github.ref_name || '' }}
@@ -137,6 +138,7 @@ jobs:
           import json, os
           cfg = {
               "packsBase": os.environ.get("PACKS_BASE_URL", ""),
+              "chartsBase": os.environ.get("CHARTS_BASE_URL", ""),
               "channel": os.environ.get("CHANNEL", ""),
           }
           print("// Generated at deploy time — see config.js in the repo for the field docs.")

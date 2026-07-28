@@ -20,6 +20,62 @@ const withTrailingSlash = value => {
 // downstream follows. A pilot must never lose their field list because a data host is down.
 let dataBase = CONFIG.packsBase ? new URL(withTrailingSlash(CONFIG.packsBase)) : BASE_URL;
 const packIndexUrl = () => new URL('packs/packs.json', dataBase).toString();
+
+// --- Aerodrome charts ------------------------------------------------------------------------
+//
+// Charts are the one part of a pack that does not come from the public data origin. Most of
+// them may not be redistributed (Germany's DFS and Italy's ENAV grant no such right), so they
+// live in a private bucket and are served by a Worker that wants a short-lived token.
+//
+// Two URLs per chart, deliberately:
+//   chartUrl()      — token-free, and the ONLY thing ever used as a cache key. A token in the
+//                     key would mean every chart re-downloads the moment the token rotates.
+//   tokenedChartUrl() — what actually goes on the wire, or into an <iframe> src.
+// The service worker matches chart requests ignoring the query string, so a request carrying
+// this hour's token still finds the copy stored under the token-free URL — including with no
+// radio at all, which is when a pilot is most likely to want the chart.
+const chartsBase = CONFIG.chartsBase ? new URL(withTrailingSlash(CONFIG.chartsBase)) : null;
+const CHART_TOKEN_ENDPOINT = () => new URL('charts/token', chartsBase).toString();
+// Refresh this far before expiry: a pack download can run for minutes, and a token that dies
+// halfway through it would fail the rest of the charts one by one.
+const CHART_TOKEN_EARLY_REFRESH_S = 300;
+let chartToken = { value: '', expiresAt: 0 };
+let chartTokenPending = null; // in-flight mint, so concurrent callers share one request
+
+/** The canonical, token-free URL of a chart, or '' when this item is not a gated chart. */
+function chartUrl(item) {
+  const key = typeof item?.chartKey === 'string' ? item.chartKey.trim() : '';
+  if (!key || !chartsBase) return '';
+  return new URL(`charts/${key}`, chartsBase).toString();
+}
+
+function tokenedChartUrl(url) {
+  if (!url || !chartToken.value) return url;
+  return `${url}?t=${encodeURIComponent(chartToken.value)}`;
+}
+
+/** A usable token, minting one when there is none or it is about to expire. Never throws:
+ *  without a token the chart request 403s, which is one missing chart, not a broken app. */
+async function ensureChartToken() {
+  if (!chartsBase) return '';
+  const now = Date.now() / 1000;
+  if (chartToken.value && chartToken.expiresAt - CHART_TOKEN_EARLY_REFRESH_S > now) return chartToken.value;
+  chartTokenPending = chartTokenPending || (async () => {
+    try {
+      const response = await fetch(CHART_TOKEN_ENDPOINT(), { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      if (!data?.token) throw new Error('no token in response');
+      chartToken = { value: String(data.token), expiresAt: Date.now() / 1000 + Number(data.expiresIn || 3600) };
+    } catch (error) {
+      console.warn('Could not get a chart token', error);
+    } finally {
+      chartTokenPending = null;
+    }
+  })();
+  await chartTokenPending;
+  return chartToken.value;
+}
 // The app's permanent addresses. Hardcoded rather than configured, because moving house is a
 // one-way trip and not a setting — and because the copy that most needs to know it has been
 // retired is the frozen one on the old origin, which by definition stops receiving deploy-time
@@ -2949,7 +3005,19 @@ function formatFrequency(field) {
 
 function renderMediaItem(item, base) {
   const caption = item.caption || item.source || item.type;
-  const mediaUrl = new URL(item.url, base || state.currentManifestUrl || BASE_URL).toString();
+  // A gated chart is fetched from the chart Worker; everything else, and any chart in a
+  // deployment with no Worker configured, keeps using the URL published in the pack.
+  const gated = chartUrl(item);
+  // Token still being minted: render the card without the iframe rather than fire a tokenless
+  // request that 403s and flashes a broken viewer. The mint's completion re-renders the detail
+  // (see attachFieldRowEvents) with the best URL there is — tokened, or bare when minting
+  // failed, which the service worker still answers from the cache for a downloaded chart.
+  if (gated && !chartToken.value && chartTokenPending) {
+    return `<div class="media-card"><div class="caption">${escapeHtml(caption)}</div></div>`;
+  }
+  const mediaUrl = gated
+    ? tokenedChartUrl(gated)
+    : new URL(item.url, base || state.currentManifestUrl || BASE_URL).toString();
   if (item.type === 'pdf') {
     return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">${t('openPdf')}</a> · ${escapeHtml(caption)}</div></div>`;
   }
@@ -3619,6 +3687,18 @@ function attachFieldRowEvents(root) {
   root.querySelectorAll('[data-field-id]').forEach(row => row.addEventListener('click', () => {
     state.selectedFieldId = row.getAttribute('data-field-id');
     state.detailScrollTop = 0;
+    // A gated chart in this field renders as an <iframe>, whose src wants a token. Start the
+    // mint BEFORE rendering: its synchronous head sets chartTokenPending, which makes the
+    // render below show the chart card without an iframe instead of firing a tokenless request
+    // that can only 403. When the mint settles — token or not — re-render: with the token, or
+    // with the bare URL, which the service worker still answers from cache for a downloaded
+    // chart. Offline, the failed mint settles in milliseconds; nothing waits on the network.
+    const field = state.fields.find(f => f.id === state.selectedFieldId);
+    if (field?.media?.some(item => chartUrl(item))) {
+      ensureChartToken().then(() => {
+        if (state.selectedFieldId === field.id) render();
+      });
+    }
     render();
   }));
   // Rendered as part of the search results, so it must be (re)wired on every in-place update.
@@ -3975,7 +4055,9 @@ function buildOfflineMediaTargets() {
     if (!base) continue;
     for (const media of field.media || []) {
       if (!media?.url) continue;
-      const url = new URL(media.url, base).toString();
+      // Gated charts are targeted by their token-free Worker URL, which is also what they are
+      // cached under — so a rotating token never turns a cached chart into a missing one.
+      const url = chartUrl(media) || new URL(media.url, base).toString();
       if (!targets.has(url)) targets.set(url, Number(media.bytes) || 0);
     }
   }
@@ -4027,13 +4109,17 @@ async function downloadOfflinePack() {
   let ok = kept;
   let failed = 0;
   if (toFetch.length) {
+    // One token covers the whole download; ensureChartToken renews it well before expiry so a
+    // long pack does not start failing charts partway through.
+    if (toFetch.some(isChartUrl)) await ensureChartToken();
     state.offlineSync = { done: 0, total: toFetch.length, failed: 0 };
     render();  // once: shows the floating bar; per-file updates below are in place (no re-render)
     for (let i = 0; i < toFetch.length; i += 1) {
       const url = toFetch[i];
       try {
-        const response = await fetch(url, { cache: 'reload' });
+        const response = await fetch(isChartUrl(url) ? tokenedChartUrl(url) : url, { cache: 'reload' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        // Stored under the token-free URL on purpose — see chartUrl.
         await cache.put(url, response.clone());
         ok += 1;
       } catch (error) {
@@ -4115,6 +4201,11 @@ function isPackMediaOrDocUrl(url) {
   return url.includes('/packs/') && (url.includes('/media/') || url.includes('/docs/'));
 }
 
+/** A chart served by the chart Worker — cached, counted and evicted like any other pack asset. */
+function isChartUrl(url) {
+  return !!chartsBase && String(url).startsWith(new URL('charts/', chartsBase).toString());
+}
+
 // Data update across the selected packs: reload each pack's data, delta-sync its media (see
 // downloadOfflinePack — missing files always, size-drifted files when a pack version changed),
 // then evict cached media/docs the current selection no longer references.
@@ -4134,7 +4225,10 @@ async function syncPackDelta() {
     const cache = await caches.open(DATA_CACHE);
     const referenced = new Set(buildOfflineMediaUrls());
     for (const request of await cache.keys()) {
-      if (isPackMediaOrDocUrl(request.url) && !referenced.has(request.url)) {
+      // Charts are evicted on the same rule as pack media. Their cache keys are token-free
+      // (see chartUrl), so they compare equal to what buildOfflineMediaUrls lists — a token
+      // in the key would make every chart look unreferenced and delete the lot on each sync.
+      if ((isPackMediaOrDocUrl(request.url) || isChartUrl(request.url)) && !referenced.has(request.url)) {
         await cache.delete(request);
       }
     }

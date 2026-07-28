@@ -17,6 +17,15 @@ self.MTC_CONFIG = {
   // headers (Access-Control-Allow-Origin) for the app origins that read it.
   packsBase: '',
 
+  // Absolute base for the Worker that serves aerodrome charts, e.g.
+  //   'https://api.meetthecows.org/'  -> https://api.meetthecows.org/charts/vac/LFNE.pdf
+  // Charts live in a PRIVATE bucket because most of them may not be redistributed (Germany's
+  // DFS and Italy's ENAV grant no such right), so unlike pack media they are not fetched from
+  // packsBase but requested from this Worker with a short-lived token. Empty means "no chart
+  // Worker configured": the app then falls back to each chart's published URL, which is what
+  // every deployment did before the charts moved.
+  chartsBase: '',
+
   // The app's own address and the landing site are NOT here: they are constants in src/app.js
   // (CANONICAL_APP_URL, SITE_URL). They belong in the shell rather than in deploy-time config
   // because the copy that needs them most is the retired one on the old origin, which stops

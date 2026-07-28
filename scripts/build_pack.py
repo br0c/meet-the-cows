@@ -526,6 +526,9 @@ def main() -> None:
     contrib_notes, contrib_photos = merge_contributions(fields, root / "contributions", media_dir)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
 
+    charts_stamped = stamp_chart_keys(fields)
+    print(f"Charts: {charts_stamped} tagged with a private-bucket key", file=sys.stderr)
+
     generated_at = dt.datetime.now(dt.UTC).isoformat()
     version = source_state_version(source_state)
     sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_zip_url, at_zip_date, de_vac_root, de_vac_date, it_vac_dir, it_vac_date)
@@ -905,6 +908,35 @@ def write_media_manifest(out_dir: Path, version: str) -> int:
 # pack component), so a field shared by, say, the France and Alps packs keeps
 # the same id and the app dedupes it when both packs are loaded.
 # ---------------------------------------------------------------------------
+
+# A chart's path inside a pack, and its key in the private charts bucket: docs/vac/LFNE.pdf
+# (or ../_shared/docs/vac/LFNE.pdf once media is shared) -> vac/LFNE.pdf.
+CHART_KEY_RE = re.compile(r"(?:^|/)docs/(vac/[^/]+\.pdf)$", re.I)
+
+
+def stamp_chart_keys(fields: list[dict[str, Any]]) -> int:
+    """Record, on every chart, the key it has in the private charts bucket.
+
+    The published `url` still points at the copy in the public pack tree, so an app shell
+    cached from before the charts moved keeps working exactly as it did. A shell that knows
+    about `chartKey` asks the Worker for that key instead, with a token. Both can be true at
+    once, which is the whole point: the public copies can then be withdrawn on their own
+    schedule rather than in the same instant an app update ships.
+    """
+    stamped = 0
+    for field in fields:
+        for item in field.get("media") or []:
+            match = CHART_KEY_RE.search(clean(item.get("url")))
+            if match:
+                item["chartKey"] = match.group(1)
+                stamped += 1
+        docs = field.get("docs")
+        if isinstance(docs, dict):
+            match = CHART_KEY_RE.search(clean(docs.get("vac")))
+            if match:
+                docs["vacKey"] = match.group(1)
+    return stamped
+
 
 def pack_media_refs(fields: Iterable[dict[str, Any]]) -> set[str]:
     """Pack-relative media/doc paths (media[].url, thumbnailUrl, docs.vac) referenced by

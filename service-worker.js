@@ -22,6 +22,14 @@ const CONFIG = self.MTC_CONFIG || {};
 const DATA_BASE = new URL(withTrailingSlash(CONFIG.packsBase) || './', SCOPE);
 const PACKS_BASE = new URL('packs/', DATA_BASE);
 
+// Aerodrome charts come from a Worker rather than the pack tree (private bucket — most charts
+// carry no redistribution right), and each request carries a short-lived token in the query.
+// The token is deliberately NOT part of the cache key: a chart cached an hour ago must still
+// answer a request made with this hour's token, offline, with no way to mint a new one.
+const CHARTS_BASE = CONFIG.chartsBase ? new URL(withTrailingSlash(CONFIG.chartsBase)) : null;
+const CHARTS_PREFIX = CHARTS_BASE ? new URL('charts/', CHARTS_BASE) : null;
+const CHART_TOKEN_PATH = CHARTS_PREFIX ? `${CHARTS_PREFIX.pathname}token` : '';
+
 const APP_SHELL = [
   u('.'),
   u('index.html'),
@@ -114,6 +122,12 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
 
   const requestUrl = new URL(event.request.url);
+  // Charts before anything else: they are neither in scope nor under the packs base, and the
+  // token endpoint must always reach the network — a cached token is a token that has expired.
+  if (isChartRequest(requestUrl)) {
+    if (requestUrl.pathname !== CHART_TOKEN_PATH) event.respondWith(chartCacheFirst(event.request));
+    return;
+  }
   const packData = isUnderPacksBase(requestUrl);
   if (!packData && !isSameScope(requestUrl)) return;
 
@@ -230,6 +244,32 @@ async function bodiesDiffer(previous, fresh) {
   } catch {
     return false;
   }
+}
+
+function isChartRequest(url) {
+  return !!CHARTS_PREFIX && url.origin === CHARTS_PREFIX.origin
+    && url.pathname.startsWith(CHARTS_PREFIX.pathname);
+}
+
+/**
+ * A chart: answered from the cache whatever token the request carries, and stored without one.
+ *
+ * Both halves matter. Matching with ignoreSearch is what lets a downloaded chart open in the
+ * air, where the token has long expired and no request for a new one can succeed. Storing
+ * under the token-free URL is what keeps the app's own bookkeeping — the download targets,
+ * the "N of M cached" count, the stale-media eviction — able to recognise its own files.
+ */
+async function chartCacheFirst(request) {
+  const cache = await caches.open(DATA_CACHE);
+  const cached = await cache.match(request, { ignoreSearch: true });
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (isCacheable(response)) {
+    const canonical = new URL(request.url);
+    canonical.search = '';
+    await cache.put(canonical.toString(), response.clone());
+  }
+  return response;
 }
 
 async function cacheOnlyFirst(cacheName, request, storeOnMiss = false) {
