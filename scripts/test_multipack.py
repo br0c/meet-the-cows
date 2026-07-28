@@ -1,4 +1,5 @@
-"""Unit tests for pack selection and the Alps geofence (no network)."""
+"""Unit tests for pack selection and the Alps/Pyrenees geofences (no network)."""
+import csv
 import sys
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from packs import (  # noqa: E402
     ALPS_GEOFENCE,
     BUILD_COUNTRIES,
     PACK_DEFINITIONS,
+    PYRENEES_GEOFENCE,
     field_in_pack,
     in_alps,
     point_in_polygon,
@@ -166,6 +168,80 @@ class AlpsSplitTests(unittest.TestCase):
         # cached app shells; the halves are the real offering.
         self.assertTrue(by_id["alps"].get("hidden"))
         self.assertFalse(by_id["alps-west"].get("hidden"))
+
+
+class PyreneesTests(unittest.TestCase):
+    """The Pyrenees pack covers both slopes, Atlantic to Mediterranean, plus the piedmont."""
+
+    PYR = {"id": "pyr", "geofence": "pyrenees"}
+
+    def test_points_inside_the_pyrenees(self):
+        inside = {
+            # Spanish slope and Cerdagne — anchors from the APVV guide.
+            "Lumbier (ES)": (42.66, -1.30),
+            "Santa Cilia (ES)": (42.57, -0.73),
+            "Huesca-Montflorite (ES)": (42.08, -0.31),
+            "Barbastro (ES)": (42.00, 0.09),
+            "La Seu d'Urgell (ES)": (42.34, 1.41),
+            "Alp / La Cerdanya (ES)": (42.39, 1.86),
+            "Ste-Léocadie (FR)": (42.45, 2.01),
+            "La Llagonne (FR)": (42.54, 2.12),
+            # French piedmont pilots fly from.
+            "Pamplona-Noain (ES)": (42.77, -1.65),
+            "Itxassou (FR)": (43.33, -1.42),
+            "Pau (FR)": (43.30, -0.37),
+            "Tarbes (FR)": (43.22, 0.06),
+            "Bagnères-de-Luchon (FR)": (42.80, 0.60),
+            "Puivert (FR)": (42.91, 2.05),
+            "Perpignan (FR)": (42.74, 2.87),
+        }
+        for label, (lat, lon) in inside.items():
+            self.assertTrue(point_in_polygon(lat, lon, PYRENEES_GEOFENCE), f"{label} should be inside")
+
+    def test_points_outside_the_pyrenees(self):
+        outside = {
+            "Toulouse": (43.60, 1.44),
+            "Bordeaux": (44.83, -0.72),
+            "Bilbao": (43.30, -2.93),
+            "Zaragoza": (41.66, -0.89),
+            "Lleida": (41.63, 0.54),
+            "Girona": (41.90, 2.76),
+            "Barcelona": (41.30, 2.08),
+            "Montpellier": (43.58, 3.96),
+        }
+        for label, (lat, lon) in outside.items():
+            self.assertFalse(point_in_polygon(lat, lon, PYRENEES_GEOFENCE), f"{label} should be outside")
+
+    def test_pyrenees_pack_draws_from_both_countries(self):
+        fields = [
+            field("ES", 42.57, -0.73, "Santa Cilia"),
+            field("FR", 42.45, 2.01, "Ste-Léocadie"),
+            field("ES", 41.30, 2.08, "Barcelona"),
+            field("FR", 45.92, 6.87, "Chamonix"),
+        ]
+        names = {f["name"] for f in select_pack_fields(fields, self.PYR)}
+        self.assertEqual(names, {"Santa Cilia", "Ste-Léocadie"})
+
+    def test_spain_is_in_the_build_set(self):
+        # The pyr pack's Spanish slope needs ES pulled into the merged build.
+        self.assertIn("ES", {c.upper() for c in BUILD_COUNTRIES})
+        by_id = {p["id"]: p for p in PACK_DEFINITIONS}
+        self.assertIn("pyr", by_id)
+        self.assertFalse(by_id["pyr"].get("hidden"))
+
+    def test_every_apvv_guide_entry_is_inside_the_geofence(self):
+        # The committed APVV source must be fully covered by the pack that exists to carry
+        # it — a geofence edit that orphans a guide entry should fail here, not in the field.
+        cup = Path(__file__).resolve().parent.parent / "data" / "sources" / "apvv-pyrenees" / "POINTS.cup"
+        rows = list(csv.DictReader(cup.open(encoding="utf-8")))
+        self.assertEqual(len(rows), 27)
+        for row in rows:
+            lat = int(row["lat"][:2]) + float(row["lat"][2:-1]) / 60
+            lon = int(row["lon"][:3]) + float(row["lon"][3:-1]) / 60
+            if row["lon"].endswith("W"):
+                lon = -lon
+            self.assertTrue(point_in_polygon(lat, lon, PYRENEES_GEOFENCE),
+                            f"{row['name']} ({lat:.4f}, {lon:.4f}) outside the Pyrenees geofence")
 
 
 if __name__ == "__main__":

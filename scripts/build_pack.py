@@ -57,12 +57,13 @@ import packs  # noqa: E402
 
 DEFAULT_CUPX_URL = "https://raw.githubusercontent.com/planeur-net/outlanding/main/guide_aires_securite.cupx"
 _OUTLANDING_RAW = "https://raw.githubusercontent.com/planeur-net/outlanding/main"
-# Extra planeur-net CUPs merged with the Guide to broaden coverage. Each keeps "planeur-net" in
-# its source name so note_source_lang and name selection treat it exactly like the Guide (French
-# prose, same priority tier), and each carries its own attribution. Disable any one with
-# 'none'/empty on its flag. NOTE: the upstream repo has no formal licence and these are
-# third-party aggregations (BASULM = basulm.ffplum.fr / FFPLUM) — verify permission before
-# rehosting publicly.
+# Extra CUP/CUPX sources merged with the Guide to broaden coverage. Each source name keeps a
+# word note_source_lang recognises ("planeur-net"/"guide") so its notes are treated as French
+# prose in the Guide's priority tier, and each carries its own attribution. A `url` may also be
+# an in-repo directory (POINTS.cup + Pics/, zipped in memory by read_bytes) for sources we
+# extract ourselves. Disable any one with 'none'/empty on its flag. NOTE: the planeur-net repo
+# has no formal licence and aggregates third parties (BASULM = basulm.ffplum.fr / FFPLUM);
+# verify permission before rehosting publicly.
 EXTRA_CUPS: tuple[dict[str, str], ...] = (
     {
         "dest": "champs_cupx", "flag": "--champs-cupx", "env": "CHAMPS_CUPX",
@@ -77,6 +78,16 @@ EXTRA_CUPS: tuple[dict[str, str], ...] = (
         "source_name": "planeur-net / BASULM terrains ULM", "media_source": "BASULM terrains ULM",
         "help": "planeur-net BASULM ULM-terrains CUP/CUPX (extracted from basulm.ffplum.fr / FFPLUM) merged with the Guide. 'none' or empty disables it.",
         "note": "ULM (microlight) landing fields from basulm.ffplum.fr (FFPLUM), gliding-filtered by planeur-net; verify FFPLUM/BASULM permission/licence before rehosting publicly.",
+    },
+    {
+        "dest": "apvv_cupx", "flag": "--apvv-cupx", "env": "APVV_CUPX",
+        # In-repo directory, extracted from the guide PDF by scripts/extract_pyr_guide.py.
+        "url": str(Path(__file__).resolve().parent.parent / "data" / "sources" / "apvv-pyrenees"),
+        "display_url": "https://github.com/br0c/meet-the-cows/tree/main/data/sources/apvv-pyrenees",
+        "source_name": "APVV / Guide des champs pyrénéens (2008)",
+        "media_source": "APVV Guide des champs pyrénéens",
+        "help": "APVV Guide des champs pyrénéens: in-repo CUP directory extracted from the 2008 guide PDF (scripts/extract_pyr_guide.py). 'none' or empty disables it.",
+        "note": "Pyrenees outlanding fields and aerodromes (Spanish slope and Cerdagne) from the 2008 APVV guide, courtesy of APVV. Unrated and dated — verify before relying on them; frequencies were dropped as outdated. Photos are the clubs' own.",
     },
 )
 OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
@@ -154,6 +165,11 @@ MAJOR_AIRFIELD_ICAO = {
     "LFMY",  # Salon-de-Provence (BA 701 military)
     "LFTF",  # Cuers-Pierrefeu (naval air station)
 }
+# Airports over the length threshold that a landing-options source nonetheless lists as
+# genuinely landable — the one exception class the length rule gets wrong. LEHC: 2100 m paved
+# but near-zero commercial traffic, home to glider operations, and listed as a landing option
+# by the APVV Pyrenees guide.
+MAJOR_AIRFIELD_KEEP_ICAO = {"LEHC"}
 
 # DeepL translation of German notes. Configured in main(); when no key is
 # available the code falls back to the offline GERMAN_PHRASES dictionary.
@@ -188,7 +204,9 @@ _DEEPL_LOCK = threading.Lock()
 #      by two sources is merged on runway heading + elevation + position. Both change what the
 #      pack contains, so the fingerprint has to move or the incremental check would decide
 #      nothing had happened and keep serving the old pack.
-PACK_SCHEMA_VERSION = 18
+# v19: Pyrenees pack (both slopes) from the in-repo APVV guide source plus OpenAIP ES import;
+#      per-pack extra notices in manifests.
+PACK_SCHEMA_VERSION = 19
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -688,7 +706,21 @@ def read_bytes(url_or_path: str, raw_dir: Path) -> bytes:
         if progress_box:
             progress_box[0].done(f"{len(data) / 1024 / 1024:.1f} MB")
         return data
-    return Path(url_or_path).read_bytes()
+    path = Path(url_or_path)
+    if path.is_dir():
+        return zip_directory(path)
+    return path.read_bytes()
+
+
+def zip_directory(path: Path) -> bytes:
+    """An in-repo CUPX source: a directory holding POINTS.cup plus its Pics/, zipped in memory
+    so it flows through extract_cup_and_pictures exactly like the downloaded ones."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        for child in sorted(path.rglob("*")):
+            if child.is_file():
+                archive.writestr(child.relative_to(path).as_posix(), child.read_bytes())
+    return buffer.getvalue()
 
 
 def read_text(url_or_path: str, raw_dir: Path) -> str:
@@ -734,7 +766,11 @@ def prune_source_cache(raw_dir: Path, *, at_zip_date: str = "", de_vac_date: str
 # --- Incremental build (Level 0): fingerprint the sources to skip unchanged rebuilds ---
 
 def source_version_tag(url_or_path: str) -> str:
-    """Cheap change signal for a remote/local file: ETag/Last-Modified, or size+mtime."""
+    """Cheap change signal: ETag/Last-Modified for URLs, content hash for local paths.
+
+    Local paths hash content rather than size+mtime because CI starts from a fresh clone —
+    checkout stamps every file with clone time, so an mtime tag would fake a source change on
+    every run and defeat the Level-0 incremental skip for in-repo sources."""
     if re.match(r"^https?://", url_or_path, re.I):
         try:
             request = urllib.request.Request(url_or_path, method="HEAD")
@@ -745,9 +781,15 @@ def source_version_tag(url_or_path: str) -> str:
             print(f"version check failed for {url_or_path}: {error}", file=sys.stderr)
             return ""
     path = Path(url_or_path)
+    if path.is_dir():
+        digest = hashlib.sha256()
+        for child in sorted(path.rglob("*")):
+            if child.is_file():
+                digest.update(child.relative_to(path).as_posix().encode())
+                digest.update(child.read_bytes())
+        return f"dir-{digest.hexdigest()[:16]}"
     if path.exists():
-        stat = path.stat()
-        return f"{stat.st_size}-{int(stat.st_mtime)}"
+        return f"sha-{hashlib.sha256(path.read_bytes()).hexdigest()[:16]}"
     return ""
 
 
@@ -966,7 +1008,7 @@ def write_pack(
         "sizeBytes": len(fields_bytes) + media_bytes,
         "selector": pack_selector_label(pack_def),
         "sources": sources,
-        "notices": notices,
+        "notices": [*notices, *pack_def.get("extraNotices", [])],
     }
     (pack_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     if not shared_media:
@@ -1022,7 +1064,10 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
         *[
             {
                 "name": spec["source_name"],
-                "url": str(getattr(args, spec["dest"])) if (getattr(args, spec["dest"], "") or "").strip().lower() not in ("", "none") else "not used",
+                # display_url keeps local-path sources (in-repo directories) from leaking a
+                # build-machine path into the published manifest.
+                "url": ("not used" if (getattr(args, spec["dest"], "") or "").strip().lower() in ("", "none")
+                        else spec.get("display_url") or str(getattr(args, spec["dest"]))),
                 "note": spec["note"],
             }
             for spec in EXTRA_CUPS
@@ -3261,8 +3306,11 @@ def is_major_airport(field: dict[str, Any]) -> bool:
     """
     if clean(field.get("kind")) != "airfield":
         return False
-    if clean(field.get("code")).upper() in MAJOR_AIRFIELD_ICAO:
+    code = clean(field.get("code")).upper()
+    if code in MAJOR_AIRFIELD_ICAO:
         return True
+    if code in MAJOR_AIRFIELD_KEEP_ICAO:
+        return False
     length = field.get("lengthM")
     return isinstance(length, (int, float)) and length >= MAJOR_AIRFIELD_MIN_RUNWAY_M
 

@@ -35,6 +35,7 @@ project builds on. In particular:
 | SIA — Service de l'Information Aéronautique (VAC documents) | [Licence Ouverte](https://www.etalab.gouv.fr/licence-ouverte-open-licence/) — freely reusable with attribution; cycle-specific documents |
 | OpenAIP (airfield records) | [OpenAIP terms](https://www.openaip.net) apply to their records |
 | planeur-net (outlanding fields) | |
+| APVV — Guide des champs pyrénéens, 2008 (Pyrenees fields, club photos) | Used with access granted to the project; only the clubs' own photos are reproduced — the guide's Google Earth and Michelin excerpts are not |
 | OurAirports (airport/runway coordinates) | Public domain |
 | Community contributions (pilot notes & photos) | © their authors, licensed to this project for publication with the field data via the in-app consent |
 

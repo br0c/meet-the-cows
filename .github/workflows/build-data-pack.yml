@@ -5,11 +5,15 @@ on:
     branches: [main]
     paths:
       - "scripts/build_pack.py"
+      - "scripts/packs.py"
       - "scripts/smoke_test_pack.py"
       - "requirements.txt"
       - ".github/workflows/build-data-pack.yml"
       # Merging a community-contribution PR must rebuild + redeploy the pack.
       - "contributions/**"
+      # In-repo pack sources (e.g. the APVV Pyrenees guide extraction) work like
+      # contributions: editing them must rebuild + redeploy.
+      - "data/sources/**"
   workflow_dispatch:
     inputs:
       force_full:
@@ -243,6 +247,7 @@ jobs:
         run: |
           python scripts/smoke_test_pack.py data/packs/alps-west
           python scripts/smoke_test_pack.py data/packs/alps-east
+          python scripts/smoke_test_pack.py data/packs/pyr
 
       # Durable layer 2: commit the updated cache to the repo. Only fires when the build added
       # translations (git diff check), and the commit touches only data/translation-cache.json,

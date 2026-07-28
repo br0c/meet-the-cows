@@ -54,6 +54,33 @@ ALPS_GEOFENCE: tuple[tuple[float, float], ...] = (
 )
 
 
+# The Pyrenees chain with the forelands on both sides, Atlantic to Mediterranean, drawn on
+# the same principle as the Alps outline: include the flatland pilots actually use to reach
+# the mountains — the Pau/Tarbes/Saint-Gaudens piedmont, the Aude gap down to the coast,
+# the Empordà, the Segre/Somontano edge (keeps Huesca and Barbastro), and the Pamplona
+# basin — while excluding the Ebro valley floor (Zaragoza, Lleida), the Toulouse area and
+# the Atlantic industrial coast (Bilbao). Tune vertices, not the algorithm.
+PYRENEES_GEOFENCE: tuple[tuple[float, float], ...] = (
+    (43.60, -1.80),  # Atlantic coast (Bayonne / Biarritz)
+    (43.55, -1.20),  # Basque foothills
+    (43.45, -0.60),  # Pau foreland
+    (43.45, 0.20),   # Tarbes
+    (43.40, 0.80),   # Saint-Gaudens piedmont
+    (43.35, 1.50),   # Lauragais (Toulouse stays out)
+    (43.30, 2.20),   # Carcassonne fringe
+    (43.05, 2.60),   # Corbières
+    (42.95, 3.10),   # Mediterranean coast north of Perpignan
+    (42.40, 3.25),   # Côte Vermeille / Cap de Creus
+    (42.05, 3.05),   # Empordà coast
+    (41.90, 2.20),   # SE pre-Pyrenees (Vic)
+    (41.75, 1.20),   # Segre plain edge (Lleida out)
+    (41.75, 0.20),   # Somontano edge (Zaragoza out)
+    (41.85, -0.55),  # Hoya de Huesca (keeps Montflorite / Ayerbe in)
+    (42.20, -1.60),  # southern Navarra (keeps Pamplona in)
+    (43.20, -2.00),  # Basque interior (San Sebastián; Bilbao out)
+)
+
+
 def point_in_polygon(lat: float, lon: float, polygon: Sequence[tuple[float, float]]) -> bool:
     """Ray-casting point-in-polygon test. Polygon vertices are (lat, lon); x=lon, y=lat."""
     inside = False
@@ -71,16 +98,26 @@ def point_in_polygon(lat: float, lon: float, polygon: Sequence[tuple[float, floa
     return inside
 
 
-def in_alps(field: dict[str, Any]) -> bool:
-    """True when a field's coordinates fall inside the Alps geofence."""
+def in_geofence(field: dict[str, Any], polygon: Sequence[tuple[float, float]]) -> bool:
+    """True when a field's coordinates fall inside `polygon`."""
     lat = field.get("latitude")
     lon = field.get("longitude")
     if lat is None or lon is None:
         return False
     try:
-        return point_in_polygon(float(lat), float(lon), ALPS_GEOFENCE)
+        return point_in_polygon(float(lat), float(lon), polygon)
     except (TypeError, ValueError):
         return False
+
+
+def in_alps(field: dict[str, Any]) -> bool:
+    """True when a field's coordinates fall inside the Alps geofence."""
+    return in_geofence(field, ALPS_GEOFENCE)
+
+
+def in_pyrenees(field: dict[str, Any]) -> bool:
+    """True when a field's coordinates fall inside the Pyrenees geofence."""
+    return in_geofence(field, PYRENEES_GEOFENCE)
 
 
 # The Alps pack ships as two overlapping halves so pilots download only the side they fly.
@@ -111,6 +148,13 @@ PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {"id": "at", "names": {"en": "Austria", "fr": "Autriche", "de": "Österreich"}, "countries": ("AT",)},
     {"id": "alps-west", "names": {"en": "Western Alps", "fr": "Alpes occidentales", "de": "Westalpen"}, "geofence": "alps-west"},
     {"id": "alps-east", "names": {"en": "Eastern Alps", "fr": "Alpes orientales", "de": "Ostalpen"}, "geofence": "alps-east"},
+    # Both slopes of the chain. The Spanish side comes mostly from the APVV guide (2008),
+    # which rates nothing — those fields ship UNKNOWN, and the app hides unrated fields
+    # unless both C and D are enabled, hence the pack-specific notice.
+    {"id": "pyr", "names": {"en": "Pyrenees", "fr": "Pyrénées", "de": "Pyrenäen"}, "geofence": "pyrenees",
+     "extraNotices": [
+         "Spanish-side fields come from the APVV Guide des champs pyrénéens (2008): they carry no difficulty rating (enable both C and D fields in Settings to see them) and their details are dated — check current conditions.",
+     ]},
     # Transitional alias for app shells cached from before the West/East split: those shells
     # resolve a stored 'alps' selection against packs.json and would otherwise fall back to the
     # France pack AND persist that, permanently destroying the pilot's Alps selection. Hidden
@@ -120,7 +164,8 @@ PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
 )
 
 # Every country a build must pull so the packs above can be sliced from one merged field set.
-BUILD_COUNTRIES: tuple[str, ...] = ("FR", "CH", "DE", "IT", "AT")
+# ES has no country pack (yet): it is pulled for the Pyrenees geofence pack's Spanish slope.
+BUILD_COUNTRIES: tuple[str, ...] = ("FR", "CH", "DE", "IT", "AT", "ES")
 
 
 def field_in_pack(field: dict[str, Any], pack: dict[str, Any]) -> bool:
@@ -135,6 +180,8 @@ def field_in_pack(field: dict[str, Any], pack: dict[str, Any]) -> bool:
         return in_alps_band(field, max_lon=ALPS_WEST_MAX_LON)
     if geofence == "alps-east":
         return in_alps_band(field, min_lon=ALPS_EAST_MIN_LON)
+    if geofence == "pyrenees":
+        return in_pyrenees(field)
     return False
 
 
