@@ -163,35 +163,16 @@ check('terrain starts off, so the baseline is the straight line',
 await page.click('#settingsToggle');
 await page.waitForSelector('#terrainRouting');
 
-// Switching it on is gated: the feature changes which fields the app calls reachable, so the
-// pilot is told what it is and what remains theirs before any of it takes effect.
+// No consent gate any more: the routed glide is the conservative option, so the switch just
+// switches. The "Experimental" tag on the card is the label that remains — assert it survived,
+// because it is now the only caveat a pilot sees.
+check('the terrain card still says Experimental',
+  /experimental/i.test(await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText)));
 await page.click('#terrainRouting');
-await page.waitForSelector('#terrainConsentBackdrop', { timeout: 3000 });
-const consent = await page.$eval('#terrainConsentBackdrop', el => el.innerText);
-check('enabling terrain asks first', consent.length > 0);
-check('the warning says it is experimental and can be wrong',
-  /experimental/i.test(consent) && /wrong/i.test(consent));
-check('the warning leaves trajectory and landing choice with the pilot',
-  /solely responsible/i.test(consent) && /trajectory/i.test(consent) && /landing site/i.test(consent));
-check('the switch does not show "on" while the warning is up',
-  (await page.$eval('#terrainRouting', el => el.checked)) === false);
-check('nothing is routed until the warning is accepted',
-  (await page.evaluate(() => window.__mtcState.settings.terrainRouting)) === false);
-
-// Declining leaves it exactly as it was.
-await page.click('#terrainConsentCancel');
 await page.waitForTimeout(300);
-check('declining the warning leaves terrain off',
-  (await page.evaluate(() => window.__mtcState.settings.terrainRouting)) === false);
-
-await page.click('#terrainRouting');
-await page.waitForSelector('#terrainConsentAccept', { timeout: 3000 });
-await page.click('#terrainConsentAccept');
-await page.waitForTimeout(300);
-check('accepting the warning turns terrain on',
+check('flipping the switch turns terrain on directly',
   (await page.evaluate(() => window.__mtcState.settings.terrainRouting)) === true);
-check('the acknowledgement is remembered so the old default cannot come back silently',
-  (await page.evaluate(() => JSON.parse(localStorage.getItem('mtc-settings-v2')).terrainAcknowledged)) === true);
+check('no consent sheet appeared', await page.$('#terrainConsentBackdrop') === null);
 
 await page.click('#settingsToggle');
 await page.waitForSelector('.field-row');

@@ -100,7 +100,10 @@ a { color: var(--accent); }
 
 /* Floating offline-download progress bar: fixed so it stays put and updates in place while the
    rest of the app (search, list) remains fully usable. */
-.offline-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+/* Above the list and the sticky header (3), but BELOW every sheet (.detail-backdrop 10,
+   .contrib-backdrop 20): the bar is passive status, sheets need their bottom buttons pressed,
+   and at its old z-index 30 the bar sat exactly on top of them during a download. */
+.offline-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); display: grid; gap: 5px;
   background: rgba(17,24,39,.97); border-top: 1px solid var(--line); backdrop-filter: blur(8px); }
 .offline-bar-track { height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }

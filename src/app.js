@@ -139,7 +139,6 @@ const DEFAULT_SETTINGS = {
   // the app calls reachable, from data that is coarse and a solver that is new — that is not a
   // thing to switch on for someone while they are not looking.
   terrainRouting: false,
-  terrainAcknowledged: false,
   terrainClearanceM: 200,
 };
 
@@ -311,15 +310,6 @@ const STRINGS = {
     routeLimitedByCol: (name, elev, dist) => `Tightest over ${name}, ${elev}, ${dist} away.`,
     cancel: 'Cancel',
     terrainExperimental: 'Experimental',
-    terrainConsentTitle: 'Experimental feature',
-    terrainConsentBody: 'Terrain-routed glide is experimental and can be wrong. It changes which '
-      + 'fields this app calls reachable. You remain solely responsible for your choice of '
-      + 'trajectory and of landing site.',
-    terrainConsentDetail: 'The path is arithmetic on a coarse elevation grid — about 92 m per '
-      + 'cell — and knows nothing of wind, sink, airspace, obstacles or your aircraft. It is not '
-      + 'a route to fly and not a clearance to fly it. Cross-check every figure against your own '
-      + 'judgement, your navigation tools and what you can see.',
-    terrainConsentAccept: 'I understand — enable',
     routeCrossing: (above, clears) => `${above} below you now; the glide clears it by ${clears}.`,
     routeAbove: above => `${above} below you now.`,
     routeProfileKey: c => `Ground along the route, the ${c} m clearance line above it, and the glide at the ratio shown — the two meet at the marked point.`,
@@ -484,16 +474,6 @@ const STRINGS = {
     routeLimitedByCol: (name, elev, dist) => `Point critique au-dessus de ${name}, ${elev}, à ${dist}.`,
     cancel: 'Annuler',
     terrainExperimental: 'Expérimental',
-    terrainConsentTitle: 'Fonction expérimentale',
-    terrainConsentBody: 'Le calcul de finesse en contournant le relief est expérimental et peut '
-      + 'être erroné. Il change les terrains que cette application déclare atteignables. Vous '
-      + 'restez seul responsable du choix de votre trajectoire et de votre terrain d\'atterrissage.',
-    terrainConsentDetail: "Le trajet n'est qu'un calcul sur une grille d'altitudes grossière — "
-      + "environ 92 m par maille — qui ignore le vent, les descendances, l'espace aérien, les "
-      + "obstacles et votre planeur. Ce n'est ni une route à suivre ni une autorisation de la "
-      + 'suivre. Recoupez chaque chiffre avec votre propre jugement, vos moyens de navigation et '
-      + 'ce que vous voyez.',
-    terrainConsentAccept: "J'ai compris — activer",
     routeCrossing: (above, clears) => `${above} sous vous ; le trajet passe ${clears} au-dessus.`,
     routeAbove: above => `${above} sous vous.`,
     routeProfileKey: c => `Le relief le long du trajet, la ligne de garde de ${c} m au-dessus, et la pente à la finesse affichée — les deux se rejoignent au point marqué.`,
@@ -658,15 +638,6 @@ const STRINGS = {
     routeLimitedByCol: (name, elev, dist) => `Engste Stelle über ${name}, ${elev}, ${dist} entfernt.`,
     cancel: 'Abbrechen',
     terrainExperimental: 'Experimentell',
-    terrainConsentTitle: 'Experimentelle Funktion',
-    terrainConsentBody: 'Die Gleitzahl um das Gelände herum ist experimentell und kann falsch '
-      + 'sein. Sie ändert, welche Felder diese App als erreichbar bezeichnet. Die Verantwortung '
-      + 'für die Wahl von Flugweg und Landefeld bleibt allein bei dir.',
-    terrainConsentDetail: 'Der Pfad ist Rechnerei auf einem groben Höhenraster — etwa 92 m pro '
-      + 'Zelle — und weiss nichts von Wind, Sinken, Luftraum, Hindernissen oder deinem Flugzeug. '
-      + 'Er ist keine zu fliegende Route und keine Freigabe, sie zu fliegen. Prüfe jede Zahl '
-      + 'gegen dein eigenes Urteil, deine Navigationsmittel und das, was du siehst.',
-    terrainConsentAccept: 'Verstanden — einschalten',
     routeCrossing: (above, clears) => `${above} unter dir; der Pfad bleibt ${clears} darüber.`,
     routeAbove: above => `${above} unter dir.`,
     routeProfileKey: c => `Das Gelände entlang des Pfades, die ${c} m Freiheitslinie darüber und der Gleitpfad zur angezeigten Zahl — beide treffen sich am markierten Punkt.`,
@@ -866,7 +837,6 @@ let state = {
   contribFor: null,
   showNewField: false,
   showBugReport: false,
-  showTerrainConsent: false,
   releaseNotes: [],
   showReleaseNotes: false,
   updateNoteAvailable: false,
@@ -971,7 +941,6 @@ function loadSettings() {
     // Terrain routing shipped on by default before it was gated behind a warning, so a stored
     // `true` may predate the warning entirely. Anyone in that state gets it switched off and is
     // asked properly, rather than keeping a setting they were never shown the terms of.
-    if (settings.terrainRouting && !settings.terrainAcknowledged) settings.terrainRouting = false;
     // "Hide C/D fields", on by default, became "Show C/D fields", off by default: the same
     // behaviour said the way every other switch says itself. The stored value is the negation,
     // and it has to be read here — the line below keeps only keys that exist in DEFAULT_SETTINGS,
@@ -2155,14 +2124,13 @@ function render() {
       ${renderNewField()}
       ${state.showReleaseNotes ? renderReleaseNotes() : ''}
       ${renderMigrationSheet()}
-      ${renderTerrainConsentSheet()}
       ${renderBugReport()}
       ${renderOfflineBar()}
     </div>
   `;
   // Lock background scroll while an overlay is open, so scrolling a short bottom-sheet doesn't
   // fall through to the list behind it.
-  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport || state.showMigrationSheet || state.showTerrainConsent));
+  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport || state.showMigrationSheet));
   attachEvents();
   requestAnimationFrame(() => {
     const detail = document.querySelector('.detail');
@@ -2296,22 +2264,6 @@ function renderMigrationBanner() {
  * reachable, and the moment a pilot chooses to trust it is the moment worth interrupting. Turning
  * it off is never gated — only turning it on.
  */
-function renderTerrainConsentSheet() {
-  if (!state.showTerrainConsent) return '';
-  return `
-    <div class="detail-backdrop" id="terrainConsentBackdrop">
-      <article class="detail" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('terrainConsentTitle'))}">
-        <div class="detail-title-row"><h2>⚠︎ ${escapeHtml(t('terrainConsentTitle'))}</h2></div>
-        <div class="mig-warn"><span>${escapeHtml(t('terrainConsentBody'))}</span></div>
-        <p class="settings-note">${escapeHtml(t('terrainConsentDetail'))}</p>
-        <div class="button-row">
-          <button id="terrainConsentCancel">${escapeHtml(t('cancel'))}</button>
-          <button class="primary" id="terrainConsentAccept">${escapeHtml(t('terrainConsentAccept'))}</button>
-        </div>
-      </article>
-    </div>`;
-}
-
 function renderMigrationSheet() {
   if (!MIGRATION || !state.showMigrationSheet) return '';
   const step = (n, title, note) => `
@@ -3781,30 +3733,17 @@ function attachEvents() {
     render();
   });
   document.querySelector('#terrainRouting')?.addEventListener('change', e => {
-    // Switching it off is immediate; switching it on asks first. The switch is put back where it
-    // was so the control never shows a state the app is not actually in while the sheet is up.
-    if (e.target.checked) {
-      e.target.checked = false;
-      state.showTerrainConsent = true;
+    // No consent sheet: the routed glide is the conservative option (max-pooled terrain, the
+    // clearance ramp, and it refuses what it cannot prove), so a warning would guard the wrong
+    // thing. The "Experimental" tag on the card is the honest label, and it stays.
+    if (!e.target.checked) {
+      state.settings.terrainRouting = false;
+      saveSettings();
+      invalidateTerrainRoutes();
       render();
       return;
     }
-    state.settings.terrainRouting = false;
-    saveSettings();
-    invalidateTerrainRoutes();
-    render();
-  });
-  document.querySelector('#terrainConsentCancel')?.addEventListener('click', () => {
-    state.showTerrainConsent = false;
-    render();
-  });
-  document.querySelector('#terrainConsentBackdrop')?.addEventListener('click', e => {
-    if (e.target.id === 'terrainConsentBackdrop') { state.showTerrainConsent = false; render(); }
-  });
-  document.querySelector('#terrainConsentAccept')?.addEventListener('click', () => {
-    state.showTerrainConsent = false;
     state.settings.terrainRouting = true;
-    state.settings.terrainAcknowledged = true;
     saveSettings();
     // Switching it on is a fresh start: whatever the network refused last time is worth one more
     // try, since the pilot is asking for terrain now and may well be somewhere else than they were.
