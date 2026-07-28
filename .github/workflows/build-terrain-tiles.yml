@@ -97,9 +97,23 @@ jobs:
 
       # Named cols come from a different source on a different schedule, and a failure here must
       # not cost the tile build — the app falls back to a geometric description without them.
+      #
+      # Baseline BEFORE the crawl, from production's published copy: the restored tile cache
+      # can carry a cols.json as old as the last run that managed to SAVE a cache (cache keys
+      # are immutable, so a failed-crawl run's stale file can sit in the cache forever), and a
+      # crawl failure used to publish that relic over newer published cols. With the baseline,
+      # the worst a failed crawl can do is republish production's current cols — for either
+      # channel, since cols are channel-independent (the regions come from the same tiles).
       - name: Fetch named cols and passes
         continue-on-error: true
         run: |
+          if [ -n "${{ vars.PACKS_BASE_URL }}" ]; then
+            curl -sSf -A "meet-the-cows col fetcher" \
+              "${{ vars.PACKS_BASE_URL }}packs/_terrain/cols.json" \
+              -o data/packs/_terrain/cols.json \
+              && echo "baseline: published production cols" \
+              || echo "no published cols to baseline from"
+          fi
           python scripts/fetch_cols.py \
             ${{ inputs.bbox != '' && format('--bbox {0}', inputs.bbox) || '' }} \
             --out data/packs
