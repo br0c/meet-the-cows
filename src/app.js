@@ -138,7 +138,11 @@ const DEFAULT_SETTINGS = {
   // Off until the pilot turns it on and accepts what it is. Terrain routing changes which fields
   // the app calls reachable, from data that is coarse and a solver that is new — that is not a
   // thing to switch on for someone while they are not looking.
-  terrainRouting: false,
+  // On by default: the routed glide is the conservative option (max-pooled terrain, the
+  // clearance ramp, refusal of anything unproven), so straight-line-by-default was defending
+  // the wrong thing. Stored settings win over this default, so it reaches fresh installs and
+  // resets only — nobody who chose "off" is flipped back on.
+  terrainRouting: true,
   terrainClearanceM: 200,
 };
 
