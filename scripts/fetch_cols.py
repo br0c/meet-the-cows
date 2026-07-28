@@ -10,6 +10,7 @@ description the app falls back to, so it would be bytes for nothing.
 
 Output: <out>/_terrain/cols.json, beside the tiles it annotates.
 
+  python scripts/fetch_cols.py --out data/packs             # every configured region
   python scripts/fetch_cols.py --bbox 43 5 49 17 --out data/packs
 """
 
@@ -24,6 +25,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_terrain_tiles import DEFAULT_BBOXES  # noqa: E402 - cols cover the same regions as the tiles
 
 # Mirrors, tried in order. Overpass instances rate-limit and go down; one bad day should not fail
 # a build that is only decorating a feature.
@@ -74,7 +78,9 @@ def parse_elevation(raw: object) -> int | None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bbox", nargs=4, type=float, metavar=("S", "W", "N", "E"),
-                        default=[43, 5, 49, 17], help="Bounding box, south west north east")
+                        action="append", default=None,
+                        help="Bounding box, south west north east. May be repeated. "
+                             "Default: every configured region (Alps + Pyrenees).")
     parser.add_argument("--out", default="data/packs", help="Packs root; writes <out>/_terrain/cols.json")
     parser.add_argument("--timeout", type=int, default=300, help="Overpass server-side timeout")
     parser.add_argument("--chunk", type=float, default=2.0,
@@ -82,47 +88,49 @@ def main() -> None:
                              "or times out on very large areas.")
     args = parser.parse_args()
 
-    south, west, north, east = args.bbox
+    bboxes = [tuple(b) for b in args.bbox] if args.bbox else list(DEFAULT_BBOXES)
     out_dir = Path(args.out) / "_terrain"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     seen: dict[tuple[int, int], dict] = {}
-    lat = south
-    while lat < north:
-        lon = west
-        lat_to = min(lat + args.chunk, north)
-        while lon < east:
-            lon_to = min(lon + args.chunk, east)
-            query = QUERY.format(timeout=args.timeout, south=lat, west=lon, north=lat_to, east=lon_to)
-            print(f"chunk {lat},{lon} .. {lat_to},{lon_to}", file=sys.stderr)
-            data = fetch(query, args.timeout)
-            for element in data.get("elements", []):
-                name = (element.get("tags") or {}).get("name", "").strip()
-                if not name:
-                    continue
-                latitude, longitude = element.get("lat"), element.get("lon")
-                if latitude is None or longitude is None:
-                    continue
-                # Key on rounded position rather than OSM id: the same col is often mapped twice,
-                # once as a saddle and once as a pass, and two chips for one place reads as a bug.
-                key = (round(latitude * 2000), round(longitude * 2000))
-                if key in seen:
-                    continue
-                entry = {"name": name, "lat": round(latitude, 5), "lon": round(longitude, 5)}
-                elevation = parse_elevation((element.get("tags") or {}).get("ele"))
-                if elevation is not None:
-                    entry["elevationM"] = elevation
-                seen[key] = entry
-            lon = lon_to
-            time.sleep(2)  # be a good citizen; these are free public servers
-        lat = lat_to
+    for south, west, north, east in bboxes:
+        lat = south
+        while lat < north:
+            lon = west
+            lat_to = min(lat + args.chunk, north)
+            while lon < east:
+                lon_to = min(lon + args.chunk, east)
+                query = QUERY.format(timeout=args.timeout, south=lat, west=lon, north=lat_to, east=lon_to)
+                print(f"chunk {lat},{lon} .. {lat_to},{lon_to}", file=sys.stderr)
+                data = fetch(query, args.timeout)
+                for element in data.get("elements", []):
+                    name = (element.get("tags") or {}).get("name", "").strip()
+                    if not name:
+                        continue
+                    latitude, longitude = element.get("lat"), element.get("lon")
+                    if latitude is None or longitude is None:
+                        continue
+                    # Key on rounded position rather than OSM id: the same col is often mapped
+                    # twice, once as a saddle and once as a pass, and two chips for one place
+                    # reads as a bug.
+                    key = (round(latitude * 2000), round(longitude * 2000))
+                    if key in seen:
+                        continue
+                    entry = {"name": name, "lat": round(latitude, 5), "lon": round(longitude, 5)}
+                    elevation = parse_elevation((element.get("tags") or {}).get("ele"))
+                    if elevation is not None:
+                        entry["elevationM"] = elevation
+                    seen[key] = entry
+                lon = lon_to
+                time.sleep(2)  # be a good citizen; these are free public servers
+            lat = lat_to
 
     cols = sorted(seen.values(), key=lambda c: (c["lat"], c["lon"]))
     payload = {
         "schemaVersion": 1,
         "generatedAt": dt.datetime.now(dt.UTC).isoformat(),
         "attribution": ATTRIBUTION,
-        "bbox": [south, west, north, east],
+        "bboxes": [list(b) for b in bboxes],
         "count": len(cols),
         "cols": cols,
     }

@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       bbox:
-        description: "Bounding box as 'south west north east' in degrees"
+        description: "Bounding box as 'south west north east' in degrees. Empty = every configured region (see DEFAULT_BBOXES in build_terrain_tiles.py: Alps + Pyrenees)."
         type: string
-        default: "43 5 49 17"
+        default: ""
       dem:
         description: "Copernicus product: glo30 (pooled 3x3, conservative) or glo90 (lighter)"
         type: choice
@@ -62,18 +62,22 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: data/packs/_terrain
-          key: terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-${{ inputs.bbox }}
+          key: terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-${{ inputs.bbox || 'default' }}
           restore-keys: |
             terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-
             terrain-${{ inputs.dem }}-
 
+      # --merge-index-url keeps the written index a superset of what is already published: on a
+      # cold cache a bbox-limited run rebuilds only its own region, and without the merge the
+      # index would unlist every other region's tiles — the app treats an unlisted tile as gone.
       - name: Build tiles
         run: |
           python scripts/build_terrain_tiles.py \
-            --bbox ${{ inputs.bbox }} \
+            ${{ inputs.bbox != '' && format('--bbox {0}', inputs.bbox) || '' }} \
             --dem "${{ inputs.dem }}" \
             --out data/packs \
             --jobs 6 \
+            ${{ vars.PACKS_BASE_URL != '' && format('--merge-index-url {0}packs/_terrain/index.json', vars.PACKS_BASE_URL) || '' }} \
             ${{ inputs.force && '--force' || '' }}
 
       # Named cols come from a different source on a different schedule, and a failure here must
@@ -82,7 +86,7 @@ jobs:
         continue-on-error: true
         run: |
           python scripts/fetch_cols.py \
-            --bbox ${{ inputs.bbox }} \
+            ${{ inputs.bbox != '' && format('--bbox {0}', inputs.bbox) || '' }} \
             --out data/packs
 
       - name: Verify the tiles decode
@@ -97,9 +101,15 @@ jobs:
 
           root = Path("data/packs/_terrain")
           index = json.loads((root / "index.json").read_text())
-          bad = 0
+          bad = kept = 0
           for entry in index["tiles"]:
-              blob = (root / f"{entry['key']}.terr").read_bytes()
+              path = root / f"{entry['key']}.terr"
+              if not path.exists():
+                  # Merged from the published index (see --merge-index-url): already live and
+                  # already serving, so there is nothing local to check — or to re-upload.
+                  kept += 1
+                  continue
+              blob = path.read_bytes()
               try:
                   tile = decode(blob)
               except ValueError as error:
@@ -110,7 +120,8 @@ jobs:
               if (tile.lat0, tile.lon0) != (lat0, lon0):
                   print(f"{entry['key']}: header says {tile.lat0},{tile.lon0}", file=sys.stderr)
                   bad += 1
-          print(f"{index['tileCount']} tiles, {index['totalBytes']:,} bytes, {bad} bad")
+          print(f"{index['tileCount']} tiles ({kept} kept from the published index), "
+                f"{index['totalBytes']:,} bytes, {bad} bad")
           sys.exit(1 if bad else 0)
           PY
 
@@ -119,7 +130,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: data/packs/_terrain
-          key: terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-${{ inputs.bbox }}
+          key: terrain-${{ inputs.dem }}-${{ hashFiles('scripts/build_terrain_tiles.py', 'scripts/terrain_format.py') }}-${{ inputs.bbox || 'default' }}
 
       - name: Publish to R2
         if: ${{ inputs.publish && vars.PACKS_BASE_URL != '' }}

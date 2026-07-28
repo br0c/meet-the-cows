@@ -23,8 +23,8 @@ Source: Copernicus DEM, ESA / Sinergise, distributed by AWS Open Data.
   https://registry.opendata.aws/copernicus-dem/
 
 Examples:
-  # The Alps, the same box scripts/packs.py geofences
-  python scripts/build_terrain_tiles.py --bbox 43 5 49 17 --out data/packs
+  # Every configured region (see DEFAULT_BBOXES: the Alps and the Pyrenees)
+  python scripts/build_terrain_tiles.py --out data/packs
   # One tile, from the lighter 90 m product, for a quick local try
   python scripts/build_terrain_tiles.py --bbox 45 6 46 7 --dem glo90 --out data/packs
 """
@@ -46,7 +46,16 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from terrain_format import NODATA, Tile, encode, tile_key  # noqa: E402
+from terrain_format import NODATA, Tile, encode, parse_tile_key, tile_key  # noqa: E402
+
+# The regions the app routes over, as (south, west, north, east) in degrees, snapped outward
+# to whole tiles by the build. Named regions rather than one enclosing rectangle: a single box
+# around both ranges would also cover the Massif Central and the Bay of Biscay — dozens of
+# tiles downloaded, stored and shipped for nobody.
+DEFAULT_BBOXES: tuple[tuple[float, float, float, float], ...] = (
+    (43.0, 5.0, 49.0, 17.0),   # Alps — the same box scripts/packs.py geofences
+    (41.0, -2.0, 44.0, 4.0),   # Pyrenees, both slopes — encloses PYRENEES_GEOFENCE
+)
 
 # 3 arc-seconds: 1200 samples across a 1° tile, ~92 m of latitude and ~65 m of longitude in the
 # Alps. A whole divisor of both 3600 and the source grids, so pooling is exact with no resampling
@@ -185,11 +194,42 @@ def tile_entry(key: str, lat0: int, lon0: int, blob: bytes) -> dict:
     }
 
 
+def collect_index_entries(out_dir: Path, merge_index_url: str) -> list[dict]:
+    """Everything the published index should list: every tile on disk, plus — when a published
+    index is given — every tile it already lists that this run did not build.
+
+    The union matters because partial runs are normal (a bbox-limited rebuild, or CI running
+    with an evicted tile cache): indexing only what this run built would silently drop the
+    other region's tiles from the published index, and the app treats an unlisted tile as
+    gone. The price is that retiring coverage needs an explicit remote cleanup — rare, and far
+    cheaper than a pilot losing terrain because a cache expired.
+    """
+    entries: dict[str, dict] = {}
+    for path in sorted(out_dir.glob("*.terr")):
+        lat0, lon0 = parse_tile_key(path.stem)
+        entries[path.stem] = tile_entry(path.stem, lat0, lon0, path.read_bytes())
+
+    if merge_index_url:
+        try:
+            request = urllib.request.Request(merge_index_url, headers={"User-Agent": "meet-the-cows terrain builder"})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                published = json.loads(response.read())
+            kept = [e for e in published.get("tiles", []) if e.get("key") and e["key"] not in entries]
+            for entry in kept:
+                entries[entry["key"]] = entry
+            print(f"kept {len(kept)} published tiles not rebuilt this run", file=sys.stderr)
+        except Exception as error:  # noqa: BLE001 - merge is a safety net, not a dependency
+            print(f"WARNING: could not merge published index {merge_index_url}: {error}", file=sys.stderr)
+
+    return sorted(entries.values(), key=lambda e: e["key"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bbox", nargs=4, type=float, metavar=("S", "W", "N", "E"),
-                        default=[43, 5, 49, 17],
-                        help="Bounding box in degrees, south west north east. Default: the Alps.")
+                        action="append", default=None,
+                        help="Bounding box in degrees, south west north east. May be repeated. "
+                             "Default: every configured region (Alps + Pyrenees).")
     parser.add_argument("--dem", choices=sorted(DEM_PRODUCTS), default=os.environ.get("TERRAIN_DEM", "glo30"),
                         help="Copernicus product. glo30 is pooled 3x3 and conservative; glo90 is "
                              "~8x lighter to download but already resampled by someone else.")
@@ -197,24 +237,30 @@ def main() -> None:
                         help="Packs root; tiles are written to <out>/_terrain/")
     parser.add_argument("--jobs", type=int, default=4, help="Parallel tile downloads")
     parser.add_argument("--force", action="store_true", help="Rebuild tiles that already exist")
+    parser.add_argument("--merge-index-url", default="",
+                        help="Published index.json to merge into the written index: tiles it lists "
+                             "that this run did not build stay listed. Protects a partial rebuild "
+                             "from unlisting the other regions' published tiles.")
     args = parser.parse_args()
 
-    south, west, north, east = args.bbox
-    if north <= south or east <= west:
-        print("bbox must be south west north east with north > south and east > west", file=sys.stderr)
-        sys.exit(1)
+    bboxes = [tuple(b) for b in args.bbox] if args.bbox else list(DEFAULT_BBOXES)
+    for south, west, north, east in bboxes:
+        if north <= south or east <= west:
+            print("bbox must be south west north east with north > south and east > west", file=sys.stderr)
+            sys.exit(1)
 
     out_dir = Path(args.out) / "_terrain"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    wanted = [
+    wanted = sorted({
         (lat0, lon0)
+        for south, west, north, east in bboxes
         for lat0 in range(math.floor(south), math.ceil(north))
         for lon0 in range(math.floor(west), math.ceil(east))
-    ]
-    print(f"{len(wanted)} tiles from {args.dem} for bbox {south},{west} .. {north},{east}", file=sys.stderr)
+    })
+    boxes_label = "; ".join(f"{s},{w} .. {n},{e}" for s, w, n, e in bboxes)
+    print(f"{len(wanted)} tiles from {args.dem} for {len(bboxes)} box(es): {boxes_label}", file=sys.stderr)
 
-    entries: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         futures = {
             pool.submit(build_tile, args.dem, lat0, lon0, out_dir, force=args.force): (lat0, lon0)
@@ -223,14 +269,11 @@ def main() -> None:
         for future in concurrent.futures.as_completed(futures):
             lat0, lon0 = futures[future]
             try:
-                entry = future.result()
+                future.result()
             except Exception as error:  # one bad tile must not lose the rest of the build
                 print(f"{tile_key(lat0, lon0)}: FAILED — {error}", file=sys.stderr)
-                continue
-            if entry:
-                entries.append(entry)
 
-    entries.sort(key=lambda e: e["key"])
+    entries = collect_index_entries(out_dir, args.merge_index_url)
     index = {
         "schemaVersion": 1,
         "generatedAt": dt.datetime.now(dt.UTC).isoformat(),
