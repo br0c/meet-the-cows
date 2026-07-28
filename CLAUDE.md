@@ -68,3 +68,17 @@ entry for its `APP_VERSION` — CI refuses to deploy without one — but the ent
   line — write the short line in each.
 
 For scale: 0.8.6-beta covered nine changes in six lines and 72 words.
+
+## Parked
+
+Ideas deliberately set aside, kept here because a container reset takes the conversation with it.
+
+- **Generated aerial views for fields with no photo.** Validated on two Pyrenees fields
+  (`scripts/` has no runner yet — the probe lived in the scratchpad): fetch a WMS orthophoto,
+  draw the strip outline from the field's own coordinates + runway direction, stamp attribution
+  into the image. Spain's PNOA (IGN España) and France's IGN Géoplateforme (Licence Ouverte)
+  both work and are embeddable; CH swisstopo, AT basemap.at and most German Länder publish
+  equivalents. **Google Earth/Maps imagery is not an option** — its terms forbid caching and
+  redistribution, which is exactly why the guide's Google quadrants are excluded from the APVV
+  extraction. If built, it needs a human review pass per batch: the outline is only ever as
+  honest as the coordinates behind it.
