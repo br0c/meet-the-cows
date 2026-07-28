@@ -354,12 +354,6 @@ a { color: var(--accent); }
 
 /* Amber, and beside the heading rather than buried in a note: it belongs wherever the numbers
    this feature produces are being read, not only where it was switched on. */
-.tag-experimental {
-  display: inline-block; vertical-align: 2px;
-  background: #2a1e05; border: 1px solid #a16207; color: #fcd34d;
-  border-radius: 999px; padding: 2px 8px;
-  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-}
 
 .settings-note { margin: -4px 0 2px; color: var(--muted); font-size: 12px; line-height: 1.35; }
 

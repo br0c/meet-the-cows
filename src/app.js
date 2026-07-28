@@ -299,7 +299,6 @@ const STRINGS = {
     terrainAttribution: 'Elevation: Copernicus DEM (ESA). Col and pass names: © OpenStreetMap contributors.',
     terrainUnsupported: 'This browser cannot read terrain data. Glide stays straight-line.',
     terrainMissing: 'No terrain data is published for this deployment. Glide stays straight-line.',
-    terrainCoverage: p => `${p}% of the working area has terrain data`,
     terrainPartial: 'Terrain data is incomplete here, so fields without a route keep their straight-line glide.',
     terrainSize: size => `Terrain: ${size}`,
     terrainCachedCount: (done, total) => `${done} of ${total} ${total === 1 ? 'tile' : 'tiles'} offline`,
@@ -310,7 +309,6 @@ const STRINGS = {
     routeViaPlain: 'around terrain',
     routeLimitedByCol: (name, elev, dist) => `Tightest over ${name}, ${elev}, ${dist} away.`,
     cancel: 'Cancel',
-    terrainExperimental: 'Experimental',
     routeCrossing: (above, clears) => `${above} below you now; the glide clears it by ${clears}.`,
     routeAbove: above => `${above} below you now.`,
     routeProfileKey: c => `Ground along the route, the ${c} m clearance line above it, and the glide at the ratio shown — the two meet at the marked point.`,
@@ -460,7 +458,6 @@ const STRINGS = {
     terrainAttribution: 'Altitudes : Copernicus DEM (ESA). Noms des cols : © contributeurs OpenStreetMap.',
     terrainUnsupported: 'Ce navigateur ne peut pas lire les données de relief. Finesse à vol d\'oiseau.',
     terrainMissing: "Aucune donnée de relief publiée pour ce déploiement. Finesse à vol d'oiseau.",
-    terrainCoverage: p => `${p} % de la zone de travail dispose de données de relief`,
     terrainPartial: "Les données de relief sont incomplètes ici : les terrains sans trajet gardent leur finesse à vol d'oiseau.",
     terrainSize: size => `Relief : ${size}`,
     terrainCachedCount: (done, total) => `${done} sur ${total} tuile${total === 1 ? '' : 's'} hors ligne`,
@@ -471,7 +468,6 @@ const STRINGS = {
     routeViaPlain: 'contourne le relief',
     routeLimitedByCol: (name, elev, dist) => `Point critique au-dessus de ${name}, ${elev}, à ${dist}.`,
     cancel: 'Annuler',
-    terrainExperimental: 'Expérimental',
     routeCrossing: (above, clears) => `${above} sous vous ; le trajet passe ${clears} au-dessus.`,
     routeAbove: above => `${above} sous vous.`,
     routeProfileKey: c => `Le relief le long du trajet, la ligne de garde de ${c} m au-dessus, et la pente à la finesse affichée — les deux se rejoignent au point marqué.`,
@@ -621,7 +617,6 @@ const STRINGS = {
     terrainAttribution: 'Höhen: Copernicus DEM (ESA). Pass- und Sattelnamen: © OpenStreetMap-Mitwirkende.',
     terrainUnsupported: 'Dieser Browser kann keine Geländedaten lesen. Gleitzahl bleibt Luftlinie.',
     terrainMissing: 'Für diese Installation sind keine Geländedaten veröffentlicht. Gleitzahl bleibt Luftlinie.',
-    terrainCoverage: p => `${p} % des Arbeitsbereichs haben Geländedaten`,
     terrainPartial: 'Die Geländedaten sind hier unvollständig; Felder ohne Pfad behalten ihre Luftlinien-Gleitzahl.',
     terrainSize: size => `Gelände: ${size}`,
     terrainCachedCount: (done, total) => `${done} von ${total} ${total === 1 ? 'Kachel' : 'Kacheln'} offline`,
@@ -632,7 +627,6 @@ const STRINGS = {
     routeViaPlain: 'um das Gelände',
     routeLimitedByCol: (name, elev, dist) => `Engste Stelle über ${name}, ${elev}, ${dist} entfernt.`,
     cancel: 'Abbrechen',
-    terrainExperimental: 'Experimentell',
     routeCrossing: (above, clears) => `${above} unter dir; der Pfad bleibt ${clears} darüber.`,
     routeAbove: above => `${above} unter dir.`,
     routeProfileKey: c => `Das Gelände entlang des Pfades, die ${c} m Freiheitslinie darüber und der Gleitpfad zur angezeigten Zahl — beide treffen sich am markierten Punkt.`,
@@ -2489,11 +2483,10 @@ function renderTerrainCard() {
   else if (terrain.available === false) status = t('terrainMissing');
   else if (terrain.status === 'solving') status = t('terrainSolving');
   else if (terrain.status === 'ready' && !terrain.trusted) status = t('terrainPartial');
-  else if (terrain.status === 'ready') status = t('terrainCoverage', Math.round(terrain.coverage * 100));
 
   return `
       <div class="settings-card">
-        <h3>${t('terrain')} <span class="tag-experimental">${escapeHtml(t('terrainExperimental'))}</span></h3>
+        <h3>${t('terrain')}</h3>
         ${switchRow('terrainRouting', t('terrainRouting'), t('terrainNote'), state.settings.terrainRouting, disabled)}
         ${sliderRow({
           id: 'terrainClearanceM',
@@ -2862,7 +2855,7 @@ function renderRouteBlock(row) {
   }
 
   return `
-    <h3>${t('route')} <span class="tag-experimental">${escapeHtml(t('terrainExperimental'))}</span></h3>
+    <h3>${t('route')}</h3>
     <p class="route-summary">${lines.map(line => escapeHtml(line)).join('<br />')}</p>
     ${renderRouteProfile(row)}
   `;

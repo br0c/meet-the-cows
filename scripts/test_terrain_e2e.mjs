@@ -163,11 +163,8 @@ check('terrain starts off, so the baseline is the straight line',
 await page.click('#settingsToggle');
 await page.waitForSelector('#terrainRouting');
 
-// No consent gate any more: the routed glide is the conservative option, so the switch just
-// switches. The "Experimental" tag on the card is the label that remains — assert it survived,
-// because it is now the only caveat a pilot sees.
-check('the terrain card still says Experimental',
-  /experimental/i.test(await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText)));
+// No consent gate and no Experimental tag any more: terrain is the default, and the switch
+// just switches.
 await page.click('#terrainRouting');
 await page.waitForTimeout(300);
 check('flipping the switch turns terrain on directly',
