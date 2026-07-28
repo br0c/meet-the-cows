@@ -16,7 +16,12 @@ export default {
   async fetch(request, env) {
     const origin = resolveOrigin(request, env);
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors(origin) });
-    if (request.method === 'GET') return serveOriginal(request, env);
+    if (request.method === 'GET') {
+      const path = new URL(request.url).pathname;
+      if (path === '/charts/token') return mintChartToken(request, env, origin);
+      if (path.startsWith('/charts/')) return serveChart(request, env);
+      return serveOriginal(request, env);
+    }
     if (request.method !== 'POST') return json(origin, 405, { error: 'Use POST.' });
     try {
       if (new URL(request.url).pathname.endsWith('/bug')) return await handleBugReport(request, env, origin);
@@ -357,6 +362,89 @@ async function serveOriginal(request, env) {
       'Access-Control-Allow-Origin': '*',
     },
   });
+}
+
+// ---------- Gated aerodrome charts ----------
+//
+// Charts used to sit in the public packs tree as packs/_shared/docs/vac/<ICAO>.pdf: guessable
+// by name, enumerable from the public fields.json, and cacheable for a year — one loop away
+// from a complete copy of every chart this project has assembled. France (Licence Ouverte) and
+// Austria (CC BY 4.0) may be redistributed freely, but Germany's DFS charts and Italy's ENAV
+// charts carry no such grant, and Spain's would arrive with conditions attached.
+//
+// So the bucket is private and this route is the only way in. What that does and does not buy
+// is worth stating plainly: the app is a static PWA, and charts are shown in an <iframe>, which
+// cannot send an Authorization header — so the token travels in the query string, where anyone
+// can read it out of devtools. This is not a secret. What it changes is that fetching charts in
+// bulk now needs a token that expires, arrives from one route we can watch, throttle at the
+// edge, and invalidate by rotating one secret — none of which was true of a public URL.
+//
+// The quota itself lives in a Cloudflare Rate Limiting rule on this route rather than in code,
+// so it can be tightened during an incident without a deploy.
+const CHART_TOKEN_TTL_S = 3600;
+
+/** GET /charts/token -> { token, expiresIn }. Same-origin-ish by CORS; cheap and unauthenticated
+ *  by design (a pilot has no account), so it is the rate-limited edge, not a login. */
+async function mintChartToken(request, env, origin) {
+  if (!env.CHARTS_TOKEN_SECRET) return json(origin, 503, { error: 'Charts are not configured.' });
+  const expiresAt = Math.floor(Date.now() / 1000) + CHART_TOKEN_TTL_S;
+  const token = `${expiresAt}.${await signChartToken(expiresAt, env.CHARTS_TOKEN_SECRET)}`;
+  return new Response(JSON.stringify({ token, expiresIn: CHART_TOKEN_TTL_S }), {
+    // no-store: a token this short-lived must not be held by a CDN and handed to someone else
+    // after it stops working for the pilot who asked for it.
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...cors(origin) },
+  });
+}
+
+/** GET /charts/<key>?t=<token>: stream one chart from the private bucket. */
+async function serveChart(request, env) {
+  const url = new URL(request.url);
+  const path = decodeURIComponent(url.pathname);
+  if (!env.CHARTS || path.includes('..')) return new Response('Not found', { status: 404 });
+  if (!await verifyChartToken(url.searchParams.get('t') || '', env.CHARTS_TOKEN_SECRET)) {
+    return new Response('Forbidden', { status: 403 });
+  }
+  const object = await env.CHARTS.get(path.slice('/charts/'.length));
+  if (!object) return new Response('Not found', { status: 404 });
+  return new Response(object.body, {
+    headers: {
+      'Content-Type': object.httpMetadata?.contentType || 'application/pdf',
+      'Content-Length': String(object.size),
+      // Immutable for the browser and the service worker (an AIRAC roll republishes under a new
+      // pack version), but never stored by the shared CDN cache: the URL carries a token, and a
+      // shared cache keyed on it would serve one pilot's token to the next requester.
+      'Cache-Control': 'private, max-age=31536000, immutable',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
+
+async function chartKey(secret) {
+  return crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+}
+
+async function signChartToken(expiresAt, secret) {
+  const mac = await crypto.subtle.sign('HMAC', await chartKey(secret), new TextEncoder().encode(String(expiresAt)));
+  return base64Url(new Uint8Array(mac));
+}
+
+async function verifyChartToken(token, secret) {
+  if (!secret) return false;
+  const [rawExpiry, signature] = String(token).split('.');
+  const expiresAt = Number(rawExpiry);
+  if (!Number.isFinite(expiresAt) || !signature) return false;
+  if (expiresAt < Math.floor(Date.now() / 1000)) return false;
+  const expected = await signChartToken(expiresAt, secret);
+  // Compare every byte: bailing on the first mismatch leaks where it happened.
+  if (signature.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i += 1) diff |= signature.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
+function base64Url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 const BACKUP_PREFIX = 'repo-backups/';

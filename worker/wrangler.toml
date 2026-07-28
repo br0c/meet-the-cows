@@ -2,6 +2,7 @@
 # Deploy:  cd worker && npm install && npx wrangler deploy
 # Secrets (never commit): npx wrangler secret put GITHUB_TOKEN
 #                         npx wrangler secret put TURNSTILE_SECRET
+#                         npx wrangler secret put CHARTS_TOKEN_SECRET   # signs chart tokens
 name = "mtc-contrib-intake"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
@@ -43,6 +44,17 @@ BACKUP_BRANCHES = "main,dev"         # branches the nightly repo snapshot covers
 [[r2_buckets]]
 binding = "ORIGINALS"
 bucket_name = "mtc-data"
+
+# Aerodrome charts (see serveChart). A SEPARATE private bucket from mtc-data on purpose: this
+# one is written by the pack build's publish step and read by pilots all day, while mtc-data
+# holds contribution originals and repo backups. Different lifecycles, different blast radius,
+# and an S3 token scoped to one is not a token for the other.
+# Create before deploying: R2 -> Create bucket -> "mtc-charts". Leave public access DISABLED —
+# a custom domain or r2.dev URL on this bucket would put every chart back on the open web and
+# make this route pointless.
+[[r2_buckets]]
+binding = "CHARTS"
+bucket_name = "mtc-charts"
 
 [triggers]
 crons = ["47 2 * * *"]               # nightly repo tarball snapshot into R2 (see backupRepo)
