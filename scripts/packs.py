@@ -156,20 +156,22 @@ ENAIRE_NOTICE = (
 # Pack registry. `countries` selects by political country code; `geofence` selects by
 # position. A pack uses exactly one selector. `name` is the display label shown in the app's
 # pack picker (kept multilingual inline until the app localizes pack names from the manifest).
+# Definition order IS picker order (write_packs_index publishes it verbatim): the mountain
+# packs pilots actually fly first, then the country packs, largest communities first.
 PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
-    {"id": "fr", "names": {"en": "France", "fr": "France", "de": "Frankreich"}, "countries": ("FR",)},
-    {"id": "ch", "names": {"en": "Switzerland", "fr": "Suisse", "de": "Schweiz"}, "countries": ("CH",)},
-    {"id": "de", "names": {"en": "Germany", "fr": "Allemagne", "de": "Deutschland"}, "countries": ("DE",)},
-    {"id": "it", "names": {"en": "Italy", "fr": "Italie", "de": "Italien"}, "countries": ("IT",)},
-    {"id": "at", "names": {"en": "Austria", "fr": "Autriche", "de": "Österreich"}, "countries": ("AT",)},
-    {"id": "es", "names": {"en": "Spain", "fr": "Espagne", "de": "Spanien"}, "countries": ("ES",),
-     "extraNotices": [APVV_NOTICE, ENAIRE_NOTICE]},
     {"id": "alps-west", "names": {"en": "Western Alps", "fr": "Alpes occidentales", "de": "Westalpen"}, "geofence": "alps-west"},
     {"id": "alps-east", "names": {"en": "Eastern Alps", "fr": "Alpes orientales", "de": "Ostalpen"}, "geofence": "alps-east"},
     # Both slopes of the chain: the French side from the existing sources, the Spanish side
     # mostly from the APVV guide (2008), which rates nothing — those fields ship UNKNOWN, and
     # the app hides unrated fields unless both C and D are enabled, hence the notices.
     {"id": "pyr", "names": {"en": "Pyrenees", "fr": "Pyrénées", "de": "Pyrenäen"}, "geofence": "pyrenees",
+     "extraNotices": [APVV_NOTICE, ENAIRE_NOTICE]},
+    {"id": "fr", "names": {"en": "France", "fr": "France", "de": "Frankreich"}, "countries": ("FR",)},
+    {"id": "ch", "names": {"en": "Switzerland", "fr": "Suisse", "de": "Schweiz"}, "countries": ("CH",)},
+    {"id": "it", "names": {"en": "Italy", "fr": "Italie", "de": "Italien"}, "countries": ("IT",)},
+    {"id": "at", "names": {"en": "Austria", "fr": "Autriche", "de": "Österreich"}, "countries": ("AT",)},
+    {"id": "de", "names": {"en": "Germany", "fr": "Allemagne", "de": "Deutschland"}, "countries": ("DE",)},
+    {"id": "es", "names": {"en": "Spain", "fr": "Espagne", "de": "Spanien"}, "countries": ("ES",),
      "extraNotices": [APVV_NOTICE, ENAIRE_NOTICE]},
     # Transitional alias for app shells cached from before the West/East split: those shells
     # resolve a stored 'alps' selection against packs.json and would otherwise fall back to the

@@ -301,11 +301,9 @@ const STRINGS = {
     terrainMissing: 'No terrain data is published for this deployment. Glide stays straight-line.',
     terrainCoverage: p => `${p}% of the working area has terrain data`,
     terrainPartial: 'Terrain data is incomplete here, so fields without a route keep their straight-line glide.',
-    downloadTerrain: 'Download terrain',
-    removeTerrain: 'Remove terrain',
-    removeTerrainNote: 'Removing frees the space. Routing keeps working while there is a connection; download again before flying offline.',
-    terrainTiles: (n, size) => `${n} tiles · ${size}`,
-    terrainCachedCount: (done, total) => `${done} of ${total} tiles offline`,
+    terrainAutoNote: 'Kept up to date automatically: the app checks on every open and downloads what changed.',
+    terrainTiles: (n, size) => `${n} ${n === 1 ? 'tile' : 'tiles'} · ${size}`,
+    terrainCachedCount: (done, total) => `${done} of ${total} ${total === 1 ? 'tile' : 'tiles'} offline`,
     terrainSolving: 'working out routes…',
     route: 'Route',
     routeLength: 'Route',
@@ -465,11 +463,9 @@ const STRINGS = {
     terrainMissing: "Aucune donnée de relief publiée pour ce déploiement. Finesse à vol d'oiseau.",
     terrainCoverage: p => `${p} % de la zone de travail dispose de données de relief`,
     terrainPartial: "Les données de relief sont incomplètes ici : les terrains sans trajet gardent leur finesse à vol d'oiseau.",
-    downloadTerrain: 'Télécharger le relief',
-    removeTerrain: 'Supprimer le relief',
-    removeTerrainNote: "La suppression libère l'espace. Le calcul continue de fonctionner avec une connexion ; retéléchargez avant de voler hors ligne.",
-    terrainTiles: (n, size) => `${n} tuiles · ${size}`,
-    terrainCachedCount: (done, total) => `${done} sur ${total} tuiles hors ligne`,
+    terrainAutoNote: "Maintenu à jour automatiquement : l'app vérifie à chaque ouverture et télécharge ce qui a changé.",
+    terrainTiles: (n, size) => `${n} tuile${n === 1 ? '' : 's'} · ${size}`,
+    terrainCachedCount: (done, total) => `${done} sur ${total} tuile${total === 1 ? '' : 's'} hors ligne`,
     terrainSolving: 'calcul des trajets…',
     route: 'Trajet',
     routeLength: 'Trajet',
@@ -629,11 +625,9 @@ const STRINGS = {
     terrainMissing: 'Für diese Installation sind keine Geländedaten veröffentlicht. Gleitzahl bleibt Luftlinie.',
     terrainCoverage: p => `${p} % des Arbeitsbereichs haben Geländedaten`,
     terrainPartial: 'Die Geländedaten sind hier unvollständig; Felder ohne Pfad behalten ihre Luftlinien-Gleitzahl.',
-    downloadTerrain: 'Gelände herunterladen',
-    removeTerrain: 'Gelände entfernen',
-    removeTerrainNote: 'Das Entfernen gibt den Speicher frei. Mit Verbindung rechnet die App weiter; vor dem Offline-Flug erneut herunterladen.',
-    terrainTiles: (n, size) => `${n} Kacheln · ${size}`,
-    terrainCachedCount: (done, total) => `${done} von ${total} Kacheln offline`,
+    terrainAutoNote: 'Wird automatisch aktuell gehalten: Die App prüft bei jedem Öffnen und lädt, was sich geändert hat.',
+    terrainTiles: (n, size) => `${n} ${n === 1 ? 'Kachel' : 'Kacheln'} · ${size}`,
+    terrainCachedCount: (done, total) => `${done} von ${total} ${total === 1 ? 'Kachel' : 'Kacheln'} offline`,
     terrainSolving: 'Pfade werden berechnet…',
     route: 'Pfad',
     routeLength: 'Pfad',
@@ -898,6 +892,9 @@ async function init() {
   startGps();
   if (state.settings.testMode) refreshTestGround();
   render();
+  // After the packs: tile targets are the fields' bounding box. Deliberately not awaited —
+  // the app is fully usable while terrain fills in behind the progress bar.
+  autoSyncTerrainTiles().catch(error => console.warn('Terrain sync failed', error));
 }
 
 // Load the shipped release notes and decide whether to show the one-time "updated" banner.
@@ -1726,6 +1723,15 @@ async function refreshTerrainStatus() {
     state.terrain.available = Boolean(await terrainStore().loadIndex());
     await checkTerrainCacheStatus();
     const terrain = state.terrain;
+    // With no download button, opening Settings IS the retry: a sync that lost tiles to a
+    // dropped connection runs again the next time the pilot comes looking at the state.
+    // Once per visit — this function runs on every settings render, and a failing sync
+    // re-renders, so an ungated retry here is a render loop.
+    if (!terrainSyncRetriedThisVisit && terrain.available
+        && (terrain.cacheStatus === 'incomplete' || terrain.cacheStatus === 'not downloaded')) {
+      terrainSyncRetriedThisVisit = true;
+      autoSyncTerrainTiles().catch(() => {});
+    }
     const signature = `${terrain.available}|${terrain.cacheStatus}|${terrain.cacheProgress}`;
     if (signature !== terrainStatusSignature) {
       terrainStatusSignature = signature;
@@ -1753,7 +1759,28 @@ async function refreshTerrainStatus() {
   }
 }
 
-async function downloadTerrain() {
+// Terrain ships by default. Nobody downloads or removes it: tiles for the selected packs
+// fetch themselves on open, and again whenever the published index moves (the service
+// worker's terrain-changed report) or the pilot turns routing on. Settings keeps showing
+// the size and the offline state — the information survives, only the chores went away.
+// One sync at a time: a second request while one runs is the boot and a notification
+// racing, not new work.
+let terrainSyncInFlight = false;
+let terrainSyncRetriedThisVisit = false;  // reset each time Settings opens
+async function autoSyncTerrainTiles() {
+  if (terrainSyncInFlight) return;
+  if (!state.settings.terrainRouting || !terrainSupported()) return;
+  if (!('caches' in window) || navigator.onLine === false) return;
+  terrainSyncInFlight = true;
+  try {
+    await terrainStore().loadIndex();  // cheap when already loaded; targets need the index
+    await syncTerrainTiles();
+  } finally {
+    terrainSyncInFlight = false;
+  }
+}
+
+async function syncTerrainTiles() {
   const { keys } = terrainDownloadTargets();
   if (!keys.length || !('caches' in window)) return;
   const urls = terrainTileUrls(keys);
@@ -1796,28 +1823,6 @@ async function downloadTerrain() {
   state.terrain.available = null;
   invalidateTerrainRoutes();
   // The ground under a simulated place may just have become known — the AGL reference follows.
-  if (state.settings.testMode) refreshTestGround();
-  render();
-  refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
-}
-
-/**
- * Delete every terrain tile from the phone — current, superseded and legacy alike. The routing
- * SETTING is left alone on purpose: with a connection, solves keep working by fetching what they
- * need (and re-caching only that much); without one, the glide falls back to straight lines,
- * which is the app's honest baseline. The one thing this must not do is silently keep answering
- * from memory as though nothing happened — hence the dropDecodedTiles.
- */
-async function removeTerrain() {
-  if (!('caches' in window)) return;
-  const cache = await caches.open(DATA_CACHE);
-  for (const request of await cache.keys()) {
-    if (new URL(request.url).pathname.endsWith('.terr')) await cache.delete(request);
-  }
-  state.terrain.store?.dropDecodedTiles();
-  await checkTerrainCacheStatus();
-  invalidateTerrainRoutes();
-  // Without tiles the ground under a simulated place is unknown again; AGL falls back to AMSL.
   if (state.settings.testMode) refreshTestGround();
   render();
   refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
@@ -2511,11 +2516,7 @@ function renderTerrainCard() {
           <div><dt>${t('downloadSize')}</dt><dd>${escapeHtml(t('terrainTiles', targets.keys.length, formatBytes(targets.bytes)))}</dd></div>
           <div><dt>${t('offline')}</dt><dd>${escapeHtml(terrain.cacheProgress || cacheStatusLabel(terrain.cacheStatus))}</dd></div>
         </dl>
-        <div class="button-row${terrain.cacheAnyTiles ? '' : ' single'}">
-          <button id="downloadTerrain" ${disabled ? 'disabled' : ''}>${t('downloadTerrain')}</button>
-          ${terrain.cacheAnyTiles ? `<button id="removeTerrain">${t('removeTerrain')}</button>` : ''}
-        </div>
-        ${terrain.cacheAnyTiles ? `<p class="settings-note">${escapeHtml(t('removeTerrainNote'))}</p>` : ''}` : ''}
+        <p class="settings-note">${escapeHtml(t('terrainAutoNote'))}</p>` : ''}
         ${status ? `<p class="settings-note">${escapeHtml(status)}</p>` : ''}
         <p class="settings-note">${escapeHtml(t('terrainAttribution'))}</p>
       </div>`;
@@ -3707,7 +3708,7 @@ function attachEvents() {
     state.showMigrationSheet = false;
     render();
   });
-  document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; render(); });
+  document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; if (state.view === 'settings') terrainSyncRetriedThisVisit = false; render(); });
   // The terrain card needs the published tile index and a cache count, neither of which is worth
   // fetching until someone opens Settings. refreshTerrainStatus re-renders once when they land.
   if (state.view === 'settings') refreshTerrainStatus();
@@ -3756,6 +3757,7 @@ function attachEvents() {
     invalidateTerrainRoutes();
     render();
     refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+    autoSyncTerrainTiles().catch(error => console.warn('Terrain sync failed', error));
   });
   // Dragging fires continuously, so the live readout updates in place and nothing else happens
   // until the pilot lets go. A wavefront per pixel of travel would be absurd, and a re-render
@@ -3773,9 +3775,8 @@ function attachEvents() {
     invalidateTerrainRoutes();
     render();
     refreshTerrainRoutes().catch(error => console.warn('Terrain routing failed', error));
+    autoSyncTerrainTiles().catch(error => console.warn('Terrain sync failed', error));
   });
-  document.querySelector('#downloadTerrain')?.addEventListener('click', downloadTerrain);
-  document.querySelector('#removeTerrain')?.addEventListener('click', removeTerrain);
   for (const id of ['showC', 'showD']) {
     document.querySelector(`#${id}`)?.addEventListener('change', e => {
       if (e.target.checked) {
@@ -3868,6 +3869,7 @@ function attachEvents() {
   document.querySelector('#syncDataBtn')?.addEventListener('click', () => {
     // Jump to Settings so the pilot watches the sync progress there, instead of the
     // banner appearing to do nothing (progress only renders on the settings page).
+    terrainSyncRetriedThisVisit = false;
     state.view = 'settings';
     syncPackDelta();
   });
@@ -3965,6 +3967,7 @@ function scheduleTerrainIndexReread() {
       // cached, so this settles locally.
       await store.loadIndex();
       await checkTerrainCacheStatus();
+      await autoSyncTerrainTiles();
       render();
     } catch (error) {
       console.warn('Terrain index re-read failed', error);

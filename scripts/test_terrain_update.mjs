@@ -105,7 +105,10 @@ const tileRequestsSince = mark => asked.slice(mark).filter(p => p.includes('.ter
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const context = await browser.newContext({ locale: 'en-GB' });
-await context.addInitScript(() => localStorage.setItem('mtc-settings-v2', JSON.stringify({
+// Seed once, not on every navigation: phase 4 turns the terrain switch OFF and reloads —
+// a reseed would silently flip it back on and the automatic sync would then re-download
+// everything the phase just cleared, which is exactly the bug shape the phase forbids.
+await context.addInitScript(() => localStorage.getItem('mtc-settings-v2') || localStorage.setItem('mtc-settings-v2', JSON.stringify({
   packIds: ['alps-test'], language: 'en', safetyMarginM: 250, showC: true, showD: true,
   testMode: true, testLatitude: 45.9356, testLongitude: 7.6304,
   testAltitudeM: 2800, testLabel: 'Cervinia', terrainRouting: true,
@@ -122,23 +125,23 @@ const cachedTiles = () => page.evaluate(async () => {
     .filter(p => p.includes('.terr')).sort();
 });
 
-async function pressDownload() {
+/** Tiles download themselves on open; this just waits for Settings to report the full set. */
+async function waitForTerrainSynced() {
   await page.click('#settingsToggle');
-  await page.waitForSelector('#downloadTerrain:not([disabled])', { timeout: 8000 });
-  await page.click('#downloadTerrain');
   await page.waitForFunction(() => {
-    const dl = document.querySelector('#downloadTerrain');
-    return dl && /of|sur|von/.test(document.body.textContent || '');
-  }, null, { timeout: 5000 }).catch(() => {});
-  await page.waitForTimeout(4000);
+    const text = document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || '';
+    const m = text.match(/(\d+) (?:of|sur|von) (\d+)/);
+    return m && m[1] === m[2];
+  }, null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(1000);
 }
 const closeSettings = async () => { await page.click('#settingsToggle').catch(() => {});
   await page.waitForSelector('.field-row'); };
 
 // --- 1. fresh download: versioned URLs only ------------------------------------------------------
-console.log('\n1 — a fresh download files every tile under its versioned address');
+console.log('\n1 — the automatic sync files every tile under its versioned address');
 {
-  await pressDownload();
+  await waitForTerrainSynced();
   const tiles = await cachedTiles();
   check('every cached tile URL carries ?v=', tiles.length > 0 && tiles.every(p => /\?v=[0-9a-f]{10}$/.test(p)),
     tiles.slice(0, 3).join(' '));
@@ -147,7 +150,7 @@ console.log('\n1 — a fresh download files every tile under its versioned addre
     const entry = indexJson.tiles.find(t => t.key === key);
     return entry && p.endsWith(`?v=${entry.sha256.slice(0, 10)}`);
   }));
-  const offline = await page.$eval('.settings-card:has(#downloadTerrain)', el => el.innerText);
+  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);
   check('settings reports the full set offline', /(\d+) (of|sur|von) \1/.test(offline),
     (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
 }
@@ -175,9 +178,9 @@ console.log('\n2 — tiles downloaded before versioning are adopted in place, fr
   // Opening Settings runs the status check, which is where adoption lives.
   await closeSettings();
   await page.click('#settingsToggle');
-  await page.waitForSelector('#downloadTerrain', { timeout: 8000 });
+  await page.waitForSelector('#terrainRouting', { timeout: 8000 });
   await page.waitForFunction(() => /\d+ (of|sur|von) \d+/.test(
-    document.querySelector('.settings-card:has(#downloadTerrain)')?.innerText || ''),
+    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
     null, { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(1500);
 
@@ -187,7 +190,7 @@ console.log('\n2 — tiles downloaded before versioning are adopted in place, fr
   check('no bare entries survive', after.every(p => p.includes('?v=')));
   check('not one tile crossed the network for it', tileRequestsSince(mark).length === 0,
     tileRequestsSince(mark).join(' '));
-  const offline = await page.$eval('.settings-card:has(#downloadTerrain)', el => el.innerText);
+  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);
   check('settings counts the adopted set as offline', /(\d+) (of|sur|von) \1/.test(offline),
     (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
 }
@@ -226,8 +229,12 @@ console.log('\n3 — a rebuilt tile: stale serves free until the pilot downloads
   await page.waitForTimeout(1000);
   check('the glide still routes, on the superseded tile',
     (await page.$('.field-glide.routed')) !== null);
-  check('and the solve paid nothing over the network for it', tileRequestsSince(mark).length === 0,
-    tileRequestsSince(mark).join(' '));
+  // The automatic sync may already have fetched the REBUILT tile at its new address by now —
+  // that is its job. What the solve must never do is spend bytes itself: no old-address
+  // fetch, no other tile, ever.
+  const duringSolve = tileRequestsSince(mark);
+  check('nothing but the rebuilt tile at its new address ever crossed the network',
+    duringSolve.every(pth => pth.includes('N45E007.terr?v=bbbbbbbbbb')), duringSolve.join(' '));
 
   // The worker's report is what updates the app: assert the app's own index moved to the new
   // version without a further reload.
@@ -237,29 +244,27 @@ console.log('\n3 — a rebuilt tile: stale serves free until the pilot downloads
   check('the changed-index report reaches the app in this session',
     (await page.evaluate(() => window.__mtcState?.terrain?.store?.tileVersions?.get('N45E007'))) === 'bbbbbbbbbb');
 
-  await page.click('#settingsToggle');
-  // Waited for at its CORRECT value, not just any count: the card may honestly say "2 of 2" for
-  // a beat before the report lands and the recount runs.
-  await page.waitForFunction(() => /1 (of|sur|von) 2/.test(
-    document.querySelector('.settings-card:has(#downloadTerrain)')?.innerText || ''),
-    null, { timeout: 10000 }).catch(() => {});
-  const before = await page.$eval('.settings-card:has(#downloadTerrain)', el => el.innerText);
-  check('settings counts the rebuilt tile as out of date', /1 (of|sur|von) 2/.test(before),
-    (before.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
-
-  const downloadMark = asked.length;
-  await page.click('#downloadTerrain');
-  await page.waitForTimeout(4000);
-  const fetched = tileRequestsSince(downloadMark);
-  check('the download fetched exactly the rebuilt tile, at its new address',
+  // The report also triggers the automatic sync: the rebuilt tile downloads itself, in this
+  // session, with nobody pressing anything — that is the whole point of shipping terrain by
+  // default. Wait for the cache to hold the new bytes, then account for the network exactly.
+  await page.waitForFunction(async () => {
+    const cache = await caches.open('mtc-data');
+    return (await cache.keys()).some(r => r.url.includes('N45E007.terr?v=bbbbbbbbbb'));
+  }, null, { timeout: 15000 }).catch(() => {});
+  const fetched = tileRequestsSince(mark);
+  check('the sync fetched exactly the rebuilt tile, at its new address, once',
     fetched.length === 1 && fetched[0].includes(`${victim.key}.terr?v=bbbbbbbbbb`), fetched.join(' '));
+  await page.click('#settingsToggle');
+  await page.waitForFunction(() => /2 (of|sur|von) 2/.test(
+    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
+    null, { timeout: 10000 }).catch(() => {});
 
   const tiles = await cachedTiles();
   const victimEntries = tiles.filter(p => p.includes(`${victim.key}.terr`));
   check('the cache holds the new version of that tile, and only it',
     victimEntries.length === 1 && victimEntries[0].endsWith('?v=bbbbbbbbbb'), victimEntries.join(' '));
   check('no entry still carries the superseded version', !tiles.some(p => p.endsWith(`?v=${oldVersion}`)));
-  const offline = await page.$eval('.settings-card:has(#downloadTerrain)', el => el.innerText);
+  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);
   check('settings counts the set current again', /2 (of|sur|von) 2/.test(offline),
     (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
 }
@@ -323,25 +328,35 @@ console.log('\n3b — AGL: available over downloaded terrain, gone when the tile
     storedAlt === handle && storedAlt === 2800, `${storedAlt} m / handle ${handle}`);
 }
 
-// --- 4. remove terrain ---------------------------------------------------------------------------
-console.log('\n4 — with routing off, "Remove terrain" leaves no tile bytes behind');
+// --- 4. routing off means off ---------------------------------------------------------------------
+console.log('\n4 — with routing off, cleared tiles stay gone: the automatic sync respects the switch');
 {
-  // Routing off first: with it on, the next online solve would legitimately re-fetch what it
-  // needs, which is the documented behaviour — the durable "give me my storage back" flow is
-  // switch off, then remove.
+  // There is no remove button any more — terrain manages itself — so clear the cache the way
+  // an eviction or a fresh device would. With the switch OFF the automatic sync must not
+  // spend a byte bringing any of it back.
   await page.uncheck('#terrainRouting');
-  await page.waitForSelector('#removeTerrain', { timeout: 5000 });
-  await page.click('#removeTerrain');
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(500);
+  await page.evaluate(async () => {
+    const cache = await caches.open('mtc-data');
+    for (const request of await cache.keys()) {
+      if (new URL(request.url).pathname.endsWith('.terr')) await cache.delete(request);
+    }
+  });
+  // A fresh open is the moment the sync would run if it were going to: reload with the
+  // switch off and give it every chance to misbehave.
+  await page.reload();
+  await page.waitForSelector('.field-row', { timeout: 20000 });
+  await page.waitForTimeout(3000);
   const tiles = await cachedTiles();
   check('the cache holds no tiles at all', tiles.length === 0, tiles.slice(0, 3).join(' '));
-  check('the remove button withdraws once there is nothing to remove',
-    (await page.$('#removeTerrain')) === null);
-  const offline = await page.$eval('.settings-card:has(#downloadTerrain)', el => el.innerText)
+  await page.click('#settingsToggle');
+  await page.waitForFunction(() => /0 (of|sur|von) \d+/.test(
+    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
+    null, { timeout: 8000 }).catch(() => {});
+  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText)
     .catch(() => '');
   check('settings reports nothing offline', /0 (of|sur|von) \d+/.test(offline),
     (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
-  await page.waitForTimeout(2000);
   check('and nothing trickles back with routing off', (await cachedTiles()).length === 0);
   // The ground under the simulated place is unknown again — AGL must grey out and the altitude
   // must be read against sea level, not against ground that is no longer there.

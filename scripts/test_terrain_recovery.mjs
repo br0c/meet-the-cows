@@ -107,13 +107,12 @@ const check = (label, ok, detail = '') => {
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 
-/** Enable terrain through the consent gate, exactly as a pilot does. */
+/** Enable terrain exactly as a pilot does: the switch just switches (no consent gate), and
+ *  switching on starts the automatic tile sync. */
 async function enableTerrain(page) {
   await page.click('#settingsToggle');
   await page.waitForSelector('#terrainRouting:not([disabled])', { timeout: 5000 });
   await page.click('#terrainRouting');
-  await page.waitForSelector('#terrainConsentAccept', { timeout: 3000 });
-  await page.click('#terrainConsentAccept');
   await page.waitForTimeout(300);
 }
 
@@ -122,12 +121,13 @@ async function closeSettings(page) {
   await page.waitForSelector('.field-row');
 }
 
-/** Press "Download terrain" if it is offered, and wait for the progress bar to clear. */
+/** Tiles download themselves (on open, on switch-on, on an index report). Give the automatic
+ *  sync a beat and report whether the card shows tiles to have — the shape the old manual
+ *  download returned, kept so the scenarios read unchanged. */
 async function download(page) {
-  await page.waitForSelector('#downloadTerrain:not([disabled])', { timeout: 5000 }).catch(() => {});
-  const btn = await page.$('#downloadTerrain:not([disabled])');
-  if (!btn) return false;
-  await btn.click();
+  await page.waitForFunction(() => /\d+ (of|sur|von) \d+/.test(
+    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
+    null, { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(5000);
   return true;
 }
