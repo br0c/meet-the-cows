@@ -210,7 +210,10 @@ _DEEPL_LOCK = threading.Lock()
 # v19: Spain country pack and Pyrenees geofence pack, from the in-repo APVV guide source plus
 #      an OpenAIP ES import; per-pack extra notices in manifests. (Published schema is still 18,
 #      so this one version covers the whole Spain/Pyrenees addition.)
-PACK_SCHEMA_VERSION = 19
+# v20: pack picker order (packs.json follows PACK_DEFINITIONS: mountain ranges first). Order
+#      is output: without the bump the incremental check calls the rebuild unnecessary and the
+#      published packs.json keeps the old order.
+PACK_SCHEMA_VERSION = 20
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
