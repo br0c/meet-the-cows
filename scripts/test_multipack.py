@@ -244,5 +244,37 @@ class PyreneesTests(unittest.TestCase):
                             f"{row['name']} ({lat:.4f}, {lon:.4f}) outside the Pyrenees geofence")
 
 
+class SpainTests(unittest.TestCase):
+    """Spain ships as a country pack as well as through the Pyrenees geofence pack."""
+
+    ES = {"id": "es", "countries": ("ES",)}
+
+    def test_spain_pack_is_the_whole_country_not_just_the_pyrenees(self):
+        fields = [
+            field("ES", 42.57, -0.73, "Santa Cilia"),   # Pyrenees
+            field("ES", 39.94, -3.51, "Ocaña"),          # central Spain, far from any geofence
+            field("ES", 28.45, -16.34, "Tenerife Norte"),  # Canaries: still Spain
+            field("FR", 42.45, 2.01, "Ste-Léocadie"),    # French Cerdagne: not the Spain pack
+        ]
+        names = {f["name"] for f in select_pack_fields(fields, self.ES)}
+        self.assertEqual(names, {"Santa Cilia", "Ocaña", "Tenerife Norte"})
+
+    def test_registry_has_a_visible_spain_pack(self):
+        by_id = {p["id"]: p for p in PACK_DEFINITIONS}
+        self.assertIn("es", by_id)
+        self.assertFalse(by_id["es"].get("hidden"))
+        self.assertEqual(by_id["es"]["names"]["en"], "Spain")
+
+    def test_packs_carrying_spanish_fields_warn_about_ratings_and_charts(self):
+        # Both packs carry APVV fields (unrated, hidden unless C and D are on) and neither
+        # ships Spanish charts — a pilot has to be told both, in whichever pack they picked.
+        by_id = {p["id"]: p for p in PACK_DEFINITIONS}
+        for pack_id in ("es", "pyr"):
+            notices = " ".join(by_id[pack_id].get("extraNotices", []))
+            self.assertIn("APVV", notices, pack_id)
+            self.assertIn("C and D", notices, pack_id)
+            self.assertIn("ENAIRE", notices, pack_id)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

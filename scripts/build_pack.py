@@ -111,7 +111,10 @@ ICAO_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{2}$")
 ICAO_FR_RE = re.compile(r"^LF[A-Z0-9]{2}$")
 ICAO_AT_RE = re.compile(r"^LO[A-Z]{2}$")
 AT_EAIP_ROOT = "https://eaip.austrocontrol.at/"
-COUNTRY_ICAO_PREFIXES = {"FR": ("LF",), "CH": ("LS",), "IT": ("LI",)}
+# Only a FALLBACK for records that arrive without a country: OpenAIP states one, and these
+# decide the country when it does not. ES lists its overseas prefixes too (GC Canaries,
+# GE Ceuta/Melilla) so a Spain pack does not silently drop them.
+COUNTRY_ICAO_PREFIXES = {"FR": ("LF",), "CH": ("LS",), "IT": ("LI",), "ES": ("LE", "GC", "GE")}
 OPENAIP_AIRPORT_TYPES = {
     0: "Airport (civil/military)",
     1: "Glider Site",
@@ -204,8 +207,9 @@ _DEEPL_LOCK = threading.Lock()
 #      by two sources is merged on runway heading + elevation + position. Both change what the
 #      pack contains, so the fingerprint has to move or the incremental check would decide
 #      nothing had happened and keep serving the old pack.
-# v19: Pyrenees pack (both slopes) from the in-repo APVV guide source plus OpenAIP ES import;
-#      per-pack extra notices in manifests.
+# v19: Spain country pack and Pyrenees geofence pack, from the in-repo APVV guide source plus
+#      an OpenAIP ES import; per-pack extra notices in manifests. (Published schema is still 18,
+#      so this one version covers the whole Spain/Pyrenees addition.)
 PACK_SCHEMA_VERSION = 19
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
@@ -425,36 +429,39 @@ def main() -> None:
     airport_index: dict[str, dict[str, Any]] = {}
     runway_index: dict[str, dict[str, Any]] = {}
     extra_codes: set[str] = set()
+    # Where airfield COORDINATES come from, independent of whether any country's charts are
+    # imported. These used to be nested under `resolved_vac_root`, which tied every country's
+    # airfields to the French VAC root resolving: a build without SIA charts silently produced
+    # no OpenAIP airfields at all. That coupling has no reason to exist and gets sharper with
+    # each country whose charts this project does not ship — Spain has none, and its airfields
+    # must still be imported.
+    if args.include_vac_airfields:
+        if args.airfield_source == "openaip":
+            # ICAO codes we already hold from the Guide parse. OpenAIP records for these
+            # codes are kept regardless of type so their authoritative names win on merge.
+            known_icao_codes = {
+                code
+                for f in fields
+                if (code := clean(f.get("code")).upper()) and re.fullmatch(r"[A-Z]{4}", code)
+            }
+            airport_index, runway_index, openaip_frequency_index = load_openaip_airfields(
+                countries=args.countries,
+                raw_dir=raw_dir,
+                api_key=args.openaip_api_key,
+                base_url=args.openaip_base_url,
+                local_sources=args.openaip_airports,
+                include_type_codes=parse_int_set(args.openaip_include_types),
+                candidate_mode=args.vac_candidate_mode,
+                known_codes=known_icao_codes,
+            )
+            merge_frequency_indexes(frequency_index, openaip_frequency_index)
+            apply_frequency_index(fields, frequency_index)
+        elif args.airfield_source == "ourairports":
+            airport_index = load_airport_index(args.airports_csv, raw_dir, countries=args.countries)
+            runway_index = load_runway_index(args.runways_csv, raw_dir, countries=args.countries)
+    if airport_index:
+        add_airfield_entries_from_index(fields, airport_index, runway_index, frequency_index, args.pack_id, args.vac_candidate_mode)
     if resolved_vac_root:
-        if args.include_vac_airfields:
-            if args.airfield_source == "openaip":
-                # ICAO codes we already hold from the Guide parse. OpenAIP records for these
-                # codes are kept regardless of type so their authoritative names win on merge.
-                known_icao_codes = {
-                    code
-                    for f in fields
-                    if (code := clean(f.get("code")).upper()) and re.fullmatch(r"[A-Z]{4}", code)
-                }
-                airport_index, runway_index, openaip_frequency_index = load_openaip_airfields(
-                    countries=args.countries,
-                    raw_dir=raw_dir,
-                    api_key=args.openaip_api_key,
-                    base_url=args.openaip_base_url,
-                    local_sources=args.openaip_airports,
-                    include_type_codes=parse_int_set(args.openaip_include_types),
-                    candidate_mode=args.vac_candidate_mode,
-                    known_codes=known_icao_codes,
-                )
-                merge_frequency_indexes(frequency_index, openaip_frequency_index)
-                apply_frequency_index(fields, frequency_index)
-            elif args.airfield_source == "ourairports":
-                airport_index = load_airport_index(args.airports_csv, raw_dir, countries=args.countries)
-                runway_index = load_runway_index(args.runways_csv, raw_dir, countries=args.countries)
-            else:
-                airport_index = {}
-                runway_index = {}
-        if airport_index:
-            add_airfield_entries_from_index(fields, airport_index, runway_index, frequency_index, args.pack_id, args.vac_candidate_mode)
         extra_codes = parse_vac_codes(args.vac_codes, raw_dir)
 
     at_chart_count = 0
@@ -1703,7 +1710,10 @@ def normalize_country(value: Any) -> str:
     if isinstance(value, dict):
         value = value.get("code") or value.get("isoCode") or value.get("iso") or value.get("name")
     text = clean(value).upper()
-    aliases = {"FRANCE": "FR", "SWITZERLAND": "CH", "SCHWEIZ": "CH", "SUISSE": "CH", "ITALY": "IT", "ITALIA": "IT"}
+    # Sources normally send ISO codes; the aliases catch the ones that send a name, where
+    # the first two letters would be wrong ("SPAIN" -> "SP", not ES).
+    aliases = {"FRANCE": "FR", "SWITZERLAND": "CH", "SCHWEIZ": "CH", "SUISSE": "CH", "ITALY": "IT",
+               "ITALIA": "IT", "SPAIN": "ES", "ESPAÑA": "ES", "ESPANA": "ES", "ESPAGNE": "ES"}
     return aliases.get(text, text[:2])
 
 

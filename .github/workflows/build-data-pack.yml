@@ -248,6 +248,7 @@ jobs:
           python scripts/smoke_test_pack.py data/packs/alps-west
           python scripts/smoke_test_pack.py data/packs/alps-east
           python scripts/smoke_test_pack.py data/packs/pyr
+          python scripts/smoke_test_pack.py data/packs/es
 
       # Durable layer 2: commit the updated cache to the repo. Only fires when the build added
       # translations (git diff check), and the commit touches only data/translation-cache.json,

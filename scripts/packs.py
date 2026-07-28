@@ -137,6 +137,22 @@ def in_alps_band(field: dict[str, Any], *, min_lon: float | None = None, max_lon
     return not (max_lon is not None and lon > max_lon)
 
 
+# Notices attached to any pack carrying Spanish fields, on top of the notices every pack gets.
+# Both are things a pilot can act on rather than boilerplate: the first explains why fields the
+# pack claims to have may not be listed (unrated fields are hidden unless C and D are both
+# enabled), the second is honest about the one country whose official charts this project does
+# not ship — ENAIRE's licensing does not currently permit it, so there is nothing to attach and
+# the pilot has to go to the source.
+APVV_NOTICE = (
+    "Spanish-side fields come from the APVV Guide des champs pyrénéens (2008): they carry no "
+    "difficulty rating (enable both C and D fields in Settings to see them) and their details "
+    "are dated — check current conditions."
+)
+ENAIRE_NOTICE = (
+    "No Spanish aerodrome charts are included: check current ENAIRE AIP / Guía VFR publications "
+    "before flight."
+)
+
 # Pack registry. `countries` selects by political country code; `geofence` selects by
 # position. A pack uses exactly one selector. `name` is the display label shown in the app's
 # pack picker (kept multilingual inline until the app localizes pack names from the manifest).
@@ -146,15 +162,15 @@ PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {"id": "de", "names": {"en": "Germany", "fr": "Allemagne", "de": "Deutschland"}, "countries": ("DE",)},
     {"id": "it", "names": {"en": "Italy", "fr": "Italie", "de": "Italien"}, "countries": ("IT",)},
     {"id": "at", "names": {"en": "Austria", "fr": "Autriche", "de": "Österreich"}, "countries": ("AT",)},
+    {"id": "es", "names": {"en": "Spain", "fr": "Espagne", "de": "Spanien"}, "countries": ("ES",),
+     "extraNotices": [APVV_NOTICE, ENAIRE_NOTICE]},
     {"id": "alps-west", "names": {"en": "Western Alps", "fr": "Alpes occidentales", "de": "Westalpen"}, "geofence": "alps-west"},
     {"id": "alps-east", "names": {"en": "Eastern Alps", "fr": "Alpes orientales", "de": "Ostalpen"}, "geofence": "alps-east"},
-    # Both slopes of the chain. The Spanish side comes mostly from the APVV guide (2008),
-    # which rates nothing — those fields ship UNKNOWN, and the app hides unrated fields
-    # unless both C and D are enabled, hence the pack-specific notice.
+    # Both slopes of the chain: the French side from the existing sources, the Spanish side
+    # mostly from the APVV guide (2008), which rates nothing — those fields ship UNKNOWN, and
+    # the app hides unrated fields unless both C and D are enabled, hence the notices.
     {"id": "pyr", "names": {"en": "Pyrenees", "fr": "Pyrénées", "de": "Pyrenäen"}, "geofence": "pyrenees",
-     "extraNotices": [
-         "Spanish-side fields come from the APVV Guide des champs pyrénéens (2008): they carry no difficulty rating (enable both C and D fields in Settings to see them) and their details are dated — check current conditions.",
-     ]},
+     "extraNotices": [APVV_NOTICE, ENAIRE_NOTICE]},
     # Transitional alias for app shells cached from before the West/East split: those shells
     # resolve a stored 'alps' selection against packs.json and would otherwise fall back to the
     # France pack AND persist that, permanently destroying the pilot's Alps selection. Hidden
@@ -164,7 +180,6 @@ PACK_DEFINITIONS: tuple[dict[str, Any], ...] = (
 )
 
 # Every country a build must pull so the packs above can be sliced from one merged field set.
-# ES has no country pack (yet): it is pulled for the Pyrenees geofence pack's Spanish slope.
 BUILD_COUNTRIES: tuple[str, ...] = ("FR", "CH", "DE", "IT", "AT", "ES")
 
 
