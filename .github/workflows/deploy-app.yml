@@ -128,7 +128,13 @@ jobs:
       # know it is retired has to already be in the shell it is serving.
       - name: Write deployment config
         env:
-          PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
+          # Non-main deployments read the DEV data channel (published under dev/ by a
+          # build-data-pack dispatch from that branch) when PACKS_BASE_URL_DEV is set — e.g.
+          # https://data.meetthecows.org/dev/ . Here the falsy-'' quirk documented at CHANNEL
+          # below works FOR us: an unset dev var is '' and falls through to the production
+          # value, so a dev deploy without a dev data channel just reads production data,
+          # which was the behaviour before this variable existed.
+          PACKS_BASE_URL: ${{ github.ref_name != 'main' && vars.PACKS_BASE_URL_DEV || vars.PACKS_BASE_URL }}
           CHARTS_BASE_URL: ${{ vars.CHARTS_BASE_URL }}
           # NB: `x == 'main' && '' || x` does NOT work — '' is falsy, so the || arm always
           # wins and every deployment is labelled with its branch. Test the negative instead.

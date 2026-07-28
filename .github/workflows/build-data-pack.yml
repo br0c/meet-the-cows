@@ -103,6 +103,33 @@ jobs:
           echo "force_full=${FORCE}" >> "$GITHUB_OUTPUT"
           echo "Build mode: force_full=${FORCE} (event=${{ github.event_name }})"
 
+      # One workflow, two data channels. From main this is the production pipeline it always
+      # was. Dispatched on any other ref it becomes the DEV data build: same sources, same
+      # builder, published under dev/ on the same bucket — next.meetthecows.org points there
+      # via PACKS_BASE_URL_DEV (see deploy-app.yml) — and every production-only step below is
+      # gated on `prod`. Those gates are also what make running from dev safe at all: the
+      # translation-cache step pushes HEAD to main, which from a dev checkout would have
+      # merged the whole branch.
+      #
+      # Dev builds run WITHOUT the DeepL key (its lifetime quota is spent once, by main) and
+      # instead union-merge production's published cache, so dev packs carry every translation
+      # main has already paid for and plain dictionary text only for genuinely new strings.
+      - name: Resolve data channel
+        id: channel
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "prod=true"             >> "$GITHUB_OUTPUT"
+            echo "prefix=packs"          >> "$GITHUB_OUTPUT"
+            echo "chart_prefix=vac"      >> "$GITHUB_OUTPUT"
+            echo "chart_key_prefix="     >> "$GITHUB_OUTPUT"
+          else
+            echo "prod=false"            >> "$GITHUB_OUTPUT"
+            echo "prefix=dev/packs"      >> "$GITHUB_OUTPUT"
+            echo "chart_prefix=dev/vac"  >> "$GITHUB_OUTPUT"
+            echo "chart_key_prefix=dev/" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Data channel: $([ "${{ github.ref }}" = "refs/heads/main" ] && echo production || echo "dev (${{ github.ref_name }})")"
+
       # Persist translations so each build only pays DeepL for new/changed text. Three layers,
       # freshest first — the DeepL key is a capped lifetime quota, so losing this cache burns
       # quota that cannot be bought back:
@@ -182,7 +209,10 @@ jobs:
         id: build
         env:
           OPENAIP_API_KEY: ${{ secrets.OPENAIP_API_KEY }}
-          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          # Prod only: the DeepL key is a lifetime quota, spent once by main. Dev builds
+          # inherit main's translations via TRANSLATION_MERGE_URL below and use dictionary
+          # text for anything genuinely new (which main then translates properly on merge).
+          DEEPL_API_KEY: ${{ steps.channel.outputs.prod == 'true' && secrets.DEEPL_API_KEY || '' }}
           # Lifetime (developer-tier) DeepL key: disable the per-build character cap so a full
           # rebuild — such as the schema bump that adds three-language notes — can finish
           # translating in one run instead of one 300k chunk per weekly full rebuild. The build
@@ -192,7 +222,17 @@ jobs:
           # Incremental check + translation-cache self-heal read one pack's state; the fingerprint
           # is identical across packs, so any pack works. Use the France pack as the canonical one
           # (stable id — the Alps pack was split into alps-west/alps-east in schema 14).
-          PACK_STATE_URL: ${{ env.PAGES_BASE_URL }}packs/fr/state.json
+          # Read from the live data origin, per channel. It pointed at the GitHub Pages copy
+          # before — frozen since the Cloudflare migration, so the URL 404s, every state
+          # comparison failed, and every nightly was silently a FULL rebuild. The Pages URL
+          # remains only as the fallback for a non-Cloudflare deployment, where it is live.
+          PACK_STATE_URL: ${{ vars.PACKS_BASE_URL != '' && format('{0}{1}/fr/state.json', vars.PACKS_BASE_URL, steps.channel.outputs.prefix) || format('{0}packs/fr/state.json', env.PAGES_BASE_URL) }}
+          # Dev channel: union-merge production's published translation cache (see
+          # merge_translation_cache_from_url) — always from the PROD prefix, that is the point.
+          TRANSLATION_MERGE_URL: ${{ steps.channel.outputs.prod != 'true' && vars.PACKS_BASE_URL != '' && format('{0}packs/fr/translation-cache.json', vars.PACKS_BASE_URL) || '' }}
+          # Namespaces chart keys (and their bucket objects) per channel: dev stamps dev/vac/…
+          # so a dev build can never overwrite a chart object production apps are reading.
+          MTC_CHART_KEY_PREFIX: ${{ steps.channel.outputs.chart_key_prefix }}
           FORCE_FULL: ${{ steps.mode.outputs.force_full }}
           # Never trust a stable-URL source (a CUP, OpenAIP) by age alone: with the download
           # cache persisted across runs, the TTL window lets a rebuild pair OLD bytes with the
@@ -231,8 +271,11 @@ jobs:
       # same key and never re-store the ~450 MB AT ZIP; a cycle roll changes the hash and saves
       # the refreshed downloads once. Only on build success, so a partial/failed run cannot pin
       # the key with an incomplete cache.
+      # Prod only: caches saved from a branch are invisible to main, so a dev copy would
+      # duplicate the ~450 MB AT ZIP under the branch scope purely as pressure on the 10 GB
+      # cap. Dev runs still RESTORE main's cache above, which is the half that matters.
       - name: Save source download cache
-        if: success() && hashFiles('.cache/_multi/raw/.source-versions.json') != ''
+        if: success() && hashFiles('.cache/_multi/raw/.source-versions.json') != '' && steps.channel.outputs.prod == 'true'
         uses: actions/cache/save@v6
         with:
           path: .cache/_multi/raw
@@ -253,8 +296,10 @@ jobs:
       # Durable layer 2: commit the updated cache to the repo. Only fires when the build added
       # translations (git diff check), and the commit touches only data/translation-cache.json,
       # which matches no workflow's path filter — so it can never retrigger a build.
+      # PROD ONLY, and load-bearing: this step pushes HEAD to main, which from a dev checkout
+      # would merge the entire branch. A dev build cannot add translations anyway (no key).
       - name: Persist translation cache to repo
-        if: steps.build.outputs.changed != 'false'
+        if: steps.build.outputs.changed != 'false' && steps.channel.outputs.prod == 'true'
         run: |
           [ -f .cache/translation-cache.json ] || { echo "no cache file produced; skipping"; exit 0; }
           cp .cache/translation-cache.json data/translation-cache.json
@@ -274,7 +319,7 @@ jobs:
           git push origin HEAD:main
 
       - name: Cache generated data pack for app-only deploys
-        if: steps.build.outputs.changed != 'false'
+        if: steps.build.outputs.changed != 'false' && steps.channel.outputs.prod == 'true'
         uses: actions/cache/save@v6
         with:
           path: data/packs
@@ -333,7 +378,7 @@ jobs:
           BUCKET: ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }}
         run: |
           python -m pip install --quiet boto3
-          python scripts/publish_packs_r2.py --dir dist/site/packs --prefix packs --bucket "$BUCKET"
+          python scripts/publish_packs_r2.py --dir dist/site/packs --prefix "${{ steps.channel.outputs.prefix }}" --bucket "$BUCKET"
 
       # --- Charts to the PRIVATE charts bucket ------------------------------------------------
       # Most charts carry no redistribution right (DFS, ENAV), so they are served by the Worker
@@ -356,7 +401,7 @@ jobs:
           if [ -d dist/site/packs/_shared/docs/vac ]; then
             python scripts/publish_packs_r2.py \
               --dir dist/site/packs/_shared/docs/vac \
-              --prefix vac \
+              --prefix "${{ steps.channel.outputs.chart_prefix }}" \
               --bucket "$CHARTS_BUCKET"
           else
             echo "no charts in this build; nothing to publish"
@@ -364,18 +409,18 @@ jobs:
 
       # --- GitHub Pages (default) ------------------------------------------------------------
       - name: Setup Pages
-        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare'
+        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare' && steps.channel.outputs.prod == 'true'
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
-        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare'
+        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare' && steps.channel.outputs.prod == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           name: github-pages-${{ github.run_attempt }}
           path: dist/site
 
       - name: Deploy to GitHub Pages
-        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare'
+        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare' && steps.channel.outputs.prod == 'true'
         id: deployment
         uses: actions/deploy-pages@v5
         with:

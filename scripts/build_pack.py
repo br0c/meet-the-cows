@@ -304,6 +304,7 @@ def main() -> None:
     parser.add_argument("--deepl-api-url", default=os.environ.get("DEEPL_API_URL", ""), help="Override the DeepL endpoint. Auto-selected from the key (free keys end in ':fx') when unset.")
     parser.add_argument("--deepl-max-chars", type=int, default=int(os.environ.get("DEEPL_MAX_CHARS", "300000")), help="Safety cap on DeepL characters spent in a single build (also bounded by remaining lifetime quota). 0 disables the per-build cap. Protects the finite free-tier budget if the translation cache is ever missed.")
     parser.add_argument("--state-url", default=os.environ.get("PACK_STATE_URL", ""), help="URL of the previously published state.json. When set and the source fingerprint is unchanged, the build short-circuits (skips the rebuild and deploy).")
+    parser.add_argument("--translation-merge-url", default=os.environ.get("TRANSLATION_MERGE_URL", ""), help="Published translation-cache.json to union-merge into this build's cache. Used by dev-channel builds (no DeepL key) to inherit every translation production already paid for.")
     parser.add_argument("--force-full", action="store_true", default=os.environ.get("FORCE_FULL", "").lower() in ("1", "true", "yes"), help="Ignore the incremental short-circuit and rebuild everything.")
     args = parser.parse_args()
     global DEDUPE_DISTANCE_M, DEEPL_API_KEY, DEEPL_API_URL, _DEEPL_BUDGET_CHARS
@@ -349,6 +350,7 @@ def main() -> None:
     # recover the copy published with the last deployed pack instead of re-translating.
     load_translation_cache(root / ".cache" / "translation-cache.json")
     seed_translation_cache_from_url(args.state_url)
+    merge_translation_cache_from_url(args.translation_merge_url)
 
     # Wipe the whole packs root in multi-pack mode (drops stale packs + old staging); otherwise
     # just the single pack directory.
@@ -526,8 +528,9 @@ def main() -> None:
     contrib_notes, contrib_photos = merge_contributions(fields, root / "contributions", media_dir)
     fields.sort(key=lambda f: (0 if f.get("kind") == "outlanding" else 1, str(f.get("name", ""))))
 
-    charts_stamped = stamp_chart_keys(fields)
-    print(f"Charts: {charts_stamped} tagged with a private-bucket key", file=sys.stderr)
+    chart_key_prefix = os.environ.get("MTC_CHART_KEY_PREFIX", "")
+    charts_stamped = stamp_chart_keys(fields, key_prefix=chart_key_prefix)
+    print(f"Charts: {charts_stamped} tagged with a private-bucket key (prefix {chart_key_prefix!r})", file=sys.stderr)
 
     generated_at = dt.datetime.now(dt.UTC).isoformat()
     version = source_state_version(source_state)
@@ -914,7 +917,7 @@ def write_media_manifest(out_dir: Path, version: str) -> int:
 CHART_KEY_RE = re.compile(r"(?:^|/)docs/(vac/[^/]+\.pdf)$", re.I)
 
 
-def stamp_chart_keys(fields: list[dict[str, Any]]) -> int:
+def stamp_chart_keys(fields: list[dict[str, Any]], key_prefix: str = "") -> int:
     """Record, on every chart, the key it has in the private charts bucket.
 
     The published `url` still points at the copy in the public pack tree, so an app shell
@@ -922,19 +925,23 @@ def stamp_chart_keys(fields: list[dict[str, Any]]) -> int:
     about `chartKey` asks the Worker for that key instead, with a token. Both can be true at
     once, which is the whole point: the public copies can then be withdrawn on their own
     schedule rather than in the same instant an app update ships.
+
+    `key_prefix` (env MTC_CHART_KEY_PREFIX) namespaces the keys per data channel: dev builds
+    stamp dev/vac/… and publish the PDFs under that prefix, so a dev build can never overwrite
+    a chart object production apps are reading.
     """
     stamped = 0
     for field in fields:
         for item in field.get("media") or []:
             match = CHART_KEY_RE.search(clean(item.get("url")))
             if match:
-                item["chartKey"] = match.group(1)
+                item["chartKey"] = f"{key_prefix}{match.group(1)}"
                 stamped += 1
         docs = field.get("docs")
         if isinstance(docs, dict):
             match = CHART_KEY_RE.search(clean(docs.get("vac")))
             if match:
-                docs["vacKey"] = match.group(1)
+                docs["vacKey"] = f"{key_prefix}{match.group(1)}"
     return stamped
 
 
@@ -3645,7 +3652,9 @@ def seed_translation_cache_from_url(state_url: str) -> None:
         return
     url = urllib.parse.urljoin(state_url, "translation-cache.json")
     try:
-        request = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+        # The UA matters: the data origin sits behind Cloudflare, which rejects the bare
+        # python-urllib default — same reason every other fetch in this file sets one.
+        request = urllib.request.Request(url, headers={"Cache-Control": "no-cache", "User-Agent": "MeetTheCows/0.7"})
         with urllib.request.urlopen(request, timeout=60) as response:
             loaded = json.loads(response.read().decode("utf-8"))
         if isinstance(loaded, dict) and loaded:
@@ -3653,6 +3662,37 @@ def seed_translation_cache_from_url(state_url: str) -> None:
             print(f"Translation cache seeded from published pack: {len(_TRANSLATION_CACHE):,} entries", file=sys.stderr)
     except Exception as error:  # noqa: BLE001 - seed is best-effort; DeepL cache/quota still guard
         print(f"translation cache seed skipped ({url}): {error}", file=sys.stderr)
+
+
+def merge_translation_cache_from_url(url: str) -> None:
+    """Union-merge the translation cache published at `url` into whatever is already loaded.
+
+    The seed above fires only on an EMPTY cache; this always runs when a URL is given. It
+    exists for dev-channel builds: they run without a DeepL key, so production's published
+    cache — main pays for each translation exactly once — is where their translations come
+    from, and a dev Actions cache that predates last night's main build must not shadow it.
+    Merging is safe in any direction because only DeepL results ever enter the cache
+    (localize_note_cached); dictionary fallbacks are recomputed, never stored. Existing
+    entries win: identical keys hold identical translations, and a fresher local entry only
+    exists where this branch itself translated something.
+    """
+    if not url:
+        return
+    try:
+        request = urllib.request.Request(url, headers={"Cache-Control": "no-cache", "User-Agent": "MeetTheCows/0.7"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            loaded = json.loads(response.read().decode("utf-8"))
+        if not isinstance(loaded, dict):
+            raise ValueError("not a JSON object")
+        added = 0
+        for key, value in loaded.items():
+            if str(key) not in _TRANSLATION_CACHE:
+                _TRANSLATION_CACHE[str(key)] = str(value)
+                added += 1
+        print(f"Translation cache merged from {url}: +{added:,} entries "
+              f"({len(_TRANSLATION_CACHE):,} total)", file=sys.stderr)
+    except Exception as error:  # noqa: BLE001 - best effort; the run degrades to dictionary text
+        print(f"translation cache merge skipped ({url}): {error}", file=sys.stderr)
 
 
 def load_translation_cache(path: Path) -> None:

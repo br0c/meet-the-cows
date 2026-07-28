@@ -150,6 +150,75 @@ def test_translation_cache_seeds_from_published_pack_only_when_empty():
         bp._TRANSLATION_CACHE = {}
 
 
+def test_translation_cache_merge_unions_and_keeps_existing():
+    """The dev-channel merge: production's published cache fills the gaps, never overwrites."""
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"en\x1fWiese": "Meadow", "en\x1fZaun": "PROD-Fence"}).encode()
+
+    original = bp.urllib.request.urlopen
+    bp.urllib.request.urlopen = lambda *a, **k: Resp()
+    try:
+        # Non-empty cache (the case the seed refuses): merge adds what is missing and leaves
+        # what is present — a fresher local entry must never lose to the published copy.
+        bp._TRANSLATION_CACHE = {"en\x1fZaun": "Fence"}
+        bp.merge_translation_cache_from_url("https://example.org/packs/fr/translation-cache.json")
+        assert bp._TRANSLATION_CACHE == {"en\x1fZaun": "Fence", "en\x1fWiese": "Meadow"}
+        # Empty cache: merge behaves like a full seed.
+        bp._TRANSLATION_CACHE = {}
+        bp.merge_translation_cache_from_url("https://example.org/packs/fr/translation-cache.json")
+        assert bp._TRANSLATION_CACHE == {"en\x1fWiese": "Meadow", "en\x1fZaun": "PROD-Fence"}
+        # No URL -> no-op, no fetch.
+        bp.urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(AssertionError("fetched"))
+        bp._TRANSLATION_CACHE = {}
+        bp.merge_translation_cache_from_url("")
+        assert bp._TRANSLATION_CACHE == {}
+    finally:
+        bp.urllib.request.urlopen = original
+        bp._TRANSLATION_CACHE = {}
+
+
+def test_translation_cache_merge_survives_a_dead_url():
+    def boom(*a, **k):
+        raise OSError("connection refused")
+
+    original = bp.urllib.request.urlopen
+    bp.urllib.request.urlopen = boom
+    try:
+        bp._TRANSLATION_CACHE = {"en\x1fZaun": "Fence"}
+        bp.merge_translation_cache_from_url("https://gone.example.org/translation-cache.json")
+        assert bp._TRANSLATION_CACHE == {"en\x1fZaun": "Fence"}  # degraded, not dead
+    finally:
+        bp.urllib.request.urlopen = original
+        bp._TRANSLATION_CACHE = {}
+
+
+def test_chart_keys_take_the_channel_prefix():
+    def fields():
+        return [{
+            "media": [{"type": "pdf", "url": "../_shared/docs/vac/LFNE.pdf"},
+                      {"type": "image", "url": "../_shared/media/x/photo.jpg"}],
+            "docs": {"vac": "../_shared/docs/vac/LFNE.pdf"},
+        }]
+
+    prod = fields()
+    assert bp.stamp_chart_keys(prod) == 1
+    assert prod[0]["media"][0]["chartKey"] == "vac/LFNE.pdf"
+    assert "chartKey" not in prod[0]["media"][1]  # photos are not charts
+    assert prod[0]["docs"]["vacKey"] == "vac/LFNE.pdf"
+
+    dev = fields()
+    assert bp.stamp_chart_keys(dev, key_prefix="dev/") == 1
+    assert dev[0]["media"][0]["chartKey"] == "dev/vac/LFNE.pdf"
+    assert dev[0]["docs"]["vacKey"] == "dev/vac/LFNE.pdf"
+
+
 def test_is_major_airport_excludes_big_airfields_only():
     # Long paved runway or an explicit major/military ICAO -> excluded.
     assert bp.is_major_airport({"kind": "airfield", "code": "LFML", "lengthM": 3490}) is True   # Marseille
