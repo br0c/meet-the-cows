@@ -48,21 +48,34 @@ out body;
 """
 
 
-def fetch(query: str, timeout: int) -> dict:
+def fetch(query: str, timeout: int, *, rounds: int = 3, backoff_s: int = 30) -> dict:
+    """POST the query, trying every mirror, in several rounds with growing pauses.
+
+    One pass over the mirrors is not enough in practice: Overpass instances 504 under load in
+    bursts, and a crawl of ~24 chunks will eventually hit a minute where both mirrors are bad
+    at once — exactly one such minute killed a CI run at chunk 17/24, and continue-on-error
+    then published the previous cols.json, costing the new region its cols. A few rounds
+    spread over a couple of minutes ride the burst out; only a genuinely down service fails.
+    """
     last_error: Exception | None = None
-    for endpoint in ENDPOINTS:
-        try:
-            body = urllib.parse.urlencode({"data": query}).encode()
-            request = urllib.request.Request(
-                endpoint, data=body,
-                headers={"User-Agent": "meet-the-cows col fetcher (github.com/br0c/meet-the-cows)"},
-            )
-            with urllib.request.urlopen(request, timeout=timeout + 30) as response:
-                return json.loads(response.read())
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-            print(f"{endpoint}: {error}", file=sys.stderr)
-            last_error = error
-            time.sleep(5)
+    for attempt in range(rounds):
+        for endpoint in ENDPOINTS:
+            try:
+                body = urllib.parse.urlencode({"data": query}).encode()
+                request = urllib.request.Request(
+                    endpoint, data=body,
+                    headers={"User-Agent": "meet-the-cows col fetcher (github.com/br0c/meet-the-cows)"},
+                )
+                with urllib.request.urlopen(request, timeout=timeout + 30) as response:
+                    return json.loads(response.read())
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+                print(f"{endpoint}: {error}", file=sys.stderr)
+                last_error = error
+                time.sleep(5)
+        if attempt < rounds - 1:
+            wait = backoff_s * (attempt + 1)
+            print(f"every mirror failed (round {attempt + 1}/{rounds}); retrying in {wait}s", file=sys.stderr)
+            time.sleep(wait)
     raise RuntimeError(f"every Overpass endpoint failed: {last_error}")
 
 
