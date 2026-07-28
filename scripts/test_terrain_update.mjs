@@ -125,14 +125,15 @@ const cachedTiles = () => page.evaluate(async () => {
     .filter(p => p.includes('.terr')).sort();
 });
 
-/** Tiles download themselves on open; this just waits for Settings to report the full set. */
+/** Tiles download themselves on open; the card shows no counts any more, so completeness is
+ *  read where it lives: every tile the index names, cached at its versioned URL. */
 async function waitForTerrainSynced() {
   await page.click('#settingsToggle');
-  await page.waitForFunction(() => {
-    const text = document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || '';
-    const m = text.match(/(\d+) (?:of|sur|von) (\d+)/);
-    return m && m[1] === m[2];
-  }, null, { timeout: 15000 }).catch(() => {});
+  await page.waitForFunction(async expected => {
+    const cache = await caches.open('mtc-data');
+    const tiles = (await cache.keys()).filter(r => r.url.includes('.terr'));
+    return tiles.length === expected && tiles.every(r => /\?v=[0-9a-f]{10}$/.test(r.url));
+  }, indexJson.tiles.length, { timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(1000);
 }
 const closeSettings = async () => { await page.click('#settingsToggle').catch(() => {});
@@ -150,9 +151,7 @@ console.log('\n1 — the automatic sync files every tile under its versioned add
     const entry = indexJson.tiles.find(t => t.key === key);
     return entry && p.endsWith(`?v=${entry.sha256.slice(0, 10)}`);
   }));
-  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);
-  check('settings reports the full set offline', /(\d+) (of|sur|von) \1/.test(offline),
-    (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
+  check('the cache holds the full index set', tiles.length === indexJson.tiles.length);
 }
 
 // --- 2. legacy adoption: pre-versioning downloads are re-filed, not re-fetched -------------------
@@ -179,9 +178,11 @@ console.log('\n2 — tiles downloaded before versioning are adopted in place, fr
   await closeSettings();
   await page.click('#settingsToggle');
   await page.waitForSelector('#terrainRouting', { timeout: 8000 });
-  await page.waitForFunction(() => /\d+ (of|sur|von) \d+/.test(
-    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
-    null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(async () => {
+    const cache = await caches.open('mtc-data');
+    return (await cache.keys()).filter(r => r.url.includes('.terr'))
+      .every(r => r.url.includes('?v='));
+  }, null, { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(1500);
 
   const after = await cachedTiles();
@@ -190,9 +191,6 @@ console.log('\n2 — tiles downloaded before versioning are adopted in place, fr
   check('no bare entries survive', after.every(p => p.includes('?v=')));
   check('not one tile crossed the network for it', tileRequestsSince(mark).length === 0,
     tileRequestsSince(mark).join(' '));
-  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);
-  check('settings counts the adopted set as offline', /(\d+) (of|sur|von) \1/.test(offline),
-    (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
 }
 
 // --- 3. a rebuilt tile: reaches the next solve, predecessor swept --------------------------------
@@ -255,18 +253,13 @@ console.log('\n3 — a rebuilt tile: stale serves free until the pilot downloads
   check('the sync fetched exactly the rebuilt tile, at its new address, once',
     fetched.length === 1 && fetched[0].includes(`${victim.key}.terr?v=bbbbbbbbbb`), fetched.join(' '));
   await page.click('#settingsToggle');
-  await page.waitForFunction(() => /2 (of|sur|von) 2/.test(
-    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
-    null, { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(500);
 
   const tiles = await cachedTiles();
   const victimEntries = tiles.filter(p => p.includes(`${victim.key}.terr`));
   check('the cache holds the new version of that tile, and only it',
     victimEntries.length === 1 && victimEntries[0].endsWith('?v=bbbbbbbbbb'), victimEntries.join(' '));
   check('no entry still carries the superseded version', !tiles.some(p => p.endsWith(`?v=${oldVersion}`)));
-  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText);
-  check('settings counts the set current again', /2 (of|sur|von) 2/.test(offline),
-    (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
 }
 
 // --- 3b. the AGL reference lives and dies with the downloaded tiles ------------------------------
@@ -336,6 +329,10 @@ console.log('\n4 — with routing off, cleared tiles stay gone: the automatic sy
   // spend a byte bringing any of it back.
   await page.uncheck('#terrainRouting');
   await page.waitForTimeout(500);
+  // The switch is policy, the cache is data, and they are deliberately disconnected: turning
+  // the feature off must not cost a pilot their downloaded tiles (or the re-download).
+  check('switching terrain off leaves every cached tile alone',
+    (await cachedTiles()).length === 2);
   await page.evaluate(async () => {
     const cache = await caches.open('mtc-data');
     for (const request of await cache.keys()) {
@@ -350,13 +347,7 @@ console.log('\n4 — with routing off, cleared tiles stay gone: the automatic sy
   const tiles = await cachedTiles();
   check('the cache holds no tiles at all', tiles.length === 0, tiles.slice(0, 3).join(' '));
   await page.click('#settingsToggle');
-  await page.waitForFunction(() => /0 (of|sur|von) \d+/.test(
-    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
-    null, { timeout: 8000 }).catch(() => {});
-  const offline = await page.$eval('.settings-card:has(#terrainRouting)', el => el.innerText)
-    .catch(() => '');
-  check('settings reports nothing offline', /0 (of|sur|von) \d+/.test(offline),
-    (offline.match(/\d+ (?:of|sur|von) \d+[^\n]*/) || [''])[0]);
+  await page.waitForTimeout(1000);
   check('and nothing trickles back with routing off', (await cachedTiles()).length === 0);
   // The ground under the simulated place is unknown again — AGL must grey out and the altitude
   // must be read against sea level, not against ground that is no longer there.

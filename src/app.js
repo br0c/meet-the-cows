@@ -301,8 +301,7 @@ const STRINGS = {
     terrainMissing: 'No terrain data is published for this deployment. Glide stays straight-line.',
     terrainCoverage: p => `${p}% of the working area has terrain data`,
     terrainPartial: 'Terrain data is incomplete here, so fields without a route keep their straight-line glide.',
-    terrainAutoNote: 'Kept up to date automatically: the app checks on every open and downloads what changed.',
-    terrainTiles: (n, size) => `${n} ${n === 1 ? 'tile' : 'tiles'} · ${size}`,
+    terrainSize: size => `Terrain: ${size}`,
     terrainCachedCount: (done, total) => `${done} of ${total} ${total === 1 ? 'tile' : 'tiles'} offline`,
     terrainSolving: 'working out routes…',
     route: 'Route',
@@ -463,8 +462,7 @@ const STRINGS = {
     terrainMissing: "Aucune donnée de relief publiée pour ce déploiement. Finesse à vol d'oiseau.",
     terrainCoverage: p => `${p} % de la zone de travail dispose de données de relief`,
     terrainPartial: "Les données de relief sont incomplètes ici : les terrains sans trajet gardent leur finesse à vol d'oiseau.",
-    terrainAutoNote: "Maintenu à jour automatiquement : l'app vérifie à chaque ouverture et télécharge ce qui a changé.",
-    terrainTiles: (n, size) => `${n} tuile${n === 1 ? '' : 's'} · ${size}`,
+    terrainSize: size => `Relief : ${size}`,
     terrainCachedCount: (done, total) => `${done} sur ${total} tuile${total === 1 ? '' : 's'} hors ligne`,
     terrainSolving: 'calcul des trajets…',
     route: 'Trajet',
@@ -625,8 +623,7 @@ const STRINGS = {
     terrainMissing: 'Für diese Installation sind keine Geländedaten veröffentlicht. Gleitzahl bleibt Luftlinie.',
     terrainCoverage: p => `${p} % des Arbeitsbereichs haben Geländedaten`,
     terrainPartial: 'Die Geländedaten sind hier unvollständig; Felder ohne Pfad behalten ihre Luftlinien-Gleitzahl.',
-    terrainAutoNote: 'Wird automatisch aktuell gehalten: Die App prüft bei jedem Öffnen und lädt, was sich geändert hat.',
-    terrainTiles: (n, size) => `${n} ${n === 1 ? 'Kachel' : 'Kacheln'} · ${size}`,
+    terrainSize: size => `Gelände: ${size}`,
     terrainCachedCount: (done, total) => `${done} von ${total} ${total === 1 ? 'Kachel' : 'Kacheln'} offline`,
     terrainSolving: 'Pfade werden berechnet…',
     route: 'Pfad',
@@ -2511,14 +2508,8 @@ function renderTerrainCard() {
           noteId: 'terrainClearanceNote',
           disabled: !state.settings.terrainRouting || disabled,
         })}
-        ${targets.keys.length ? `
-        <dl class="meta-list">
-          <div><dt>${t('downloadSize')}</dt><dd>${escapeHtml(t('terrainTiles', targets.keys.length, formatBytes(targets.bytes)))}</dd></div>
-          <div><dt>${t('offline')}</dt><dd>${escapeHtml(terrain.cacheProgress || cacheStatusLabel(terrain.cacheStatus))}</dd></div>
-        </dl>
-        <p class="settings-note">${escapeHtml(t('terrainAutoNote'))}</p>` : ''}
         ${status ? `<p class="settings-note">${escapeHtml(status)}</p>` : ''}
-        <p class="settings-note">${escapeHtml(t('terrainAttribution'))}</p>
+        <p class="settings-note">${escapeHtml(`${targets.keys.length ? `${t('terrainSize', formatBytes(targets.bytes))} · ` : ''}${t('terrainAttribution')}`)}</p>
       </div>`;
 }
 

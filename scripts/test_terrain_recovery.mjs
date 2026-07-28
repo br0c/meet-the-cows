@@ -121,13 +121,14 @@ async function closeSettings(page) {
   await page.waitForSelector('.field-row');
 }
 
-/** Tiles download themselves (on open, on switch-on, on an index report). Give the automatic
- *  sync a beat and report whether the card shows tiles to have — the shape the old manual
- *  download returned, kept so the scenarios read unchanged. */
+/** Tiles download themselves (on open, on switch-on, on an index report). The card shows no
+ *  counts, so wait on the cache itself: some tile arriving is the recovery signal. Returns
+ *  true like the old manual download did, so the scenarios read unchanged. */
 async function download(page) {
-  await page.waitForFunction(() => /\d+ (of|sur|von) \d+/.test(
-    document.querySelector('.settings-card:has(#terrainRouting)')?.innerText || ''),
-    null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(async () => {
+    const cache = await caches.open('mtc-data');
+    return (await cache.keys()).some(r => r.url.includes('.terr'));
+  }, null, { timeout: 10000 }).catch(() => {});
   await page.waitForTimeout(5000);
   return true;
 }
