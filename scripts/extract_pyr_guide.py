@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Extract the APVV "Guide des champs pyrénéens" (2008) into a committed CUP source.
 
-Input is the guide PDF (not in the repo — APVV distributes it to member clubs; ask them).
+Input is the guide PDF, archived at data/sources/apvv-pyrenees/Champs_pyr_esp_v9_fr_br.pdf
+since 2026-07-29 (the CRVV download it came from is an old link that may disappear, and the
+pack has become the effective source for the guide's photos and drawings).
 Output is data/sources/apvv-pyrenees/: a POINTS.cup plus Pics/*.jpg, the same layout the
 planeur-net CUPX sources use, so build_pack.py ingests it through the existing extra-CUP
 path (see EXTRA_CUPS).
