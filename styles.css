@@ -10,7 +10,16 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: auto; }
+html {
+  scroll-behavior: auto;
+  /* Mobile WebKit and Blink inflate font sizes of their own accord when the layout width
+     changes ("text autosizing"): rotating to landscape enlarges the text, and the multiplier is
+     cached on the render objects, so rotating back leaves it enlarged until something replaces
+     them — which is why opening another screen appeared to fix it. 100% means "use the sizes as
+     authored"; it does not disable pinch zoom, and the OS text-size setting still applies. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 body {
   margin: 0;
   background: var(--bg);
