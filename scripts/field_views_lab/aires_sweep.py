@@ -185,20 +185,20 @@ def main():
                 cur_path = AIRES / f"{fid}_current.jpg"
                 if not cur_path.exists():
                     fv.ortho_crop(f.get("lat") or f["latitude"],
-                                  f.get("lon") or f["longitude"], 1800, cur_path, "FR")
+                                  f.get("lon") or f["longitude"], 1800, cur_path, (f.get("country") or "FR"))
                 cur = cv2.imread(str(cur_path))
                 try:
                     _, stats = tc.register(img, cur, framed, masks, name,
-                                           prescales=(1, 1.5, 2, 3, 4))
+                                           prescales=(1, 1.5, 2, 3, 4, 0.75, 0.5))
                 except RuntimeError:
                     # feature-starved frames (half lake, uniform forest) register against
                     # a wider crop of the same datum — Prunieres needs this
                     wide_path = AIRES / f"{fid}_wide.jpg"
                     if not wide_path.exists():
                         fv.ortho_crop(f.get("lat") or f["latitude"],
-                                      f.get("lon") or f["longitude"], 4500, wide_path, "FR")
+                                      f.get("lon") or f["longitude"], 4500, wide_path, (f.get("country") or "FR"))
                     _, stats = tc.register(img, cv2.imread(str(wide_path)), framed, masks,
-                                           f"{name}(wide)", prescales=(1, 1.5, 2, 3, 4))
+                                           f"{name}(wide)", prescales=(1, 1.5, 2, 3, 4, 0.75, 0.5))
                     stats["via"] = "wide 4500 m crop"
                 view["registration"] = stats
             except Exception as err:  # noqa: BLE001 - verdict rows carry failures

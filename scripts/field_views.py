@@ -179,12 +179,22 @@ def wmts_tile(lat, lon, z):
 
 
 def providers_for(country, lat, lon):
-    """Ordered provider candidates for a point: national ones always, sub-national by bbox."""
-    out = []
-    for p in PROVIDERS.get(country, []):
+    """Ordered provider candidates for a point: national ones always, sub-national by bbox.
+
+    The field's own country is tried first, then any OTHER country whose provider bbox
+    covers the point. A field's country is the guide's, not the ground's: Oulx sits in
+    the Italian Val di Susa but reaches the pack through the French guide, and asking
+    IGN France for it returns blank imagery rather than an error.
+    """
+    def covers(p):
         box = p.get("bbox")
-        if box is None or (box[0] <= lat <= box[2] and box[1] <= lon <= box[3]):
-            out.append(p)
+        return box is None or (box[0] <= lat <= box[2] and box[1] <= lon <= box[3])
+
+    out = [p for p in PROVIDERS.get(country, []) if covers(p)]
+    for other, providers in PROVIDERS.items():
+        if other == country:
+            continue
+        out += [p for p in providers if p.get("bbox") and covers(p)]
     return out
 
 

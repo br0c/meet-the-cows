@@ -321,7 +321,7 @@ def _acceptable(stats):
     return stats["inliers"] >= 20 or (stats["inliers"] >= 12 and stats["rms_px"] <= 2.5)
 
 
-def register(old, cur, framed, ann_masks, label, prescales=(1, 1.5, 2, 3, 4, 5)):
+def register(old, cur, framed, ann_masks, label, prescales=(1, 1.5, 2, 3, 4, 5, 0.75, 0.5)):
     """Similarity transform old px -> current px via SIFT + RANSAC, searching over
     pre-scale hypotheses when the two images' ground resolutions are far apart."""
     kp_mask = chrome_mask(old, framed)
