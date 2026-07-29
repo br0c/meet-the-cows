@@ -186,6 +186,21 @@ def extract_prunieres(img):
             "axis": [a.tolist(), bpt.tolist()], "masks": [dark, ring, arrow]}
 
 
+def ellipse_perimeter(a, b):
+    """Ramanujan's approximation — accurate to ~1e-5 for the eccentricities drawn here."""
+    return math.pi * (3 * (a + b) - math.sqrt(max((3 * a + b) * (a + 3 * b), 0)))
+
+
+def stroke_width(area_px, d1, d2):
+    """Implied width of the curve that produced a component, in pixels.
+
+    A drawn ring is a pen stroke of 2-3 px; a dark terrain feature that happens to trace
+    an ellipse (a hedge line, a copse) is 8-11 px thick. Measured across the corpus, that
+    gap is what separates an annotation from the ground under it.
+    """
+    return area_px / max(ellipse_perimeter(d1 / 2, d2 / 2), 1)
+
+
 def _ring_dist(ell, P):
     """distances from points to an ellipse outline, ~px."""
     (cx, cy), (d1, d2), ang = ell

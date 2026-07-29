@@ -119,9 +119,17 @@ def detect_families(img, framed):
             fitted = math.pi * d1 * d2 / 4
             if not fitted or min(d1, d2) < 40:
                 continue
-            if 0.82 <= area / fitted <= 1.18:
+            # 0.93-1.07, not the old 0.82-1.18: measured across the corpus a drawn ring
+            # fits its ellipse at 1.00 while dark terrain loops land at 0.83-0.85, so the
+            # loose gate was inventing rings on Bayons, St Blaise and Saou.
+            if 0.93 <= area / fitted <= 1.07:
                 rings.append(((cx, cy), (d1, d2), ang))
-    if not rings:
+    # The arc fallback below is speculative by nature — a hedge shadow can trace a thin
+    # ellipse convincingly (Bayons has one at 96% coverage and 2.5 px width). It is only
+    # worth the risk for a photo whose annotation is otherwise unaccounted for; where a
+    # strip or a measured arrow was already found, the drawing is known and guessing at a
+    # ring on top of it can only do harm.
+    if not rings and not fam:
         # Partial ring: forest or a crossing arrow breaks the loop, so there is no hole.
         # Fit each dark arc on its own and keep it only if the resulting ellipse's
         # PERIMETER is largely painted — a scale-free test that does not care how much
@@ -143,7 +151,10 @@ def detect_families(img, framed):
             if not any(inside):
                 continue
             hit = sum(1 for (x, y), ok in zip(poly, inside) if ok and probe[y, x])
-            if hit / len(poly) >= 0.55:
+            # Coverage alone passes terrain arcs too (Bayons scores 0.96), so the curve
+            # must also be pen-thin — see transfer_cv.stroke_width.
+            if (hit / len(poly) >= 0.80
+                    and tc.stroke_width(stats[i, cv2.CC_STAT_AREA], d1, d2) <= 4.5):
                 rings.append(((cx, cy), (d1, d2), ang))
                 break
     if rings:
