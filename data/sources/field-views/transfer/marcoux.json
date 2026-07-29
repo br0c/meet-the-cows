@@ -1,0 +1,62 @@
+{
+ "field": {
+  "id": 331,
+  "lat": 44.1472167,
+  "lon": 6.2811167
+ },
+ "inputPhotos": [
+  "331_Marcoux.jpg",
+  "331_marcoux_2.jpg"
+ ],
+ "pipeline": "transfer v2 (scripts/field_views_lab/transfer_cv.py), deterministic",
+ "generated": "2026-07-29",
+ "registration": {
+  "photo0": {
+   "matches": 121,
+   "inliers": 58,
+   "rms_px": 1.77,
+   "rms_m": 3.3,
+   "prescale": 1,
+   "scale": 2.7886,
+   "rot_deg": 0.11
+  },
+  "photo1": {
+   "matches": 157,
+   "inliers": 25,
+   "rms_px": 0.91,
+   "rms_m": 1.7,
+   "prescale": 1.5,
+   "scale": 0.4447,
+   "rot_deg": -3.61
+  }
+ },
+ "strip_quad_m": [
+  [
+   9.9,
+   -387.4
+  ],
+  [
+   -33.2,
+   -383.4
+  ],
+  [
+   14.7,
+   133.1
+  ],
+  [
+   57.9,
+   129.1
+  ]
+ ],
+ "axis_m": [
+  [
+   22.5,
+   -124.9
+  ],
+  [
+   61.2,
+   117.5
+  ]
+ ],
+ "drawn_bearing": 190.0
+}

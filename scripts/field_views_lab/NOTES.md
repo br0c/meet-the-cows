@@ -265,6 +265,14 @@ Deps: `opencv-python-headless` + `numpy` (SIFT is in main OpenCV since 4.4). v1'
 model-driven transfer (PROMPTS.md template) is superseded; it remains the fallback shape
 for photos where colour masks or SIFT fail.
 
+Storage & lifecycle (decided 2026-07-29): the generated views will REPLACE the old Guide
+photos in the packs, so this repo becomes their source of record. `data/sources/field-views/`
+archives the irreplaceable inputs in git — the full Guide photo snapshot (162 pictures,
+16.8 MB, byte-identical from the cupx) and the extracted per-field geometry. Renders are
+derived: published to R2 like pack media, never stored in git, never rebuilt by the nightly
+pack build. Generation is one-time; refresh is manual and deliberate, roughly yearly when
+imagery campaigns update.
+
 ## Still to do
 
 - Vision API module in `field_views.py` (client behind ANTHROPIC_API_KEY,

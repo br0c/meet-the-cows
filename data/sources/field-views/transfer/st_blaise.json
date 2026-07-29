@@ -1,0 +1,39 @@
+{
+ "field": {
+  "id": 412,
+  "lat": 44.8727833,
+  "lon": 6.61
+ },
+ "inputPhotos": [
+  "412_Saint_Blaise.jpg"
+ ],
+ "pipeline": "transfer v2 (scripts/field_views_lab/transfer_cv.py), deterministic",
+ "generated": "2026-07-29",
+ "registration": {
+  "matches": 388,
+  "inliers": 326,
+  "rms_px": 1.11,
+  "rms_m": 2.1,
+  "prescale": 1,
+  "scale": 1.0261,
+  "rot_deg": 0.03
+ },
+ "strip_quad_m": [
+  [
+   -95.0,
+   83.5
+  ],
+  [
+   -438.1,
+   -164.5
+  ],
+  [
+   -388.8,
+   -230.8
+  ],
+  [
+   -45.8,
+   19.0
+  ]
+ ]
+}
