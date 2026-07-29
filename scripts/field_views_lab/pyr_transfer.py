@@ -13,6 +13,7 @@ verdicts.json. Deterministic — no model call.
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -23,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import field_views as fv  # noqa: E402
 import transfer_cv as tc  # noqa: E402
-from transfer_render import quad_ends  # noqa: E402
 
 SRC = Path(__file__).resolve().parents[2] / "data/sources/field-views/pyr-google"
 WORK = Path(os.environ.get("FIELD_VIEWS_WORK", "field-views-work")) / "pyr"
@@ -49,14 +49,85 @@ def chrome_boxes(img):
     return m
 
 
-def extract_quad(img):
+def split_arrows(mask, stroke=9):
+    """Separate the thick solid direction arrows from the thin drawn outlines.
+
+    The guide's arrows are ~30 px of solid fill while an outline is a ~5 px stroke, and
+    an arrow usually TOUCHES the field it points into — so they merge into one component
+    and a bounding box over the pair spans both (La Peña measured 1526 m against a stated
+    500 m that way). Eroding by more than the stroke width leaves only the arrows, which
+    are then dilated back and removed from the mask.
+    """
+    k = np.ones((stroke, stroke), np.uint8)
+    thick = cv2.erode(mask, k)
+    thick = cv2.dilate(thick, k)          # restore the arrows' own girth
+    # generous dilation: the arrow's anti-aliased halo survives a tight subtraction and
+    # becomes a phantom shape where the tip crosses an outline
+    outlines = mask & cv2.bitwise_not(cv2.dilate(thick, np.ones((13, 13), np.uint8)))
+    return cv2.morphologyEx(outlines, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)), thick
+
+
+def extract_shapes(img, min_area=400):
+    """Every drawn field outline in the capture, as its own traced polygon.
+
+    Not a min-area rectangle: the guide draws irregular hand-traced boundaries that
+    follow the terrain (Sort is a lens shape along a river), and several entries draw
+    TWO strips because two landing directions are usable. The polygon is the truth;
+    reproduce each one.
+    """
     mask = orange_mask(img)
-    box, _ = tc.largest_box(mask, min_area=150)
-    return box, mask
+    # Trace the HOLES in the orange mask, not the strokes around them. The interior of a
+    # drawn field outline is a hole; an arrow that touches (or crosses) the outline adds
+    # mass outside it and leaves the hole intact, where subtracting the arrow would cut
+    # the loop open. The guide's hand-written orange labels ("Champ", "C", "E" at Ainsa)
+    # are open strokes and enclose nothing, so they disappear for free.
+    cnts, hier = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    shapes = []
+    if hier is not None:
+        hier = hier[0]
+        for i, c in enumerate(cnts):
+            if hier[i][3] == -1:              # outer boundary, not an interior
+                continue
+            if cv2.contourArea(c) < min_area:
+                continue
+            (_, _), (dw, dh), _ = cv2.minAreaRect(c)
+            if max(dw, dh) < 30:
+                continue
+            poly = cv2.approxPolyDP(c, 0.012 * cv2.arcLength(c, True), True)
+            shapes.append(poly.reshape(-1, 2).astype(np.float32))
+    if not shapes:
+        raise RuntimeError("no drawn outline found")
+    shapes.sort(key=lambda s: -cv2.contourArea(s.astype(np.int32)))
+    # a genuine second strip is comparable in size to the first; leftovers from an arrow
+    # crossing an outline are not
+    biggest = cv2.contourArea(shapes[0].astype(np.int32))
+    shapes = [s for s in shapes
+              if cv2.contourArea(s.astype(np.int32)) >= 0.15 * biggest]
+    return shapes, mask
 
 
 def px2m(p):
     return (round(float(p[0] - DATUM[0]) * MPP, 1), round(float(DATUM[1] - p[1]) * MPP, 1))
+
+
+def length_check(dims, longueur_stated):
+    """Compare the longest drawn shape against the guide's stated length.
+
+    These are two different quantities: the outline is the whole landable field, the
+    text gives the usable run inside it (Sort draws 860 m and states 600 m). So a drawing
+    LARGER than the stated length is normal and only flagged for review, while a drawing
+    much SMALLER means the extraction lost part of the shape — that one is a defect.
+    """
+    nums = [int(n) for n in re.findall(r"(\d{2,4})\s*m", longueur_stated or "")]
+    if not nums or not dims:
+        return {"stated_m": None, "verdict": "no-stated-length"}
+    stated = max(nums)
+    got = max(d["len_m"] for d in dims)
+    ratio = got / stated
+    verdict = ("ok" if 0.8 <= ratio <= 1.6
+               else "drawn-short" if ratio < 0.8      # defect: shape lost
+               else "drawn-generous")                 # normal: outline > usable run
+    return {"stated_m": stated, "drawn_m": got, "ratio": round(ratio, 2), "verdict": verdict}
 
 
 def transfer(entry):
@@ -68,9 +139,9 @@ def transfer(entry):
     cur = cv2.imread(str(cur_path))
 
     ge1 = cv2.imread(str(SRC / entry["files"][0]))
-    quad, mask = extract_quad(ge1)
+    shapes, mask = extract_shapes(ge1)
     vis = ge1.copy()
-    cv2.polylines(vis, [quad.astype(np.int32)], True, (255, 0, 255), 2)
+    cv2.polylines(vis, [s.astype(np.int32) for s in shapes], True, (255, 0, 255), 2)
     cv2.imwrite(str(OUT / f"trace_{slug}.jpg"), vis)
 
     try:
@@ -90,28 +161,36 @@ def transfer(entry):
     else:
         tc.blend_check(ge1, cur, M, OUT / f"blend_{slug}.jpg")
 
-    quad_m = [px2m(p) for p in tc.apply_m(M, quad)]
-    a, b = quad_ends(quad_m)
-    axis_deg = math.degrees(math.atan2(b[0] - a[0], b[1] - a[1])) % 180
-    return {"id": entry["id"], "name": entry["name"], "country": country,
-            "lat": entry["lat"], "lon": entry["lon"],
-            "orientation_stated": entry["orientation"], "longueur_stated": entry["longueur"],
-            "strip_quad_m": quad_m,
-            "axis_deg": round(axis_deg, 1),
-            "axis_len_m": round(math.dist(a, b)),
-            "registration": stats}
+    polys_m, dims = [], []
+    for s in shapes:
+        pm = [px2m(p) for p in tc.apply_m(M, s)]
+        polys_m.append(pm)
+        (_, _), (dw, dh), ang = cv2.minAreaRect(np.array(pm, np.float32))
+        long_, short = max(dw, dh), min(dw, dh)
+        # minAreaRect angle is measured on the long side, in metre space (north-up)
+        axis = (90 - ang) % 180 if dw >= dh else (-ang) % 180
+        dims.append({"len_m": round(long_), "width_m": round(short), "axis_deg": round(axis, 1)})
+    doc = {"id": entry["id"], "name": entry["name"], "country": country,
+           "lat": entry["lat"], "lon": entry["lon"],
+           "orientation_stated": entry["orientation"], "longueur_stated": entry["longueur"],
+           "shapes_m": polys_m, "shape_dims": dims,
+           "registration": stats}
+    doc["length_check"] = length_check(dims, entry["longueur"])
+    return doc
 
 
 def render(doc):
     from PIL import Image, ImageDraw, ImageFont
     slug = f"{doc['id']}_{doc['name'].replace(' ', '_')}"
-    pts = doc["strip_quad_m"]
-    ce = (min(p[0] for p in pts) + max(p[0] for p in pts)) / 2
-    cn = (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2
+    allpts = [p for poly in doc["shapes_m"] for p in poly]
+    ce = (min(p[0] for p in allpts) + max(p[0] for p in allpts)) / 2
+    cn = (min(p[1] for p in allpts) + max(p[1] for p in allpts)) / 2
     clat = doc["lat"] + cn / 111320
     clon = doc["lon"] + ce / (111320 * math.cos(math.radians(doc["lat"])))
     tmp = OUT / f"final_{slug}.crop.jpg"
-    crop = fv.ortho_crop(clat, clon, 900, tmp, doc["country"])
+    span = max(max(p[0] for p in allpts) - min(p[0] for p in allpts),
+               max(p[1] for p in allpts) - min(p[1] for p in allpts))
+    crop = fv.ortho_crop(clat, clon, max(900, span * 1.5), tmp, doc["country"])
     mpp = crop["mpp"]
     img = Image.open(tmp).convert("RGB")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -120,7 +199,8 @@ def render(doc):
     def to_px(p):
         return (PXW / 2 + (p[0] - ce) / mpp, PXH / 2 - (p[1] - cn) / mpp)
 
-    d.polygon([to_px(p) for p in pts], outline=RED + (255,), width=4)
+    for poly in doc["shapes_m"]:
+        d.polygon([to_px(p) for p in poly], outline=RED + (255,), width=4)
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
         small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 15)
@@ -164,10 +244,13 @@ def main():
             doc = transfer(entry)
             render(doc)
             verdicts[entry["id"]] = doc
-            print(f"{entry['id']} {entry['name']}: OK axis {doc['axis_deg']}° "
-                  f"len {doc['axis_len_m']} m (stated {doc['orientation_stated']} / "
-                  f"{doc['longueur_stated']}) reg {doc['registration']['inliers']} inl "
-                  f"{doc['registration']['rms_m']} m rms", flush=True)
+            dims = ", ".join(f"{d['len_m']}x{d['width_m']}m@{d['axis_deg']}°"
+                             for d in doc["shape_dims"])
+            print(f"{entry['id']} {entry['name']}: {doc['length_check']['verdict']} "
+                  f"[{len(doc['shapes_m'])} shape(s): {dims}] stated "
+                  f"{doc['orientation_stated']} / {doc['longueur_stated']} | reg "
+                  f"{doc['registration']['inliers']} inl {doc['registration']['rms_m']} m",
+                  flush=True)
         except Exception as err:  # noqa: BLE001 - verdict per field, keep going
             verdicts[entry["id"]] = {"id": entry["id"], "name": entry["name"], "error": str(err)}
             print(f"{entry['id']} {entry['name']}: FAILED {err}", flush=True)
