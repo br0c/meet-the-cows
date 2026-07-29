@@ -72,9 +72,67 @@ authoritative for centre/heading; length may be reconciled with source data.
 | FR | IGN Géoplateforme WMS | Licence Ouverte | proven extensively |
 | ES | PNOA WMS | CC BY 4.0-style | endpoint tested |
 | CH | swisstopo SWISSIMAGE WMS | open data, attribution | endpoint tested |
-| AT | basemap.at | CC BY 4.0 | WMTS, not yet wired |
-| DE | per-Land DOP | mixed | per-Land table needed |
-| IT | per-region | mostly not open | the real gap |
+| AT | basemap.at orthophoto WMTS | Open Government Data Lizenz Österreich | **confirmed**, see below |
+| DE | per-Land DOP WMS | CC BY 4.0 / DL-DE-BY-2.0 per Land | **confirmed for 11 Länder**, see below |
+| IT | PCN national + regional | **unresolved** — do not ship | see below |
+
+### Austria — clear to use
+
+basemap.at publishes a 30 cm orthophoto as WMTS (tile template
+`https://mapsneu.wien.gv.at/basemap/bmaporthofoto30cm/normal/google3857/{z}/{y}/{x}.jpeg`,
+verified serving). It is a cooperation of the Länder GIS offices (geoland.at), covers the whole
+country and refreshes every two months. The licence is Austria's Open Government Data licence:
+free including commercial use, conditioned on the credit **"Datenquelle: basemap.at"** (or
+"Grundkarte: basemap.at") rendered as a link to basemap.at. Being WMTS not WMS, it needs a
+tile-stitch path rather than a GetMap call — the one piece of work Austria still costs.
+
+### Germany — clear to use, Land by Land
+
+There is no usable national DOP service (the BKG endpoint answers 403), but the Länder publish
+their own, and most are open data with a named licence. Confirmed serving real imagery AND
+carrying an open licence in their GetCapabilities:
+
+| Land | licence | layer |
+|---|---|---|
+| Bayern | CC BY 4.0 | `DOP40` (`geoservices.bayern.de/od/wms/dop/v1/dop40`) |
+| Niedersachsen | CC BY 4.0 | `WMS_NI_DOP20` |
+| Schleswig-Holstein | CC BY 4.0 | `sh_dop20_rgb` |
+| Baden-Württemberg | DL-DE/BY-2.0 | `IMAGES_DOP_20_RGB` |
+| Rheinland-Pfalz | DL-DE/BY-2.0 | `wms_rp_dop20` |
+| Brandenburg | DL-DE/BY-2.0 | `bebb_dop20c` (`isk.geobasis-bb.de/mapproxy/dop20c/service/wms`) |
+| Thüringen | DL-DE/BY-2.0 | `th_dop20rgb` — **projected CRS only** |
+| Nordrhein-Westfalen | open data, gebührenfrei (VermKatG NRW) | `WMS_NW_DOP` |
+| Sachsen | kostenfrei, terms on geoportal.sachsen.de | `sn_dop_020` |
+| Mecklenburg-Vorpommern | free, attribution obligatory | `WMS_MV_DOP` |
+| Sachsen-Anhalt | service open; licence text not in the capabilities — verify | `lsa_lvermgeo_dop20_2` |
+
+Still to locate: Hessen, Berlin, Hamburg, Bremen, Saarland (the URLs tried all 404, and
+Saarland's service advertises no DOP layer). Four of those five are city-states, so the
+coverage they represent is small, but Hessen is not.
+
+Implementation cost specific to Germany: several services advertise only ETRS89/UTM
+(`EPSG:25832` / `25833`) and no `EPSG:4326` — Thüringen's GetMap fails outright on 4326. The
+fetcher currently assumes 4326 lat/lon, so DE needs per-provider CRS with a reprojected bbox.
+
+### Italy — unresolved, do not ship
+
+Technically reachable, legally not established:
+
+- The national Geoportale (PCN, Ministero dell'Ambiente) serves
+  `OI.ORTOIMMAGINI.2012.32/.33` — verified working, but only via WMS 1.1.1 in `EPSG:32632/33`,
+  and the imagery is from **2012**. Fourteen-year-old imagery is weak evidence for "is this
+  parcel still a landable field", which is the whole question the views answer.
+- Regional services are far newer: Veneto publishes `rv:ortofoto_agea_2024`, Alto Adige a long
+  run of years, Trentino up to 2015. Lombardia, Piemonte and FVG need their endpoints found.
+- Every one of these reports `AccessConstraints: NONE / Nessuno`. That is the **absence of a
+  stated restriction, not a grant of rights**, and it is not the basis on which this project has
+  shipped anyone else's imagery. The terms pages fetched (PCN conditions, Veneto IDT) returned
+  no licence text. Italy's IODL v2.0 exists as a national framework but has not been shown to
+  apply to these particular services.
+
+Recommended path, mirroring ENAIRE: ask. One email to the regional geoportals that matter for
+gliding (Veneto, Lombardia, Piemonte, Trentino, Alto Adige, FVG) converts a guess into a
+documented yes/no. Until then Italian fields get no generated view, exactly as Spain did.
 
 National portals stop dead at their borders (IGN returns blank white 2 km into
 Italy). Provider follows the field's country. Google imagery is excluded
