@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
-const APP_VERSION = '0.8.9-beta';
+const APP_VERSION = '0.8.10-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -4270,10 +4270,10 @@ function cupDescription(field) {
   return parts.join(' · ');
 }
 
-function generateCupText() {
+function generateCupText(fields) {
   // Style: 5 = airfield (solid surface), 3 = outlanding field.
   const rows = ['name,code,country,lat,lon,elev,style,rwdir,rwlen,freq,desc'];
-  for (const field of state.fields) {
+  for (const field of fields) {
     if (!Number.isFinite(field.latitude) || !Number.isFinite(field.longitude)) continue;
     const name = String(field.name || displayCode(field) || 'field').replace(/^#?\d+\s+/, '').trim();
     const elev = Number.isFinite(field.elevationM) ? `${Math.round(field.elevationM)}m` : '';
@@ -4296,25 +4296,136 @@ function generateCupText() {
   return rows.join('\r\n') + '\r\n';
 }
 
-async function exportCup() {
-  if (!state.fields.length) { alert(t('noPackYet')); return; }
-  const ids = activePackIds();
-  const packLabel = ids.length === 1 ? ids[0] : 'selection';
-  const filename = `meet-the-cows-${packLabel}-${resolveLang()}.cup`;
-  const text = generateCupText();
+// One CUP per selected pack, in picker order. Fields are deduped by id when the packs load and
+// tagged with the pack they came from, so a field the Alps and France packs share is written to
+// exactly one file — importing the whole set never produces duplicate waypoints.
+function cupFilesByPack() {
+  const order = activePackIds();
+  if (!order.length) return [];
+  const groups = new Map(order.map(id => [id, []]));
+  for (const field of state.fields) {
+    if (!Number.isFinite(field.latitude) || !Number.isFinite(field.longitude)) continue;
+    groups.get(groups.has(field._packId) ? field._packId : order[0]).push(field);
+  }
+  const lang = resolveLang();
+  return [...groups]
+    .filter(([, fields]) => fields.length)
+    .map(([id, fields]) => ({
+      name: `meet-the-cows-${id}-${lang}.cup`,
+      text: generateCupText(fields),
+    }));
+}
+
+// --- Minimal ZIP writer -----------------------------------------------------------------
+// Written here rather than pulled from a library: the app is offline-first and its CSP allows
+// no third-party script. Deflate when the platform offers it, stored otherwise — both are
+// valid ZIP, so a browser without CompressionStream still gets a readable file.
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let bit = 0; bit < 8; bit += 1) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i += 1) {
+    crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+async function deflateRawBytes(bytes) {
+  if (typeof CompressionStream !== 'function') return null;
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    const out = new Uint8Array(await new Response(stream).arrayBuffer());
+    return out.length < bytes.length ? out : null;
+  } catch (error) {
+    console.warn('deflate unavailable, storing ZIP entries uncompressed', error);
+    return null;
+  }
+}
+
+/** entries: [{ name, text }] -> Blob of a ZIP archive. */
+async function buildZipBlob(entries) {
+  const encoder = new TextEncoder();
+  const now = new Date();
+  // MS-DOS packed date/time: seconds have 2-second resolution, years count from 1980.
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const nameBytes = encoder.encode(entry.name);
+    const raw = encoder.encode(entry.text);
+    const deflated = await deflateRawBytes(raw);
+    const body = deflated || raw;
+    const method = deflated ? 8 : 0;
+    const crc = crc32(raw);
+
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034B50, true);
+    local.setUint16(4, 20, true);           // version needed
+    local.setUint16(6, 0, true);            // flags
+    local.setUint16(8, method, true);
+    local.setUint16(10, dosTime, true);
+    local.setUint16(12, dosDate, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, body.length, true);
+    local.setUint32(22, raw.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    local.setUint16(28, 0, true);           // extra length
+    parts.push(new Uint8Array(local.buffer), nameBytes, body);
+
+    const dir = new DataView(new ArrayBuffer(46));
+    dir.setUint32(0, 0x02014B50, true);
+    dir.setUint16(4, 20, true);             // version made by
+    dir.setUint16(6, 20, true);             // version needed
+    dir.setUint16(8, 0, true);
+    dir.setUint16(10, method, true);
+    dir.setUint16(12, dosTime, true);
+    dir.setUint16(14, dosDate, true);
+    dir.setUint32(16, crc, true);
+    dir.setUint32(20, body.length, true);
+    dir.setUint32(24, raw.length, true);
+    dir.setUint16(28, nameBytes.length, true);
+    dir.setUint32(42, offset, true);        // local header offset
+    central.push(new Uint8Array(dir.buffer), nameBytes);
+
+    offset += 30 + nameBytes.length + body.length;
+  }
+
+  const centralSize = central.reduce((sum, chunk) => sum + chunk.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054B50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+
+async function shareOrDownload(blob, filename) {
   // Prefer the share sheet on phones (Save to Files, or open straight into a nav app).
   try {
-    const file = new File([text], filename, { type: 'text/plain' });
+    const file = new File([blob], filename, { type: blob.type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: filename });
       return;
     }
   } catch (error) {
     if (error?.name === 'AbortError') return;
-    console.warn('CUP share failed, falling back to download', error);
+    console.warn('share failed, falling back to download', error);
   }
   // Fallback: a direct file download (desktop, Android).
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
@@ -4322,6 +4433,19 @@ async function exportCup() {
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+async function exportCup() {
+  if (!state.fields.length) { alert(t('noPackYet')); return; }
+  const files = cupFilesByPack();
+  if (!files.length) { alert(t('noPackYet')); return; }
+  // One pack selected stays one .cup: zipping a single file would only make the pilot unpack it.
+  if (files.length === 1) {
+    await shareOrDownload(new Blob([files[0].text], { type: 'text/plain' }), files[0].name);
+    return;
+  }
+  const blob = await buildZipBlob(files);
+  await shareOrDownload(blob, `meet-the-cows-${resolveLang()}.zip`);
 }
 
 function haversineMeters(lat1, lon1, lat2, lon2) {
