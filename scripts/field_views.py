@@ -39,23 +39,153 @@ PX_W, PX_H = 975, 1300  # portrait, phone-shaped — matches the validated proto
 
 # Orthophoto providers by ISO country, all openly licensed WMS with attribution.
 # Google imagery is deliberately absent: its terms forbid caching/redistribution.
-WMS_PROVIDERS = {
-    "FR": dict(
-        url="https://data.geopf.fr/wms-r/wms",
-        layer="ORTHOIMAGERY.ORTHOPHOTOS",
-        attribution="Orthophoto © IGN France (Licence Ouverte)"),
-    "ES": dict(
-        url="https://www.ign.es/wms-inspire/pnoa-ma",
-        layer="OI.OrthoimageCoverage",
-        attribution="Orthophoto © IGN España PNOA (CC BY 4.0)"),
-    "CH": dict(
-        url="https://wms.geo.admin.ch/",
-        layer="ch.swisstopo.images-swissimage",
-        attribution="Orthophoto © swisstopo (SWISSIMAGE)"),
-    # AT basemap.at (CC BY 4.0) is WMTS-only — needs a tile-stitch path.
-    # DE (per-Land DOP) / IT (per-region): add each service as its licence is
-    # confirmed open; fields without a confirmed provider get no generated view.
+# Each country maps to an ORDERED list of provider candidates. Sub-national providers carry a
+# bbox (S, W, N, E) and are candidates only for points inside it; bboxes overlap (Länder,
+# regions), so ortho_crop falls through to the next candidate when a fetch fails or comes back
+# blank — a service asked about a point just outside its Land answers with white tiles, not an
+# error. Order encodes preference: for Italy the regional services come first because they are
+# recent (Veneto flies 2024) and the national PCN layer is from 2012 — legally fine either way
+# (CAD art. 52 c.2: published without an express licence means open data by statute), but
+# fourteen-year-old imagery is weak evidence for whether a parcel is still landable.
+#
+# `crs`/`version` exist because not everyone speaks WMS 1.3.0 + EPSG:4326: several German
+# services advertise only ETRS89/UTM (EPSG:258xx), and PCN only answers WMS 1.1.1. Austria is
+# WMTS (kind "wmts"): basemap.at publishes tiles, not GetMap, so its crop is stitched.
+# Google imagery stays deliberately absent: its terms forbid caching and redistribution.
+PROVIDERS: dict[str, list[dict]] = {
+    "FR": [dict(url="https://data.geopf.fr/wms-r/wms", layer="ORTHOIMAGERY.ORTHOPHOTOS",
+                attribution="Orthophoto © IGN France (Licence Ouverte)")],
+    "ES": [dict(url="https://www.ign.es/wms-inspire/pnoa-ma", layer="OI.OrthoimageCoverage",
+                attribution="Orthophoto © IGN España PNOA (CC BY 4.0)")],
+    "CH": [dict(url="https://wms.geo.admin.ch/", layer="ch.swisstopo.images-swissimage",
+                attribution="Orthophoto © swisstopo (SWISSIMAGE)")],
+    "AT": [dict(kind="wmts",
+                url="https://mapsneu.wien.gv.at/basemap/bmaporthofoto30cm/normal/google3857/{z}/{y}/{x}.jpeg",
+                attribution="Orthophoto: Datenquelle: basemap.at")],
+    # Germany has no usable national DOP service (the BKG endpoint is 403); the Länder publish
+    # their own under CC BY 4.0 / DL-DE-BY-2.0 / their open-data terms — see field_views_lab/
+    # NOTES.md for the licence audit. Hessen, Berlin, Hamburg, Bremen and Saarland are still
+    # missing endpoints; fields only they cover simply get no crop until one is found.
+    "DE": [
+        # by_dop40c, not the DOP40 group: the group answers a valid but empty JPEG.
+        dict(url="https://geoservices.bayern.de/od/wms/dop/v1/dop40", layer="by_dop40c",
+             bbox=(47.2, 8.9, 50.6, 13.9),
+             attribution="Orthophoto © Bayerische Vermessungsverwaltung (CC BY 4.0)"),
+        dict(url="https://owsproxy.lgl-bw.de/owsproxy/ows/WMS_LGL-BW_ATKIS_DOP_20_C",
+             layer="IMAGES_DOP_20_RGB", bbox=(47.5, 7.5, 49.8, 10.5),
+             attribution="Orthophoto © LGL Baden-Württemberg (dl-de/by-2-0)"),
+        dict(url="https://www.wms.nrw.de/geobasis/wms_nw_dop", layer="nw_dop_rgb",
+             bbox=(50.3, 5.8, 52.6, 9.5),
+             attribution="Orthophoto © Geobasis NRW (Open Data)"),
+        dict(url="https://opendata.lgln.niedersachsen.de/doorman/noauth/dop_wms",
+             layer="ni_dop20", bbox=(51.3, 6.6, 53.9, 11.6),
+             attribution="Orthophoto © LGLN Niedersachsen (CC BY 4.0)"),
+        dict(url="https://geo4.service24.rlp.de/wms/rp_dop20.fcgi", layer="rp_dop20",
+             bbox=(48.9, 6.1, 50.95, 8.5),
+             attribution="Orthophoto © GeoBasis-DE / LVermGeoRP (dl-de/by-2-0)"),
+        dict(url="https://service.gdi-sh.de/WMS_SH_DOP20col_OpenGBD", layer="sh_dop20_rgb",
+             bbox=(53.35, 7.8, 55.1, 11.4),
+             attribution="Orthophoto © GeoBasis-DE/LVermGeo SH (CC BY 4.0)"),
+        dict(url="https://geodienste.sachsen.de/wms_geosn_dop-rgb/guest", layer="sn_dop_020",
+             bbox=(50.15, 11.8, 51.7, 15.1),
+             attribution="Orthophoto © GeoSN Sachsen (Open Data)"),
+        dict(url="https://www.geoproxy.geoportal-th.de/geoproxy/services/DOP",
+             # th_dop (the group), not th_dop20rgb: the sublayer alone raises a
+             # ServiceException. UTM only — this service rejects EPSG:4326 outright.
+             layer="th_dop", bbox=(50.2, 9.8, 51.65, 12.7), crs="EPSG:25832",
+             attribution="Orthophoto © GDI-Th Thüringen (dl-de/by-2-0)"),
+        dict(url="https://isk.geobasis-bb.de/mapproxy/dop20c/service/wms", layer="bebb_dop20c",
+             bbox=(51.35, 11.2, 53.6, 14.8),
+             attribution="Orthophoto © GeoBasis-DE/LGB Brandenburg (dl-de/by-2-0)"),
+        dict(url="https://www.geodaten-mv.de/dienste/adv_dop", layer="mv_dop",
+             bbox=(53.1, 10.6, 54.7, 14.4),
+             attribution="Orthophoto © GeoBasis-DE/MV"),
+        dict(url="https://www.geodatenportal.sachsen-anhalt.de/wss/service/ST_LVermGeo_DOP_WMS_OpenData/guest",
+             layer="lsa_lvermgeo_dop20_2", bbox=(50.9, 10.5, 53.05, 13.2),
+             attribution="Orthophoto © LVermGeo Sachsen-Anhalt (dl-de/by-2-0)"),
+    ],
+    # Italian regional services first (recent imagery), national PCN 2012 as the fallback; the
+    # PCN layer name's trailing number is its UTM zone. Lombardia, Piemonte, FVG and Trentino
+    # endpoints are still to be found — Trentino's SIAT WMS publishes only the sheet-index
+    # grids (qu_ = quadro d'unione), not the imagery itself. See NOTES.md.
+    "IT": [
+        # p_bz- (the provincial coverage), not gvcc- (municipal, white outside towns);
+        # the mapproxy rejects EPSG:4326 outright, so UTM it is.
+        dict(url="https://geoservices.buergernetz.bz.it/mapproxy/ows/service",
+             layer="p_bz-Orthoimagery:Aerial-2023-RGB", bbox=(46.2, 10.35, 47.1, 12.5),
+             crs="EPSG:25832",
+             attribution="Ortofoto 2023 © Provincia Autonoma di Bolzano (open data)"),
+        dict(url="https://idt2-geoserver.regione.veneto.it/geoserver/wms",
+             layer="rv:ortofoto_agea_2024", bbox=(44.75, 10.6, 46.7, 13.1),
+             attribution="Ortofoto AGEA 2024 © Regione del Veneto (open data)"),
+        dict(url="http://wms.pcn.minambiente.it/ogc?map=/ms_ogc/WMS_v1.3/raster/ortofoto_colore_12.map",
+             layer="OI.ORTOIMMAGINI.2012.32", bbox=(35.0, 6.0, 47.5, 12.0), version="1.1.1",
+             attribution="Ortofoto 2012 © Geoportale Nazionale (MASE)"),
+        dict(url="http://wms.pcn.minambiente.it/ogc?map=/ms_ogc/WMS_v1.3/raster/ortofoto_colore_12.map",
+             layer="OI.ORTOIMMAGINI.2012.33", bbox=(35.0, 12.0, 47.5, 19.0), version="1.1.1",
+             attribution="Ortofoto 2012 © Geoportale Nazionale (MASE)"),
+    ],
 }
+
+# Back-compat view for callers that predate the candidate lists (first entry per country).
+WMS_PROVIDERS = {country: entries[0] for country, entries in PROVIDERS.items()}
+
+
+# --- Coordinate plumbing for providers that do not speak EPSG:4326 --------------------------
+
+def utm_from_wgs84(lat, lon, epsg):
+    """WGS84 -> UTM easting/northing for EPSG:258xx / EPSG:326xx (zone = last two digits).
+
+    Standard series expansion, sub-metre accurate — pyproj precision is not needed to place a
+    600-2000 m image bbox, and this keeps the script dependency-free. ETRS89 vs WGS84 differ
+    by well under a metre in Europe, so EPSG:258xx is served by the same math.
+    """
+    zone = int(str(epsg)[-2:])
+    a, f = 6378137.0, 1 / 298.257223563
+    e2 = f * (2 - f)
+    ep2 = e2 / (1 - e2)
+    k0, e0 = 0.9996, 500000.0
+    lon0 = math.radians(zone * 6 - 183)
+    phi, lam = math.radians(lat), math.radians(lon)
+    n = a / math.sqrt(1 - e2 * math.sin(phi) ** 2)
+    t = math.tan(phi) ** 2
+    c = ep2 * math.cos(phi) ** 2
+    big_a = (lam - lon0) * math.cos(phi)
+    m = a * ((1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256) * phi
+             - (3 * e2 / 8 + 3 * e2 ** 2 / 32 + 45 * e2 ** 3 / 1024) * math.sin(2 * phi)
+             + (15 * e2 ** 2 / 256 + 45 * e2 ** 3 / 1024) * math.sin(4 * phi)
+             - (35 * e2 ** 3 / 3072) * math.sin(6 * phi))
+    east = e0 + k0 * n * (big_a + (1 - t + c) * big_a ** 3 / 6
+                          + (5 - 18 * t + t ** 2 + 72 * c - 58 * ep2) * big_a ** 5 / 120)
+    north = k0 * (m + n * math.tan(phi) * (big_a ** 2 / 2
+                  + (5 - t + 9 * c + 4 * c ** 2) * big_a ** 4 / 24
+                  + (61 - 58 * t + t ** 2 + 600 * c - 330 * ep2) * big_a ** 6 / 720))
+    return east, north
+
+
+def mercator_from_wgs84(lat, lon):
+    """WGS84 -> Web Mercator (EPSG:3857) metres, for WMTS tile math."""
+    r = 6378137.0
+    return r * math.radians(lon), r * math.atanh(math.sin(math.radians(lat)))
+
+
+def wmts_tile(lat, lon, z):
+    """Google-scheme tile indices containing a point at zoom z."""
+    n = 2 ** z
+    x = int((lon + 180) / 360 * n)
+    lat_r = math.radians(lat)
+    y = int((1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * n)
+    return x, y
+
+
+def providers_for(country, lat, lon):
+    """Ordered provider candidates for a point: national ones always, sub-national by bbox."""
+    out = []
+    for p in PROVIDERS.get(country, []):
+        box = p.get("bbox")
+        if box is None or (box[0] <= lat <= box[2] and box[1] <= lon <= box[3]):
+            out.append(p)
+    return out
 
 
 def http_get(url, data=None, timeout=90):
@@ -222,23 +352,134 @@ def cmd_match(args):
         print(f"  {k:12} {got}/{tot} from OSM")
 
 
-def wms_crop(lat, lon, width_m, out_path, country="FR"):
-    p = WMS_PROVIDERS[country]
+def wms_getmap_params(p, lat, lon, width_m, height_m):
+    """GetMap query parameters honouring the provider's WMS version and CRS.
+
+    Axis order is the eternal WMS trap: 1.3.0 + EPSG:4326 wants lat,lon; 1.1.1 wants lon,lat
+    (and calls the key SRS); projected CRSs are easting,northing in both versions.
+    """
+    version = p.get("version", "1.3.0")
+    crs = p.get("crs", "EPSG:4326")
+    if crs.upper().startswith("EPSG:4326"):
+        dlat = height_m / 111320
+        dlon = width_m / (111320 * math.cos(math.radians(lat)))
+        south, west = lat - dlat / 2, lon - dlon / 2
+        north, east = lat + dlat / 2, lon + dlon / 2
+        latlon_first = version == "1.3.0"
+        box = (south, west, north, east) if latlon_first else (west, south, east, north)
+    else:
+        cx, cy = utm_from_wgs84(lat, lon, crs.split(":")[1])
+        box = (cx - width_m / 2, cy - height_m / 2, cx + width_m / 2, cy + height_m / 2)
+    return {"SERVICE": "WMS", "VERSION": version, "REQUEST": "GetMap",
+            "LAYERS": p["layer"], "STYLES": "",
+            ("CRS" if version == "1.3.0" else "SRS"): crs,
+            "BBOX": ",".join(f"{v:.6f}" for v in box),
+            "WIDTH": str(PX_W), "HEIGHT": str(PX_H), "FORMAT": "image/jpeg"}
+
+
+def fetch_wmts_crop(p, lat, lon, width_m, height_m):
+    """Stitch a lat/lon-boxed crop from a google-scheme WMTS tile pyramid -> JPEG bytes.
+
+    The zoom is picked so the tile resolution meets the target metres-per-pixel; the mercator
+    pixel box covering the frame is assembled from tiles and resampled to PX_W x PX_H. Over a
+    one-or-two-kilometre frame the mercator-vs-equirectangular mismatch is centimetres.
+    """
+    import io
+
+    from PIL import Image  # lazy: only imagery paths need Pillow
+
+    target_mpp = width_m / PX_W
+    z = min(19, max(1, math.ceil(math.log2(
+        156543.03392804097 * math.cos(math.radians(lat)) / target_mpp))))
+    res = 156543.03392804097 / 2 ** z  # mercator metres per pixel at this zoom
+    half_h = height_m / 2
+    dlat = half_h / 111320
+    dlon = (width_m / 2) / (111320 * math.cos(math.radians(lat)))
+    x_min, y_min = mercator_from_wgs84(lat, lon - dlon)[0], None
+    west_x, north_y = mercator_from_wgs84(lat + dlat, lon - dlon)
+    east_x, south_y = mercator_from_wgs84(lat - dlat, lon + dlon)
+    origin = math.pi * 6378137.0
+    px_west = (west_x + origin) / res
+    px_east = (east_x + origin) / res
+    px_north = (origin - north_y) / res
+    px_south = (origin - south_y) / res
+    tile_x0, tile_x1 = int(px_west // 256), int(px_east // 256)
+    tile_y0, tile_y1 = int(px_north // 256), int(px_south // 256)
+    canvas = Image.new("RGB", ((tile_x1 - tile_x0 + 1) * 256, (tile_y1 - tile_y0 + 1) * 256))
+    for ty in range(tile_y0, tile_y1 + 1):
+        for tx in range(tile_x0, tile_x1 + 1):
+            tile = http_get(p["url"].format(z=z, x=tx, y=ty))
+            canvas.paste(Image.open(io.BytesIO(tile)), ((tx - tile_x0) * 256, (ty - tile_y0) * 256))
+    crop = canvas.crop((round(px_west - tile_x0 * 256), round(px_north - tile_y0 * 256),
+                        round(px_east - tile_x0 * 256), round(px_south - tile_y0 * 256)))
+    out = io.BytesIO()
+    crop.resize((PX_W, PX_H), Image.LANCZOS).save(out, "JPEG", quality=90)
+    return out.getvalue()
+
+
+def blankish(image_bytes):
+    """True when a fetched crop is effectively empty — the answer a WMS gives for a point
+    outside its coverage is white (or a single flat tone), not an error."""
+    import io
+
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("L").resize((64, 64))
+    except Exception:  # noqa: BLE001 - undecodable body = not a usable crop
+        return True
+    pixels = list(img.get_flattened_data() if hasattr(img, "get_flattened_data")
+                  else img.getdata())
+    mean = sum(pixels) / len(pixels)
+    spread = sum(abs(v - mean) for v in pixels) / len(pixels)
+    return spread < 3.0
+
+
+def ortho_crop(lat, lon, width_m, out_path, country="FR"):
+    """Fetch a portrait orthophoto crop, trying the country's providers in order.
+
+    Falls through on HTTP errors, undecodable bodies and blank coverage, so overlapping
+    sub-national bboxes cost one wasted request at worst. Returns
+    {mpp, attribution, provider_url} or raises when every candidate failed.
+    """
     height_m = width_m * PX_H / PX_W
-    dlat = height_m / 111320
-    dlon = width_m / (111320 * math.cos(math.radians(lat)))
-    bbox = (lat - dlat / 2, lon - dlon / 2, lat + dlat / 2, lon + dlon / 2)
-    params = {"SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
-              "LAYERS": p["layer"], "STYLES": "", "CRS": "EPSG:4326",
-              "BBOX": ",".join(f"{v:.6f}" for v in bbox),
-              "WIDTH": str(PX_W), "HEIGHT": str(PX_H), "FORMAT": "image/jpeg"}
-    Path(out_path).write_bytes(http_get(p["url"] + "?" + urllib.parse.urlencode(params)))
-    return width_m / PX_W
+    candidates = providers_for(country, lat, lon)
+    if not candidates:
+        raise RuntimeError(f"no imagery provider covers {country} ({lat:.4f}, {lon:.4f})")
+    last_error = None
+    for p in candidates:
+        # Two attempts per provider before falling through: a transient 503 must cost a
+        # retry, not this provider's (possibly much fresher) imagery. Blank coverage is
+        # not retried — the service answered fine; it just does not cover the point.
+        for attempt in range(2):
+            try:
+                if p.get("kind") == "wmts":
+                    body = fetch_wmts_crop(p, lat, lon, width_m, height_m)
+                else:
+                    body = http_get(p["url"] + ("&" if "?" in p["url"] else "?")
+                                    + urllib.parse.urlencode(wms_getmap_params(p, lat, lon, width_m, height_m)))
+            except Exception as error:  # noqa: BLE001 - retry once, then next candidate
+                last_error = error
+                if attempt == 0:
+                    time.sleep(3)
+                continue
+            if blankish(body):
+                last_error = f"blank coverage from {p['url']}"
+                break
+            Path(out_path).write_bytes(body)
+            return dict(mpp=width_m / PX_W, attribution=p["attribution"], provider_url=p["url"])
+    raise RuntimeError(f"every provider failed for {country} ({lat:.4f}, {lon:.4f}): {last_error}")
+
+
+def wms_crop(lat, lon, width_m, out_path, country="FR"):
+    """Back-compat wrapper: metres-per-pixel only. New callers want ortho_crop."""
+    return ortho_crop(lat, lon, width_m, out_path, country)["mpp"]
 
 
 def cmd_crop(args):
-    mpp = wms_crop(args.lat, args.lon, args.width_m, args.out, args.country)
-    print(f"wrote {args.out} ({args.width_m:.0f} m wide, {mpp:.2f} m/px)")
+    crop = ortho_crop(args.lat, args.lon, args.width_m, args.out, args.country)
+    print(f"wrote {args.out} ({args.width_m:.0f} m wide, {crop['mpp']:.2f} m/px, "
+          f"{crop['attribution']})")
 
 
 def cmd_render(args):
@@ -254,7 +495,8 @@ def cmd_render(args):
     clat = entry["lat"] + (g["dy"] / 2) / 111320
     clon = entry["lon"] + (g["dx"] / 2) / (111320 * math.cos(math.radians(entry["lat"])))
     tmp = Path(args.out).with_suffix(".crop.jpg")
-    mpp = wms_crop(clat, clon, frame_w, tmp, country)
+    crop = ortho_crop(clat, clon, frame_w, tmp, country)
+    mpp = crop["mpp"]
     img = Image.open(tmp).convert("RGB")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(overlay)
@@ -297,7 +539,7 @@ def cmd_render(args):
     d.rectangle([0, PX_H - bar_h, PX_W, PX_H], fill=(10, 15, 25, 175))
     d.text((14, PX_H - bar_h + 8), entry["name"], font=font, fill=(255, 255, 255, 255))
     d.text((14, PX_H - 20),
-           WMS_PROVIDERS[country]["attribution"] + " · Runway © OpenStreetMap contributors",
+           crop["attribution"] + " · Runway © OpenStreetMap contributors",
            font=small, fill=(200, 206, 218, 255))
     Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB").save(
         args.out, quality=90)

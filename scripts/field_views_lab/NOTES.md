@@ -138,18 +138,23 @@ Sources, newest first, which is what matters for judging whether a parcel is sti
 
 | service | layer | vintage |
 |---|---|---|
-| Veneto IDT | `rv:ortofoto_agea_2024` | 2024 |
-| Alto Adige | `gvcc-Orthoimagery:Aerial-*-RGB` | long annual run |
-| Trentino | `stem:qu_ortofoto_2015` | 2015 |
-| PCN national | `OI.ORTOIMMAGINI.2012.32` / `.33` | 2012 — fallback only |
+| Veneto IDT | `rv:ortofoto_agea_2024` | 2024 — verified serving |
+| Alto Adige | `p_bz-Orthoimagery:Aerial-2023-RGB`, EPSG:25832 only | 2023 — verified serving |
+| PCN national | `OI.ORTOIMMAGINI.2012.32` / `.33`, WMS 1.1.1 | 2012 — fallback only |
 
-Lombardia, Piemonte and FVG endpoints still need finding. Prefer regional over PCN wherever a
-region covers the field: the national layer is fourteen years old, and while it is legally fine
-it is weak evidence for the question these views answer.
+Wrong turns worth remembering: Alto Adige's `gvcc-` namespace is the municipal coverage and
+answers white outside towns — `p_bz-` is the provincial one; and Trentino's SIAT WMS publishes
+only sheet-index grids (`qu_` = quadro d'unione), not imagery, so Trentino has no regional
+provider yet and falls back to PCN. Lombardia, Piemonte, FVG and Trentino endpoints still need
+finding. Prefer regional over PCN wherever a region covers the field: the national layer is
+fourteen years old, and while legally fine it is weak evidence for the question these views
+answer.
 
-Technical notes: PCN answers only WMS **1.1.1** with `EPSG:32632/32633` (UTM 32/33 — the layer
-name's trailing number IS the zone), not 1.3.0/4326. Regional services vary. Like Germany, Italy
-needs per-provider CRS and version rather than the single 4326 assumption the fetcher makes.
+All of this is implemented in `field_views.py` (PROVIDERS table + `ortho_crop`): per-provider
+WMS version and CRS with a dependency-free UTM projection, bbox routing with blank-coverage
+fall-through for overlapping sub-national services, and a WMTS tile-stitch for basemap.at.
+Verified live end-to-end: Bayern, Thüringen (UTM), BW-overlap fall-through, NRW,
+Schleswig-Holstein, Veneto 2024, Bolzano 2023, PCN Rome, basemap.at stitch, IGN France.
 
 National portals stop dead at their borders (IGN returns blank white 2 km into
 Italy). Provider follows the field's country. Google imagery is excluded
