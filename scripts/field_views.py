@@ -48,8 +48,13 @@ WMS_PROVIDERS = {
         url="https://www.ign.es/wms-inspire/pnoa-ma",
         layer="OI.OrthoimageCoverage",
         attribution="Orthophoto © IGN España PNOA (CC BY 4.0)"),
-    # CH swisstopo / AT basemap.at / DE Länder: to be added once their endpoints
-    # are validated the same way FR and ES were.
+    "CH": dict(
+        url="https://wms.geo.admin.ch/",
+        layer="ch.swisstopo.images-swissimage",
+        attribution="Orthophoto © swisstopo (SWISSIMAGE)"),
+    # AT basemap.at (CC BY 4.0) is WMTS-only — needs a tile-stitch path.
+    # DE (per-Land DOP) / IT (per-region): add each service as its licence is
+    # confirmed open; fields without a confirmed provider get no generated view.
 }
 
 
@@ -83,6 +88,7 @@ def load_fields(path):
         media = f.get("media")
         out.append(dict(id=f.get("id"), name=f.get("name"), lat=lat, lon=lon,
                         kind=f.get("kind"), lengthM=f.get("lengthM"),
+                        country=f.get("country"),
                         media=len(media) if isinstance(media, list) else (media or 0)))
     return out
 
@@ -197,7 +203,8 @@ def cmd_match(args):
             if g and g["dist"] <= args.radius and (best is None or g["dist"] < best["dist"]):
                 best = g
         entry = dict(id=f["id"], name=f["name"], kind=f["kind"], lat=f["lat"],
-                     lon=f["lon"], media=f["media"], osm=best)
+                     lon=f["lon"], country=f.get("country"), media=f["media"],
+                     osm=best)
         matches.append(entry)
         osm_count += best is not None
     Path(args.out).write_text(json.dumps(matches))
