@@ -20,7 +20,8 @@ PXW, PXH = 975, 1300
 RED = (226, 40, 25)
 FRAME_M = 900
 
-TR = json.loads((OUT / "transfer.json").read_text())
+TR = (json.loads((OUT / "transfer.json").read_text())
+      if (OUT / "transfer.json").exists() else {})  # absent when only helpers are imported
 
 NAMES = {"bayons": "320 Bayons", "marcoux": "331 Marcoux",
          "st_blaise": "412 St Blaise", "prunieres": "423 Prunieres"}
