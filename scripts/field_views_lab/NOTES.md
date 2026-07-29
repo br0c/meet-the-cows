@@ -74,7 +74,7 @@ authoritative for centre/heading; length may be reconciled with source data.
 | CH | swisstopo SWISSIMAGE WMS | open data, attribution | endpoint tested |
 | AT | basemap.at orthophoto WMTS | Open Government Data Lizenz Österreich | **confirmed**, see below |
 | DE | per-Land DOP WMS | CC BY 4.0 / DL-DE-BY-2.0 per Land | **confirmed for 11 Länder**, see below |
-| IT | PCN national + regional | **unresolved** — do not ship | see below |
+| IT | regional geoportals (+ PCN national) | open by law — CAD art. 52 c.2 | **confirmed**, see below |
 
 ### Austria — clear to use
 
@@ -114,25 +114,42 @@ Implementation cost specific to Germany: several services advertise only ETRS89/
 (`EPSG:25832` / `25833`) and no `EPSG:4326` — Thüringen's GetMap fails outright on 4326. The
 fetcher currently assumes 4326 lat/lon, so DE needs per-provider CRS with a reprojected bbox.
 
-### Italy — unresolved, do not ship
+### Italy — clear to use, by statute
 
-Technically reachable, legally not established:
+The licence question is settled by Italian law rather than by anything the services say. CAD
+(D.Lgs. 82/2005) art. 52 c.2 provides that data a public administration publishes *without
+expressly adopting a licence* is **deemed released as open data** ("si intendono rilasciati come
+dati di tipo aperto"), which art. 1 c.1 lett. l-bis defines as reusable by anyone including
+commercially, at no more than marginal cost. These geoportals are public administrations
+publishing with no stated licence, so the open-by-default rule applies directly. Their
+`AccessConstraints: none` is consistent with that but is not itself the grant — the OGC spec
+treats an omitted constraint and the literal word "none" identically, so the metadata alone would
+prove nothing.
 
-- The national Geoportale (PCN, Ministero dell'Ambiente) serves
-  `OI.ORTOIMMAGINI.2012.32/.33` — verified working, but only via WMS 1.1.1 in `EPSG:32632/33`,
-  and the imagery is from **2012**. Fourteen-year-old imagery is weak evidence for "is this
-  parcel still a landable field", which is the whole question the views answer.
-- Regional services are far newer: Veneto publishes `rv:ortofoto_agea_2024`, Alto Adige a long
-  run of years, Trentino up to 2015. Lombardia, Piemonte and FVG need their endpoints found.
-- Every one of these reports `AccessConstraints: NONE / Nessuno`. That is the **absence of a
-  stated restriction, not a grant of rights**, and it is not the basis on which this project has
-  shipped anyone else's imagery. The terms pages fetched (PCN conditions, Veneto IDT) returned
-  no licence text. Italy's IODL v2.0 exists as a national framework but has not been shown to
-  apply to these particular services.
+Note this reasoning is Italy-specific and deliberately did NOT apply to Spain: ENAIRE's Aviso
+Legal expressly reserves all rights and forbids reproduction without written authorisation, which
+is exactly the "express adoption of a licence" that switches art. 52 c.2 off. Written permission
+was necessary there and is not here.
 
-Recommended path, mirroring ENAIRE: ask. One email to the regional geoportals that matter for
-gliding (Veneto, Lombardia, Piemonte, Trentino, Alto Adige, FVG) converts a guess into a
-documented yes/no. Until then Italian fields get no generated view, exactly as Spain did.
+Attribution is still rendered — the media credit line names the publisher for every source, and
+open data terms generally expect the source named even when they do not demand it.
+
+Sources, newest first, which is what matters for judging whether a parcel is still landable:
+
+| service | layer | vintage |
+|---|---|---|
+| Veneto IDT | `rv:ortofoto_agea_2024` | 2024 |
+| Alto Adige | `gvcc-Orthoimagery:Aerial-*-RGB` | long annual run |
+| Trentino | `stem:qu_ortofoto_2015` | 2015 |
+| PCN national | `OI.ORTOIMMAGINI.2012.32` / `.33` | 2012 — fallback only |
+
+Lombardia, Piemonte and FVG endpoints still need finding. Prefer regional over PCN wherever a
+region covers the field: the national layer is fourteen years old, and while it is legally fine
+it is weak evidence for the question these views answer.
+
+Technical notes: PCN answers only WMS **1.1.1** with `EPSG:32632/32633` (UTM 32/33 — the layer
+name's trailing number IS the zone), not 1.3.0/4326. Regional services vary. Like Germany, Italy
+needs per-provider CRS and version rather than the single 4326 assumption the fetcher makes.
 
 National portals stop dead at their borders (IGN returns blank white 2 km into
 Italy). Provider follows the field's country. Google imagery is excluded
