@@ -38,6 +38,33 @@ def orient(axis, want_deg):
     return (a, b) if d1 <= d2 else (b, a)
 
 
+def quad_ends(quad):
+    """midpoints of the two short sides of a 4-corner quad — its centreline ends."""
+    q = quad
+    if math.dist(q[0], q[1]) >= math.dist(q[1], q[2]):
+        return ([(q[0][0] + q[3][0]) / 2, (q[0][1] + q[3][1]) / 2],
+                [(q[1][0] + q[2][0]) / 2, (q[1][1] + q[2][1]) / 2])
+    return ([(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2],
+            [(q[2][0] + q[3][0]) / 2, (q[2][1] + q[3][1]) / 2])
+
+
+def align_quad_to_axis(quad, axis):
+    """Rotate the strip quad about its centre so its long axis parallels the measured
+    arrow. A tiny drawn sliver (Marcoux: ~110 px) pins the strip's place and size but
+    not its angle — one pixel of wobble at the ends is ~2° — while a measured drawn
+    arrow pins the bearing exactly. Applied only when the two nearly agree already."""
+    a, b = quad_ends(quad)
+    delta = ((bearing_of(*axis) - bearing_of(a, b)) + 90) % 180 - 90
+    if not 0.5 < abs(delta) < 10:
+        return quad
+    ce = sum(p[0] for p in quad) / 4
+    cn = sum(p[1] for p in quad) / 4
+    dr = math.radians(delta)  # positive = clockwise in bearing terms
+    return [[ce + (p[0] - ce) * math.cos(dr) + (p[1] - cn) * math.sin(dr),
+             cn - (p[0] - ce) * math.sin(dr) + (p[1] - cn) * math.cos(dr)]
+            for p in quad]
+
+
 def draw_arrow(d, to_px, tail_m, head_m, inset=0.12):
     """white direction arrow with a dark stroke, drawn along the given ground line."""
     tx, ty = tail_m[0], tail_m[1]
@@ -100,8 +127,10 @@ def render(slug):
                   outline=RED + (255,), width=4)
 
     if "strip_quad_m" in tr:
-        d.polygon([to_px(p) for p in tr["strip_quad_m"]],
-                  outline=RED + (255,), width=4)
+        quad = tr["strip_quad_m"]
+        if "drawn_bearing" in tr:  # a measured arrow exists: let it pin the angle
+            quad = align_quad_to_axis(quad, tr["axis_m"])
+        d.polygon([to_px(p) for p in quad], outline=RED + (255,), width=4)
 
     # direction arrow only where the Guide drew one (bayons, marcoux, prunieres) —
     # never invented (st_blaise has none and gets none)
