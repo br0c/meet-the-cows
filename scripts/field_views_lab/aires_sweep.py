@@ -151,7 +151,8 @@ def main():
             try:
                 cur_path = AIRES / f"{fid}_current.jpg"
                 if not cur_path.exists():
-                    fv.ortho_crop(f["lat"], f["lon"], 1800, cur_path, "FR")
+                    fv.ortho_crop(f.get("lat") or f["latitude"],
+                                  f.get("lon") or f["longitude"], 1800, cur_path, "FR")
                 cur = cv2.imread(str(cur_path))
                 _, stats = tc.register(img, cur, framed, masks, name,
                                        prescales=(1, 1.5, 2, 3, 4))
