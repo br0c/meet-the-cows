@@ -105,19 +105,28 @@ PROVIDERS: dict[str, list[dict]] = {
              attribution="Orthophoto © LVermGeo Sachsen-Anhalt (dl-de/by-2-0)"),
     ],
     # Italian regional services first (recent imagery), national PCN 2012 as the fallback; the
-    # PCN layer name's trailing number is its UTM zone. Lombardia, Piemonte, FVG and Trentino
-    # endpoints are still to be found — Trentino's SIAT WMS publishes only the sheet-index
-    # grids (qu_ = quadro d'unione), not the imagery itself. See NOTES.md.
+    # PCN layer name's trailing number is its UTM zone.
+    #
+    # AGEA imagery is NOT available to us, in any region. The regions do publish recent AGEA
+    # orthophotos over WMS (Veneto 2024, Piemonte 2024, Emilia-Romagna 2023), but every one
+    # carries "AGEA (c) TUTTI I DIRITTI RISERVATI" and terms set by the AGEA/CISIS framework
+    # agreement — Veneto states the imagery may be distributed free only to Enti Locali, and
+    # Emilia-Romagna labels it "utilizzo ristretto dei dati". An express reservation is exactly
+    # what removes the CAD art. 52 c.2 route (published WITHOUT a licence => open by statute),
+    # so it would have to be asked for, as ENAIRE's charts were. A Veneto AGEA layer shipped
+    # here until 2026-07-29 on a misreading of the geoportal's general IODL/CC-BY statement,
+    # which the orthophoto pages override; it has been removed.
+    #
+    # That leaves provincial imagery a province licenses itself (Bolzano, CC BY 4.0) plus the
+    # national PCN layer, which MASE published with no express licence and is therefore open
+    # by statute — dated 2012, but ours to use.
     "IT": [
         # p_bz- (the provincial coverage), not gvcc- (municipal, white outside towns);
         # the mapproxy rejects EPSG:4326 outright, so UTM it is.
         dict(url="https://geoservices.buergernetz.bz.it/mapproxy/ows/service",
              layer="p_bz-Orthoimagery:Aerial-2023-RGB", bbox=(46.2, 10.35, 47.1, 12.5),
              crs="EPSG:25832",
-             attribution="Ortofoto 2023 © Provincia Autonoma di Bolzano (open data)"),
-        dict(url="https://idt2-geoserver.regione.veneto.it/geoserver/wms",
-             layer="rv:ortofoto_agea_2024", bbox=(44.75, 10.6, 46.7, 13.1),
-             attribution="Ortofoto AGEA 2024 © Regione del Veneto (open data)"),
+             attribution="Ortofoto 2023 © Provincia Autonoma di Bolzano (CC BY 4.0)"),
         dict(url="http://wms.pcn.minambiente.it/ogc?map=/ms_ogc/WMS_v1.3/raster/ortofoto_colore_12.map",
              layer="OI.ORTOIMMAGINI.2012.32", bbox=(35.0, 6.0, 47.5, 12.0), version="1.1.1",
              attribution="Ortofoto 2012 © Geoportale Nazionale (MASE)"),

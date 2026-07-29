@@ -138,23 +138,34 @@ Sources, newest first, which is what matters for judging whether a parcel is sti
 
 | service | layer | vintage |
 |---|---|---|
-| Veneto IDT | `rv:ortofoto_agea_2024` | 2024 — verified serving |
-| Alto Adige | `p_bz-Orthoimagery:Aerial-2023-RGB`, EPSG:25832 only | 2023 — verified serving |
-| PCN national | `OI.ORTOIMMAGINI.2012.32` / `.33`, WMS 1.1.1 | 2012 — fallback only |
+| Alto Adige | `p_bz-Orthoimagery:Aerial-2023-RGB`, EPSG:25832 only | 2023 — CC BY 4.0, verified serving |
+| PCN national | `OI.ORTOIMMAGINI.2012.32` / `.33`, WMS 1.1.1 | 2012 — open by statute, fallback |
 
-Wrong turns worth remembering: Alto Adige's `gvcc-` namespace is the municipal coverage and
-answers white outside towns — `p_bz-` is the provincial one; and Trentino's SIAT WMS publishes
-only sheet-index grids (`qu_` = quadro d'unione), not imagery, so Trentino has no regional
-provider yet and falls back to PCN. Lombardia, Piemonte, FVG and Trentino endpoints still need
-finding. Prefer regional over PCN wherever a region covers the field: the national layer is
-fourteen years old, and while legally fine it is weak evidence for the question these views
-answer.
+**AGEA imagery is not ours to use, in any region (settled 2026-07-29).** Hunting for recent
+regional services to replace the 2012 fallback found them easily — Veneto 2024, Piemonte 2024
+(`opengis.csi.it/mp/regp_agea_2024`), Emilia-Romagna 2023 — and every one is AGEA imagery
+carrying `AGEA (c) TUTTI I DIRITTI RISERVATI` plus the AGEA/CISIS framework terms. Veneto's own
+orthophoto page says the imagery may be distributed free **only to Enti Locali**; Piemonte's
+metadata says use conditions "sconosciute" over an all-rights-reserved notice; Emilia-Romagna
+labels it "utilizzo ristretto dei dati". An express reservation is exactly the condition that
+removes the CAD art. 52 c.2 route (published WITHOUT a licence => open by statute), so AGEA is
+an ask-permission case like ENAIRE's charts, not an open one.
+
+This was a live defect, not a hypothetical: a Veneto AGEA layer sat in PROVIDERS from
+`4679ffd` until it was removed, added on a misreading of the geoportal's general "IODL 2.0 or
+CC-BY" statement, which the orthophoto pages override with the AGEA notice. The lesson for the
+next provider: read the LAYER's own terms, never the portal's blanket statement.
+
+What remains for Italy is provincial imagery a province licences itself (Bolzano, CC BY 4.0)
+covering 6 of our 477 Italian fields, and PCN 2012 for the other 471. Regions that licence
+their own non-AGEA flights are still worth finding; asking AGEA/CISIS for permission is the
+other route, and the ENAIRE precedent says it can work.
 
 All of this is implemented in `field_views.py` (PROVIDERS table + `ortho_crop`): per-provider
 WMS version and CRS with a dependency-free UTM projection, bbox routing with blank-coverage
 fall-through for overlapping sub-national services, and a WMTS tile-stitch for basemap.at.
 Verified live end-to-end: Bayern, Thüringen (UTM), BW-overlap fall-through, NRW,
-Schleswig-Holstein, Veneto 2024, Bolzano 2023, PCN Rome, basemap.at stitch, IGN France.
+Schleswig-Holstein, Bolzano 2023, PCN (Rome and Aosta), basemap.at stitch, IGN France.
 
 National portals stop dead at their borders (IGN returns blank white 2 km into
 Italy). Provider follows the field's country. Google imagery is excluded
