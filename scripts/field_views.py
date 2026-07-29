@@ -492,6 +492,60 @@ def cmd_crop(args):
           f"{crop['attribution']})")
 
 
+def draw_chrome(d, name, attribution, extra_credit=""):
+    """North rose, name and credit bar — the furniture every generated view carries."""
+    from PIL import ImageFont
+    red = (226, 40, 25)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+        small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 15)
+        nfont = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+    except OSError:
+        font = small = nfont = ImageFont.load_default()
+    x, y, r = 56, 70, 36
+    d.ellipse([x - r - 7, y - r - 7, x + r + 7, y + r + 7], fill=(10, 15, 25, 140))
+    d.ellipse([x - r, y - r, x + r, y + r], outline=(255, 255, 255, 220), width=2)
+    for ang in range(0, 360, 45):
+        hh = math.radians(ang)
+        ln = r if ang % 90 == 0 else r * 0.5
+        tip = (x + ln * math.sin(hh), y - ln * math.cos(hh))
+        bl = (x + 6 * math.sin(hh + math.pi / 2), y - 6 * math.cos(hh + math.pi / 2))
+        br = (x + 6 * math.sin(hh - math.pi / 2), y - 6 * math.cos(hh - math.pi / 2))
+        d.polygon([tip, bl, br], fill=red + (255,) if ang == 0 else (255, 255, 255, 235))
+    d.text((x, y - r - 9), "N", font=nfont, fill=(255, 255, 255, 255), anchor="mb",
+           stroke_width=2, stroke_fill=(10, 15, 25, 255))
+    bar_h = 56
+    d.rectangle([0, PX_H - bar_h, PX_W, PX_H], fill=(10, 15, 25, 175))
+    d.text((14, PX_H - bar_h + 8), name, font=font, fill=(255, 255, 255, 255))
+    d.text((14, PX_H - 20), attribution + extra_credit, font=small,
+           fill=(200, 206, 218, 255))
+
+
+def plain_view(lat, lon, name, out_path, country="FR", width_m=1200.0):
+    """Current imagery with no marking at all: north rose, name, credit, nothing else.
+
+    For fields whose source photo shows a whole area of landable ground rather than one
+    strip, and for fields whose annotation cannot be transferred. An unmarked, current
+    overview is honest and still useful — the pilot picks — where a wrong or absent
+    marking is neither.
+    """
+    from PIL import Image, ImageDraw
+    tmp = Path(out_path).with_suffix(".crop.jpg")
+    crop = ortho_crop(lat, lon, width_m, tmp, country)
+    img = Image.open(tmp).convert("RGB")
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw_chrome(ImageDraw.Draw(overlay), name, crop["attribution"])
+    Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB").save(
+        out_path, quality=90)
+    tmp.unlink()
+    return crop
+
+
+def cmd_plain(args):
+    crop = plain_view(args.lat, args.lon, args.name, args.out, args.country, args.width_m)
+    print(f"wrote {args.out} ({crop['attribution']})")
+
+
 def cmd_render(args):
     from PIL import Image, ImageDraw, ImageFont  # lazy: only render needs Pillow
 
@@ -578,6 +632,14 @@ def main():
     p.add_argument("--country", default="FR")
     p.add_argument("--out", required=True)
     p.set_defaults(fn=cmd_crop)
+    p = sub.add_parser("plain")
+    p.add_argument("--lat", type=float, required=True)
+    p.add_argument("--lon", type=float, required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--width-m", type=float, default=1200.0)
+    p.add_argument("--country", default="FR")
+    p.add_argument("--out", required=True)
+    p.set_defaults(fn=cmd_plain)
     p = sub.add_parser("render")
     p.add_argument("--match-entry", required=True,
                    help="matches.json:FIELD_ID from the match subcommand")

@@ -315,26 +315,46 @@ def _attempt(old, cur, kp_mask, prescale):
     return M, stats
 
 
-def _acceptable(stats):
+def _acceptable(stats, expect_scale=None):
     # 20+ inliers, or a tight small consensus: 12 similarity-consistent points at
     # sub-2.5 px residual do not happen by accident.
-    return stats["inliers"] >= 20 or (stats["inliers"] >= 12 and stats["rms_px"] <= 2.5)
+    if stats["inliers"] >= 20 or (stats["inliers"] >= 12 and stats["rms_px"] <= 2.5):
+        return True
+    # With the ground scale known independently, a model that reproduces it is already
+    # most of the way to being right, so fewer agreeing points suffice. This is what
+    # rescues farmland whose crops rotated between the two dates: field boundaries still
+    # match, their interiors do not, and only a handful of keypoints survive.
+    return expect_scale is not None and stats["inliers"] >= 8 and stats["rms_px"] <= 3.0
 
 
-def register(old, cur, framed, ann_masks, label, prescales=(1, 1.5, 2, 3, 4, 5, 0.75, 0.5)):
+def register(old, cur, framed, ann_masks, label, prescales=(1, 1.5, 2, 3, 4, 5, 0.75, 0.5),
+             expect_scale=None, scale_tol=1.3):
     """Similarity transform old px -> current px via SIFT + RANSAC, searching over
-    pre-scale hypotheses when the two images' ground resolutions are far apart."""
+    pre-scale hypotheses when the two images' ground resolutions are far apart.
+
+    `expect_scale` is the transform's known ground scale (old m/px over current m/px)
+    when the photo carries a measured annotation to derive it from. It is used twice:
+    as the first pre-scale to try, and as a filter that discards any model disagreeing
+    with it — which in turn lets a smaller consensus be trusted (see _acceptable).
+    """
     kp_mask = chrome_mask(old, framed)
     for am in ann_masks:  # drawn overlays must not become keypoints
         kp_mask &= cv2.bitwise_not(cv2.dilate(am, np.ones((9, 9), np.uint8)))
+    if expect_scale:
+        prescales = (expect_scale, expect_scale * 0.8, expect_scale * 1.25) + tuple(prescales)
     best = None
     for f in prescales:
         got = _attempt(old, cur, kp_mask, f)
+        if got and expect_scale and not (
+                1 / scale_tol <= got[1]["scale"] / expect_scale <= scale_tol):
+            continue                      # right-looking fit at the wrong ground scale
         if got and (best is None or got[1]["inliers"] > best[1]["inliers"]):
             best = got
         if best and best[1]["inliers"] >= 40:
             break  # unambiguous; skip the remaining hypotheses
-    if best is None or not _acceptable(best[1]):
+    if best is not None and expect_scale:
+        best[1]["expect_scale"] = round(expect_scale, 3)
+    if best is None or not _acceptable(best[1], expect_scale):
         raise RuntimeError(f"{label}: no acceptable registration "
                            f"(best {best[1] if best else 'none'})")
     return best
