@@ -12,6 +12,12 @@ improve a view is preserved here; everything derivable is not.
   the *input* to the transfer pipeline: the drawn shapes on them are the authoritative
   placement, so losing them would make the generated views unauditable. planeur-net
   already publishes them openly and the packs have always redistributed them.
+- `pyr-google/` — the annotated Google Earth captures from the APVV "Guide des champs
+  pyrénéens" (2008), cropped from the entry pages by `scripts/extract_pyr_ge_views.py`
+  (source PDF URL + sha256 in `meta.json`, per-entry data in `index.json`). Pipeline
+  input ONLY: Google imagery cannot be packed or served, which is exactly why the
+  generated views re-draw the orange field outlines onto PNOA/IGN orthophotos. CHAMP
+  entries are the transfer targets; the AERO/ULM entries ship OSM-tier views instead.
 - `transfer/<slug>.json` — the geometry extracted from each photo's drawings (strip quads,
   oval rings, danger rectangles, measured arrows, in metres E/N of the field datum) plus
   registration statistics and provenance. Produced by

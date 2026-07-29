@@ -1,0 +1,369 @@
+[
+ {
+  "id": "E1",
+  "name": "Lumbier",
+  "page": 4,
+  "type": "AERO",
+  "lat": 42.6649,
+  "lon": -1.304017,
+  "orientation": "180° / 360°",
+  "longueur": "600 m x 50 m",
+  "files": [
+   "E1_LUMBIER_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E2",
+  "name": "Sanguesa",
+  "page": 5,
+  "type": "CHAMP",
+  "lat": 42.566667,
+  "lon": -1.288833,
+  "orientation": "010° / 190°",
+  "longueur": "600 m x 50 m",
+  "files": [
+   "E2_SANGUESA_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E3",
+  "name": "Santa Cilia",
+  "page": 6,
+  "type": "AERO",
+  "lat": 42.569667,
+  "lon": -0.726667,
+  "orientation": "090° / 270°",
+  "longueur": "950 m / 650 m / 650 m",
+  "files": [
+   "E3_SANTA_CILIA_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E4",
+  "name": "Jaca",
+  "page": 7,
+  "type": "CHAMP",
+  "lat": 42.571667,
+  "lon": -0.525833,
+  "orientation": "020°",
+  "longueur": "300 m x 100 m",
+  "files": [
+   "E4_JACA_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E5",
+  "name": "Sabinanigo",
+  "page": 8,
+  "type": "CHAMP",
+  "lat": 42.529667,
+  "lon": -0.356067,
+  "orientation": "320°",
+  "longueur": "700 m x 250 m",
+  "files": [
+   "E5_SABINANIGO_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E6",
+  "name": "La Peña",
+  "page": 9,
+  "type": "CHAMPS",
+  "lat": 42.379167,
+  "lon": -0.688333,
+  "orientation": "080° ou 190°",
+  "longueur": "500 m",
+  "files": [
+   "E6_LA_PENA_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E7",
+  "name": "Ayerbe",
+  "page": 10,
+  "type": "CHAMP",
+  "lat": 42.275,
+  "lon": -0.664167,
+  "orientation": "080°",
+  "longueur": "650 m",
+  "files": [
+   "E7_AYERBE_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E8",
+  "name": "Montflorite",
+  "page": 11,
+  "type": "AERO",
+  "lat": 42.078167,
+  "lon": -0.313333,
+  "orientation": "120° / 300°",
+  "longueur": "2100x45 m / 600x12 m",
+  "files": [
+   "E8_MONTFLORITE_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E9",
+  "name": "Broto",
+  "page": 12,
+  "type": "ULM",
+  "lat": 42.58935,
+  "lon": -0.12475,
+  "orientation": "170° / 350°",
+  "longueur": "300 m x 35 m",
+  "files": [
+   "E9_BROTO_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E10",
+  "name": "Javierre",
+  "page": 13,
+  "type": "CHAMP",
+  "lat": 42.478333,
+  "lon": -0.069167,
+  "orientation": "140° / 320°",
+  "longueur": "300 m",
+  "files": [
+   "E10_JAVIERRE_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E11",
+  "name": "Ainsa",
+  "page": 14,
+  "type": "CHAMPS",
+  "lat": 42.43595,
+  "lon": 0.132967,
+  "orientation": "010° / 190°",
+  "longueur": "350 m",
+  "files": [
+   "E11_AINSA_ge1.jpg"
+  ]
+ },
+ {
+  "id": "E12",
+  "name": "Barbastro",
+  "page": 15,
+  "type": "ULM",
+  "lat": 41.995833,
+  "lon": 0.09305,
+  "orientation": "130° / 310°",
+  "longueur": "430 x 25 m",
+  "files": [
+   "E12_BARBASTRO_ge1.jpg",
+   "E12_BARBASTRO_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E13",
+  "name": "Graus",
+  "page": 16,
+  "type": "CHAMP",
+  "lat": 42.238583,
+  "lon": 0.356983,
+  "orientation": "010° / 190°",
+  "longueur": "400 m",
+  "files": [
+   "E13_GRAUS_ge1.jpg",
+   "E13_GRAUS_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E14",
+  "name": "Benabarre",
+  "page": 17,
+  "type": "AERO",
+  "lat": 42.022167,
+  "lon": 0.482667,
+  "orientation": "100° / 280°",
+  "longueur": "800 m",
+  "files": [
+   "E14_BENABARRE_ge1.jpg",
+   "E14_BENABARRE_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E15",
+  "name": "Campo",
+  "page": 18,
+  "type": "CHAMP",
+  "lat": 42.4084,
+  "lon": 0.409133,
+  "orientation": "060° / 240°",
+  "longueur": "200 m",
+  "files": [
+   "E15_CAMPO_ge1.jpg",
+   "E15_CAMPO_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E16",
+  "name": "Castejon de Sos",
+  "page": 19,
+  "type": "ULM",
+  "lat": 42.525833,
+  "lon": 0.481,
+  "orientation": "160° / 340°",
+  "longueur": "500 m x 30 m",
+  "files": [
+   "E16_CASTEJON_DE_SOS_ge1.jpg",
+   "E16_CASTEJON_DE_SOS_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E17",
+  "name": "Pont de Suert",
+  "page": 20,
+  "type": "CHAMP",
+  "lat": 42.424417,
+  "lon": 0.73295,
+  "orientation": "160°",
+  "longueur": "600 m",
+  "files": [
+   "E17_PONT_DE_SUERT_ge1.jpg",
+   "E17_PONT_DE_SUERT_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E18",
+  "name": "Sopeira",
+  "page": 21,
+  "type": "CHAMP",
+  "lat": 42.30205,
+  "lon": 0.737133,
+  "orientation": "030°",
+  "longueur": "300 m",
+  "files": [
+   "E18_SOPEIRA_ge1.jpg",
+   "E18_SOPEIRA_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E19",
+  "name": "Aren",
+  "page": 22,
+  "type": "CHAMP",
+  "lat": 42.240633,
+  "lon": 0.718833,
+  "orientation": "060° / 240°",
+  "longueur": "250 m",
+  "files": [
+   "E19_AREN_ge1.jpg",
+   "E19_AREN_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E20",
+  "name": "Arties",
+  "page": 23,
+  "type": "CHAMP",
+  "lat": 42.699,
+  "lon": 0.865833,
+  "orientation": "100°",
+  "longueur": "200 m",
+  "files": [
+   "E20_ARTIES_ge1.jpg",
+   "E20_ARTIES_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E21",
+  "name": "Tremp",
+  "page": 24,
+  "type": "CHAMPS",
+  "lat": 42.161267,
+  "lon": 0.9012,
+  "orientation": "010° / 190° ou 60° / 240°",
+  "longueur": "300 m",
+  "files": [
+   "E21_TREMP_ge1.jpg",
+   "E21_TREMP_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E22",
+  "name": "Sort",
+  "page": 25,
+  "type": "CHAMPS",
+  "lat": 42.387067,
+  "lon": 1.118167,
+  "orientation": "050° / 230°",
+  "longueur": "600 m",
+  "files": [
+   "E22_SORT_ge1.jpg",
+   "E22_SORT_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E23",
+  "name": "Esterri d’Aneu",
+  "page": 26,
+  "type": "CHAMPS",
+  "lat": 42.615367,
+  "lon": 1.12735,
+  "orientation": "160° / 340° & 145° / 325°",
+  "longueur": "400 m",
+  "files": [
+   "E23_ESTERRI_DANEU_ge1.jpg",
+   "E23_ESTERRI_DANEU_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E24",
+  "name": "La Seu d'Urgell",
+  "page": 27,
+  "type": "AERO",
+  "lat": 42.338333,
+  "lon": 1.406667,
+  "orientation": "040° / 220°",
+  "longueur": "1400 m",
+  "files": [
+   "E24_LA_SEU_D_URGELL_ge1.jpg",
+   "E24_LA_SEU_D_URGELL_ge2.jpg"
+  ]
+ },
+ {
+  "id": "E25",
+  "name": "Alp",
+  "page": 28,
+  "type": "AERO",
+  "lat": 42.387,
+  "lon": 1.863,
+  "orientation": "070° / 250°",
+  "longueur": "1100 m",
+  "files": [
+   "E25_ALP_ge1.jpg",
+   "E25_ALP_ge2.jpg"
+  ]
+ },
+ {
+  "id": "F1",
+  "name": "Ste Leocadie",
+  "page": 29,
+  "type": "AERO",
+  "lat": 42.446017,
+  "lon": 2.006033,
+  "orientation": "070° / 250°",
+  "longueur": "1320 m",
+  "files": [
+   "F1_STE_LEOCADIE_ge1.jpg",
+   "F1_STE_LEOCADIE_ge2.jpg"
+  ]
+ },
+ {
+  "id": "F2",
+  "name": "La Llagonne",
+  "page": 30,
+  "type": "AERO",
+  "lat": 42.543333,
+  "lon": 2.119967,
+  "orientation": "140° / 320°",
+  "longueur": "1000 m",
+  "files": [
+   "F2_LA_LLAGONNE_ge1.jpg",
+   "F2_LA_LLAGONNE_ge2.jpg"
+  ]
+ }
+]
