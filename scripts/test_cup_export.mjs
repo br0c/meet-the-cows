@@ -84,6 +84,7 @@ await new Promise(r => server.listen(0, r));
 const base = `http://127.0.0.1:${server.address().port}/`;
 
 let failures = 0;
+const rowCount = text => text.trim().split(/\r\n/).length - 1;  // minus the header
 const check = (label, ok, detail = '') => {
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${label}${ok || !detail ? '' : ` — ${detail}`}`);
   if (!ok) failures += 1;
@@ -150,7 +151,6 @@ const sharedIn = [westText, eastText].filter(text => text.includes('Shared Field
 check('a field both packs carry is written exactly once', sharedIn === 1,
   `appears in ${sharedIn} files`);
 
-const rowCount = text => text.trim().split(/\r\n/).length - 1;  // minus the header
 check('no field is lost between the two files', rowCount(westText) + rowCount(eastText) === 4,
   `${rowCount(westText)} + ${rowCount(eastText)}`);
 
@@ -169,7 +169,35 @@ check('the range pack carries the shared aerodrome', rangeText.includes('Border 
 check('the country pack leaves it out', !countryText.includes('Border Field'));
 check('the country pack keeps its own fields', countryText.includes('Country One'));
 
-console.log('\n3. One pack selected -> a plain .cup, not a zip of one');
+console.log('\n3. A country pack on its own is complete — nothing is withheld for an absent range pack');
+// The precedence rule must be a tie-break BETWEEN SELECTED PACKS, never a property stamped on
+// the pack itself. A pilot who flies France without the Alps pack has to get every French field,
+// including the ones the Alps pack would have claimed had it been selected too.
+const countryAlone = await exportWith(['country']);
+check('a single country pack exports a plain .cup', countryAlone.filename.endsWith('.cup'),
+  countryAlone.filename);
+const countryAloneText = await readFile(countryAlone.saved, 'utf8');
+check('it carries the shared aerodrome the range pack would otherwise own',
+  countryAloneText.includes('Border Field'));
+check('it carries its own fields too', countryAloneText.includes('Country One'));
+check('nothing is missing from it', rowCount(countryAloneText) === 2,
+  `${rowCount(countryAloneText)} rows`);
+
+// And the same in the other direction, with three packs where two would claim the same field.
+const trio = await exportWith(['country', 'range', 'west']);
+const trioZip = JSON.parse(execFileSync('python3', ['-c', `
+import json, zipfile
+with zipfile.ZipFile(${JSON.stringify(trio.saved)}) as z:
+    print(json.dumps({n: z.read(n).decode("utf-8") for n in z.namelist()}))
+`], { encoding: 'utf8' }));
+const trioTexts = Object.values(trioZip);
+const totalRows = trioTexts.reduce((sum, text) => sum + rowCount(text), 0);
+check('three packs -> three CUPs', Object.keys(trioZip).length === 3,
+  Object.keys(trioZip).join(', '));
+check('every distinct field appears exactly once across them', totalRows === 6,
+  `${totalRows} rows over ${Object.keys(trioZip).length} files`);
+
+console.log('\n4. One pack selected -> a plain .cup, not a zip of one');
 const single = await exportWith(['west']);
 check('download is a .cup', single.filename.endsWith('.cup'), single.filename);
 check('filename names the pack', single.filename.includes('-west-'), single.filename);
