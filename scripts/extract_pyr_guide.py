@@ -62,6 +62,13 @@ RENDER_DPI = 300
 # imagery the guide could embed but this pack cannot, so no photo is extracted for those.
 CLUB_PHOTO_IDS = {"E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11"}
 
+# Entries the guide lists that no longer exist on the ground. The guide is from 2008 and
+# cannot be corrected upstream, so the exclusion lives here: without it, re-running this
+# extractor would resurrect a removed field. Each needs current imagery as evidence.
+#   E13 Graus  — the whole drawn field is a photovoltaic plant in PNOA imagery
+#                (found 2026-07-29 by transferring the guide's own outline onto it).
+GONE_IDS = {"E13"}
+
 # pdftotext -layout splits glyphs inside words where the PDF kerns them apart. Fixed
 # table, not a heuristic: every artifact was read off the actual pages.
 KERNING_FIXES = (
@@ -327,6 +334,9 @@ def main() -> int:
 
     if len(entries) != EXPECTED_ENTRIES:
         raise ValueError(f"parsed {len(entries)} entries, expected {EXPECTED_ENTRIES}")
+    # Checked AFTER the count so a guide re-parse still has to yield all 27 pages; the
+    # gone fields are then dropped from the output the pack reads.
+    entries = [e for e in entries if e["id"] not in GONE_IDS]
     ids = [e["id"] for e in entries]
     if len(set(ids)) != len(ids):
         raise ValueError(f"duplicate entry ids: {ids}")

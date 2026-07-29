@@ -216,7 +216,10 @@ _DEEPL_LOCK = threading.Lock()
 # v21: Spanish aerodrome charts from the ENAIRE AIP España and Guía VFR (permission granted
 #      2026-07-29) and the reworded Spain/Pyrenees chart notice. New media and a new notice
 #      string are output.
-PACK_SCHEMA_VERSION = 21
+# v22: E13 Graus dropped from the APVV Pyrenees source — the field is a photovoltaic
+#      plant in current imagery. Fewer fields is a pack-output change, so the incremental
+#      check must not short-circuit past it.
+PACK_SCHEMA_VERSION = 22
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
