@@ -44,6 +44,15 @@ INDEX_HTML = """
 <a href="contenido_AIP/AD/AD2/GCGM/LE_AD_2_GCGM_VAC_1_en.pdf">Canaries VAC</a>
 """
 
+# The Guía VFR portal: one flat sheet per aerodrome, Canary codes filed under LE_guiaVFR_ too.
+# LESU also appears in the AIP fixture above, which is where the precedence rule is exercised.
+GUIA_HTML = """
+<a href="contenido_GuiaVFR/AD/LE_guiaVFR_LECI.pdf">Cuatro Vientos</a>
+<a href="contenido_GuiaVFR/AD/LE_guiaVFR_LEAP.pdf">Ampuriabrava</a>
+<a href="contenido_GuiaVFR/AD/LE_guiaVFR_GCAT.pdf">El Berriel</a>
+<a href="contenido_GuiaVFR/AD/LE_guiaVFR_LESU.pdf">Also in the AIP</a>
+"""
+
 
 class TestCycleDate(unittest.TestCase):
     def test_reads_effective_date(self):
@@ -126,6 +135,8 @@ class TestImport(unittest.TestCase):
 
         def fake(url, cache_dir=None):
             self.fetched.append(url)
+            if url == build_pack.ES_GUIA_INDEX:
+                return GUIA_HTML.encode()
             return INDEX_HTML.encode() if url.endswith(".html") else make_pdf()
 
         build_pack._fetch_es_vac = fake
@@ -140,6 +151,55 @@ class TestImport(unittest.TestCase):
                 fields=fields, index_url=build_pack.ES_AIP_INDEX, docs_dir=docs,
                 es_vac_date="2026-07-09", max_vac=0, **kwargs)
             return count, sorted(p.name for p in docs.glob("*.pdf"))
+
+    def test_guia_vfr_covers_aerodromes_absent_from_the_aip(self):
+        fields = [make_field("LECI"), make_field("LEAP")]
+        count, written = self.run_import(fields, guia_url=build_pack.ES_GUIA_INDEX)
+        self.assertEqual((count, written), (2, ["LEAP.pdf", "LECI.pdf"]))
+        self.assertIn("Guía VFR", fields[0]["media"][0]["source"])
+        self.assertIn("ENAIRE", fields[0]["media"][0]["source"])
+
+    def test_guia_sheets_carry_no_effective_date(self):
+        # The Guía publishes none; stamping the AIP's cycle would assert a currency it
+        # does not claim.
+        fields = [make_field("LECI")]
+        self.run_import(fields, guia_url=build_pack.ES_GUIA_INDEX)
+        self.assertNotIn("updatedAt", fields[0]["media"][0])
+
+    def test_aip_wins_when_an_aerodrome_is_in_both(self):
+        fields = [make_field("LESU")]
+        self.run_import(fields, guia_url=build_pack.ES_GUIA_INDEX)
+        self.assertIn("AIP España", fields[0]["media"][0]["source"])
+        self.assertEqual(fields[0]["media"][0]["updatedAt"], "2026-07-09")
+
+    def test_guia_outage_still_ships_aip_charts(self):
+        real = build_pack._fetch_es_vac
+
+        def selective(url, cache_dir=None):
+            if url == build_pack.ES_GUIA_INDEX:
+                raise RuntimeError("503")
+            return real(url, cache_dir)
+
+        build_pack._fetch_es_vac = selective
+        fields = [make_field("LESU"), make_field("LECI")]
+        count, written = self.run_import(fields, guia_url=build_pack.ES_GUIA_INDEX)
+        self.assertEqual((count, written), (1, ["LESU.pdf"]))
+
+    def test_aip_outage_still_ships_guia_charts(self):
+        real = build_pack._fetch_es_vac
+
+        def selective(url, cache_dir=None):
+            if url == build_pack.ES_AIP_INDEX:
+                raise RuntimeError("503")
+            return real(url, cache_dir)
+
+        build_pack._fetch_es_vac = selective
+        fields = [make_field("LESU"), make_field("LECI")]
+        count, written = self.run_import(fields, guia_url=build_pack.ES_GUIA_INDEX)
+        # LESU is normally served from the AIP; with the AIP down it degrades to its Guía
+        # sheet rather than losing its chart entirely.
+        self.assertEqual((count, written), (2, ["LECI.pdf", "LESU.pdf"]))
+        self.assertIn("Guía VFR", fields[0]["media"][0]["source"])
 
     def test_attaches_chart_and_stamps_enaire_rights(self):
         fields = [make_field("LESU")]
@@ -195,6 +255,43 @@ class TestImport(unittest.TestCase):
         count, written = self.run_import(fields)
         self.assertEqual((count, written), (0, []))
         self.assertEqual(fields[0]["media"], [])
+
+
+class TestGuiaIndex(unittest.TestCase):
+    def test_parses_flat_sheets_and_keeps_published_prefix(self):
+        charts = build_pack.parse_es_guia_index(GUIA_HTML, build_pack.ES_GUIA_INDEX)
+        self.assertEqual(sorted(charts), ["GCAT", "LEAP", "LECI", "LESU"])
+        self.assertTrue(charts["GCAT"].endswith("LE_guiaVFR_GCAT.pdf"),
+                        "Canary sheets are filed under the LE_guiaVFR_ prefix")
+        self.assertTrue(all(u.startswith("https://guiavfr.enaire.es/") for u in charts.values()))
+
+    def test_fingerprint_tracks_the_aerodrome_list(self):
+        original = build_pack._fetch_es_vac
+        build_pack._fetch_es_vac = lambda url, cache_dir=None: GUIA_HTML.encode()
+        try:
+            url, fingerprint = build_pack.resolve_es_guia_root("auto")
+            self.assertEqual(url, build_pack.ES_GUIA_INDEX)
+            self.assertTrue(fingerprint.startswith("4:"))
+            extra = GUIA_HTML + '<a href="contenido_GuiaVFR/AD/LE_guiaVFR_LEVL.pdf">New</a>'
+            build_pack._fetch_es_vac = lambda url, cache_dir=None: extra.encode()
+            _, fingerprint2 = build_pack.resolve_es_guia_root("auto")
+        finally:
+            build_pack._fetch_es_vac = original
+        self.assertNotEqual(fingerprint, fingerprint2,
+                            "a new Guia aerodrome must trigger a rebuild")
+
+    def test_disabled_and_outage(self):
+        self.assertEqual(build_pack.resolve_es_guia_root("none"), ("", ""))
+        original = build_pack._fetch_es_vac
+
+        def boom(url, cache_dir=None):
+            raise RuntimeError("502")
+
+        build_pack._fetch_es_vac = boom
+        try:
+            self.assertEqual(build_pack.resolve_es_guia_root("auto"), ("", ""))
+        finally:
+            build_pack._fetch_es_vac = original
 
 
 class TestSourceState(unittest.TestCase):

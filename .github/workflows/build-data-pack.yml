@@ -266,6 +266,7 @@ jobs:
             --de-vac-root auto \
             --it-vac-dir .cache/enav-charts \
             --es-vac-root auto \
+            --es-guia-root auto \
             --include-vac-airfields
 
       # Keyed on the AIRAC-cycle markers (.source-versions.json), so unchanged cycles reuse the
