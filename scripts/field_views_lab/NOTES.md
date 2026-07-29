@@ -175,10 +175,44 @@ pin the fetch scale, and expect the judge to occasionally veto on appearance.
 - Observed pipeline integrity: agents refuse to fabricate geometry when the
   input image is missing — keep prompts that make refusal easy.
 
+## Transfer pass — old Guide photos as the placement prior (2026-07-29)
+
+Guide des Aires de Sécurité fields carry an OLD annotated satellite photo: the field drawn as a
+highlighted shape on dated imagery, usually with a north indicator and a scale bar, sometimes
+arrows with length/bearing text, numbered strips and hazard marks. That photo is a
+georeferenceable annotation layer, and transferring it beats locating from scratch: the agent
+reads the annotation, co-registers old landmarks (roads, rivers, buildings, tree lines) onto the
+fresh crop, and re-projects the shape plus obstacles and warnings.
+
+Blind Opus results vs the pilot-validated placements (transfer = one pass, no consensus):
+
+| field | transfer | previous best (notes-only vision) |
+|---|---|---|
+| Prunières | **20 m / 1°** | 82 m lucky single run; k=3 spread 230 m → union oval |
+| Bayons | 56 m / 2° | 15–57 m across runs; consensus 31 m / 0° |
+| St Blaise | 73 m / 3° | 34–117 m variance; consensus 57 m / 6° |
+| Marcoux (2 photos fused) | centre 27 m off datum, axis 13° vs stated 010/190 | — |
+
+Prunières is the headline: the field that defeated pure vision twice is solved outright,
+because the ambiguity ("which 450 m window on this corridor") is exactly what the drawn oval
+answers. Beyond placement, the transfer extracts what no other pass can: Bayons' photo carries
+a literal "261 m / 60.0°" arrow (the drawn bearing matches the validated 62°, against the
+source's stated 215°); St Blaise's pits and high-voltage line and Marcoux's "do not use #1"
+became placed obstacle markers and warnings on the render. Marcoux fused two photos and
+self-verified its registration against a barn landmark.
+
+Pipeline consequence: for fields WITH a Guide photo the transfer pass becomes the primary
+vision path (one pass + judge; the photo anchors it, so k=3 consensus is likely unnecessary —
+to be confirmed with a variance run). Fields without a photo keep the k=3 consensus path. The
+render gains annotation elements: numbered amber obstacle triangles with a legend, warning
+lines, and "Annotations: Guide des Aires de Sécurité" added to the credit line.
+
 ## Still to do
 
 - Vision API module in `field_views.py` (client behind ANTHROPIC_API_KEY,
-  consensus/union math from `consensus_run.py`, prompts from PROMPTS.md).
+  consensus/union math from `consensus_run.py`, prompts from PROMPTS.md, transfer
+  pass first for fields carrying a Guide photo).
+- Transfer-pass variance run (is k=1 + judge enough when a photo anchors it?).
 - Judge-feedback retry before falling back (rescues near-misses).
 - Border-clip detection (blank-margin check on crops).
 - AT WMTS stitch; DE per-Land and IT per-region provider tables.

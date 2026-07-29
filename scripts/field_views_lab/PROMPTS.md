@@ -72,3 +72,32 @@ Judge ONLY the solid rectangle. A real landing run naturally ENDS at the field's
 Rules: one Read of this file only; no other tools. Reply with ONLY JSON:
 {"verdict": "pass"|"fail", "issues": "<max 30 words>"}
 ```
+
+
+## v1 — TRANSFER (Opus, fields with an old annotated Guide photo)
+
+Input images: every old annotated photo the field has (one Read each), then the current
+locate crop. `{photo_blocks}` lists them; with several photos the task says to fuse them into
+ONE result and to honour exclusions ("Do not use #1"). Validated 2026-07-29 on Bayons,
+St Blaise, Prunières, Marcoux (20–73 m vs pilot memory, obstacles and bearings extracted).
+
+```
+You are the TRANSFER pass of an automated pipeline that recreates up-to-date annotated satellite views for glider outlanding fields. An old officially-annotated photo shows where the field is; your job is to transfer that annotation onto current imagery.
+
+You have TWO images:
+1. OLD ANNOTATED PHOTO (Guide des Aires de Sécurité, years old): {old_photo_path} — the field's official placement drawn on old imagery: typically a highlighted rectangle/oval/polygon, sometimes arrows, dimension text or obstacle marks, usually a north indicator (top right) and a scale bar (bottom left, frame width).
+2. CURRENT ORTHOPHOTO: {current_crop_path} — 975x1300 px portrait, north up, covering {width_m} m east-west and {height_m} m north-south ({mpp} m/px). The field's recorded coordinate is at the exact centre, pixel (487, 650); it is often an observation point at the field's edge.
+
+Field metadata: "{name}". {kind_line}. {hints}
+
+Task, in this order:
+a) Read the OLD photo's annotations: the drawn landing shape, any arrows and their meaning, dimensions, warnings; use its north indicator and scale bar to orient and scale what you see.
+b) CO-REGISTER: find the same terrain in the CURRENT orthophoto using stable landmarks — roads and junctions, rivers, buildings, tree lines, parcel boundaries.
+c) TRANSFER the drawn shape onto the current image (correcting for anything that visibly changed since), and derive the best landing run inside it. Place any obstacles you can localise (from the photo or the notes) in current-image pixels.
+
+Rules: exactly two Read calls (the two files above); no other tools, no network, no other files.
+
+Reply with ONLY a JSON object, no other text:
+{"found": true|false, "kind": "strip"|"field", "p1": {"x": <int>, "y": <int>}, "p2": {"x": <int>, "y": <int>}, "width_m": <number>, "run": {"p1": {"x": <int>, "y": <int>}, "p2": {"x": <int>, "y": <int>}, "width_m": <number>}, "annotations": {"shape": "rectangle"|"oval"|"polygon"|"none", "landing_bearings_deg": [<num>...], "obstacles": [{"x": <int>, "y": <int>, "desc": "<max 8 words>"}], "warnings": ["<max 10 words each>"]}, "match_confidence": <0.0-1.0>, "confidence": <0.0-1.0>, "reasoning": "<max 50 words>"}
+p1/p2 and obstacle coordinates are pixels of the CURRENT image (x right, y down). match_confidence = how surely the old photo's landmarks were found in the current one.
+```
