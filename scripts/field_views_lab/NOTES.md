@@ -207,12 +207,73 @@ to be confirmed with a variance run). Fields without a photo keep the k=3 consen
 render gains annotation elements: numbered amber obstacle triangles with a legend, warning
 lines, and "Annotations: Guide des Aires de Sécurité" added to the credit line.
 
+## Transfer pass v2 — annotations ARE the truth, no model call (2026-07-29)
+
+Fabien's correction of v1: the drawings on the old photo are authoritative and must be
+reproduced exactly; AI judgment has no business "improving" them. That turned the transfer
+into a pure CV problem, and v2 (`transfer_cv.py` + `transfer_render.py`) contains **zero
+model calls**:
+
+1. **Extraction** — the drawn overlays are saturated colours, so colour masks recover them
+   deterministically: red danger rectangle and pink measured arrow (Bayons), yellow-green
+   strip fill (St Blaise), pale-green strip sliver (Marcoux photo 0), blue measured arrow
+   (Marcoux photo 1). Prunières' thin black ring needs blackhat morphology (catches a thin
+   dark stroke over bright terrain, ignores broad dark forest) plus absolute-darkness OR,
+   then a 3000-iteration RANSAC ellipse fit (least squares alone is wrecked by the arc that
+   hides behind forest and the drawn arrow). Label text drawn across an arrow splits its
+   mask in two; the union of components collinear with the largest one restores the full
+   line while keeping same-coloured village roofs out.
+2. **Registration** — SIFT (CLAHE + RootSIFT, ratio 0.82) + RANSAC `estimateAffinePartial2D`
+   similarity old photo → fresh 1800 m IGN crop. Pre-scale hypothesis search (1–5×) bridges
+   the resolution gap between photo styles; when the standard crop starves the matcher
+   (Prunières: half the frame is lake), a 4500 m crop of the same datum registers instead
+   and the wide→standard scaling composes analytically. Guide chrome (frame, badges, scale
+   box) and the annotation overlays themselves are masked out of keypoint detection.
+3. **Projection + render** — extracted geometry maps through the fitted transform into
+   metres-of-datum and re-renders on a fresh 900 m portrait crop in the OSM-tier style.
+
+Registration quality (inliers / RMS on the ground):
+
+| photo | inliers | RMS | note |
+|---|---|---|---|
+| Bayons | 26 | 3.4 m | screenshot style, old mpp 1.24 |
+| St Blaise | 326 | 2.1 m | best case: same-scale framed photo |
+| Prunières | 41 | 8.3 m | via 4500 m fallback crop |
+| Marcoux photo 0 | 58 | 3.3 m | framed, 3.9 km scene |
+| Marcoux photo 1 | 25 | 1.7 m | screenshot itself sits 3.6° off north — absorbed |
+
+Extraction fidelity against the literal drawn labels: Bayons axis 247 m @ 61.6° vs drawn
+"261 m / 60.0°" (pilot-validated 62°); Marcoux arrow 245 m @ 189.1° vs "250 m / 190.0°";
+St Blaise quad 424 × 82 m as drawn. Measured axes get stretched to the labelled length at
+render time (the colour mask stops at the white endpoint dots).
+
+Render rules (the product spec, per Fabien):
+
+- Reproduce exactly what is drawn: strip quad, oval ring, red danger rectangle (translucent
+  red fill, as the Guide draws it). Rectangle only when the Guide drew one or a measured run
+  line; otherwise oval only (Prunières). Never both.
+- Direction arrow only where the photo draws one or the notes state a single preferred
+  direction. St Blaise has neither — v1's arrow came from the "050/230" axis label, which is
+  not a preference — so it gets none. A measured drawn arrow keeps its own position and
+  length (Marcoux: photo 0 outlines the full ~520 m marked track, photo 1's arrow the 250 m
+  usable segment — both reproduced where drawn, which is the real two-photo fusion). A
+  chunky pointer (Prunières) keeps its drawn position with the bearing from the notes.
+- No obstacle markers, no legend, no warnings bar, no distance labels: unusable in flight,
+  and the numbers already live in the detail view's parameters.
+
+Deps: `opencv-python-headless` + `numpy` (SIFT is in main OpenCV since 4.4). v1's
+model-driven transfer (PROMPTS.md template) is superseded; it remains the fallback shape
+for photos where colour masks or SIFT fail.
+
 ## Still to do
 
 - Vision API module in `field_views.py` (client behind ANTHROPIC_API_KEY,
-  consensus/union math from `consensus_run.py`, prompts from PROMPTS.md, transfer
-  pass first for fields carrying a Guide photo).
-- Transfer-pass variance run (is k=1 + judge enough when a photo anchors it?).
+  consensus/union math from `consensus_run.py`, prompts from PROMPTS.md) — for
+  fields with NO Guide photo only; photo fields use the deterministic transfer.
+- Productize the transfer: `field_views.py transfer` subcommand from
+  `transfer_cv.py`/`transfer_render.py`, per-photo-style mask presets, scale the
+  colour-mask extraction across the full Guide inventory, and fall back to the
+  vision path when masks or registration come up empty.
 - Judge-feedback retry before falling back (rescues near-misses).
 - Border-clip detection (blank-margin check on crops).
 - AT WMTS stitch; DE per-Land and IT per-region provider tables.

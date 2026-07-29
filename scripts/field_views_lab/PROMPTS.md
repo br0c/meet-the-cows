@@ -76,6 +76,11 @@ Rules: one Read of this file only; no other tools. Reply with ONLY JSON:
 
 ## v1 — TRANSFER (Opus, fields with an old annotated Guide photo)
 
+> **Superseded 2026-07-29.** The transfer is now deterministic (`transfer_cv.py`:
+> colour-mask extraction + SIFT/RANSAC registration, no model call) after Fabien's
+> "annotations are the truth" correction. This template is kept only as the fallback
+> shape for photos where the masks or the registration fail.
+
 Input images: every old annotated photo the field has (one Read each), then the current
 locate crop. `{photo_blocks}` lists them; with several photos the task says to fuse them into
 ONE result and to honour exclusions ("Do not use #1"). Validated 2026-07-29 on Bayons,
