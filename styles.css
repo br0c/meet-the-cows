@@ -384,6 +384,9 @@ body.modal-open { overflow: hidden; }
 .media-card img { width: 100%; max-height: 70vh; object-fit: contain; border-radius: 10px; background: #000; }
 .media-card iframe { width: 100%; height: 70vh; border: 0; border-radius: 10px; background: #fff; }
 .caption { color: var(--muted); margin-top: 6px; font-size: 13px; }
+/* Publisher credit under a photo or chart. Deliberately quiet but always present: some
+   sources licence their cartography on condition it is attributed wherever it appears. */
+.media-credit { color: var(--muted); opacity: .8; margin-top: 3px; font-size: 11px; line-height: 1.35; }
 .footer-note { color: var(--muted); font-size: 12px; margin: 12px 2px; }
 
 .contribute-btn { width: 100%; }

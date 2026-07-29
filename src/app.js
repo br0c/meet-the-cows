@@ -2972,6 +2972,12 @@ function formatFrequency(field) {
 
 function renderMediaItem(item, base) {
   const caption = item.caption || item.source || item.type;
+  // Credit the publisher on the card itself. The manifest and the pack notices carry it too, but
+  // this is where a pilot actually opens a chart, and some publishers require the attribution
+  // wherever their cartography appears (ENAIRE's permission is explicit about it). Suppressed
+  // when it would only repeat the caption — a photo whose caption already IS its source.
+  const credit = item.source && item.source !== caption
+    ? `<div class="media-credit">${escapeHtml(item.source)}</div>` : '';
   // A gated chart is fetched from the chart Worker; everything else, and any chart in a
   // deployment with no Worker configured, keeps using the URL published in the pack.
   const gated = chartUrl(item);
@@ -2980,15 +2986,15 @@ function renderMediaItem(item, base) {
   // (see attachFieldRowEvents) with the best URL there is — tokened, or bare when minting
   // failed, which the service worker still answers from the cache for a downloaded chart.
   if (gated && !chartToken.value && chartTokenPending) {
-    return `<div class="media-card"><div class="caption">${escapeHtml(caption)}</div></div>`;
+    return `<div class="media-card"><div class="caption">${escapeHtml(caption)}</div>${credit}</div>`;
   }
   const mediaUrl = gated
     ? tokenedChartUrl(gated)
     : new URL(item.url, base || state.currentManifestUrl || BASE_URL).toString();
   if (item.type === 'pdf') {
-    return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">${t('openPdf')}</a> · ${escapeHtml(caption)}</div></div>`;
+    return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">${t('openPdf')}</a> · ${escapeHtml(caption)}</div>${credit}</div>`;
   }
-  return `<div class="media-card"><img src="${mediaUrl}" alt="${escapeHtml(caption)}" loading="lazy" /><div class="caption">${escapeHtml(caption)}</div></div>`;
+  return `<div class="media-card"><img src="${mediaUrl}" alt="${escapeHtml(caption)}" loading="lazy" /><div class="caption">${escapeHtml(caption)}</div>${credit}</div>`;
 }
 
 // --- Community contribution form (Phase 2) ---

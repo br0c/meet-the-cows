@@ -4,15 +4,18 @@
     "date": "2026-07-29",
     "en": [
       "Spanish aerodrome charts, published by ENAIRE",
-      "CUP export now gives one file per selected pack"
+      "CUP export now gives one file per selected pack",
+      "Charts and photos now show who published them"
     ],
     "fr": [
       "Cartes d’aérodromes espagnoles, publiées par ENAIRE",
-      "L’export CUP fournit désormais un fichier par pack sélectionné"
+      "L’export CUP fournit désormais un fichier par pack sélectionné",
+      "Les cartes et photos indiquent désormais leur éditeur"
     ],
     "de": [
       "Spanische Flugplatzkarten, veröffentlicht von ENAIRE",
-      "Der CUP-Export liefert jetzt eine Datei pro ausgewähltem Paket"
+      "Der CUP-Export liefert jetzt eine Datei pro ausgewähltem Paket",
+      "Karten und Fotos zeigen jetzt ihren Herausgeber"
     ]
   },
   {
