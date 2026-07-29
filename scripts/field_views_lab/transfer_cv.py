@@ -198,11 +198,20 @@ def _ring_dist(ell, P):
     return np.abs(r - 1) * min(a, b)
 
 
-def _ransac_ellipse(pts, iters=3000, tol=3.0, seed=7):
+def _ransac_ellipse(pts, iters=3000, tol=3.0, seed=7, min_d=45):
     """ellipse maximizing on-curve support: robust to the ring being partly hidden
-    and to residual dark speckles that break a least-squares fit."""
+    and to residual dark speckles that break a least-squares fit.
+
+    Plausibility bounds come from the candidate points themselves — an earlier version
+    hardcoded the pixel window of the field it was first calibrated on, which silently
+    rejected every ring drawn anywhere else in any other photo.
+    """
     import random
     rng = random.Random(seed)
+    (xmin, ymin), (xmax, ymax) = pts.min(axis=0), pts.max(axis=0)
+    span = max(xmax - xmin, ymax - ymin)
+    max_d = span * 1.4          # a fitted ring may exceed the visible arc, but not wildly
+    pad = 0.25 * span           # its centre may sit outside a partly-hidden arc's extent
     best, bestn = None, 0
     for _ in range(iters):
         try:
@@ -210,7 +219,9 @@ def _ransac_ellipse(pts, iters=3000, tol=3.0, seed=7):
         except cv2.error:
             continue
         (cx, cy), (d1, d2), _ = ell
-        if not (60 < d1 < 260 and 60 < d2 < 260 and 90 < cx < 260 and 190 < cy < 380):
+        if not (min_d < d1 < max_d and min_d < d2 < max_d):
+            continue
+        if not (xmin - pad <= cx <= xmax + pad and ymin - pad <= cy <= ymax + pad):
             continue
         n = int((_ring_dist(ell, pts) < tol).sum())
         if n > bestn:

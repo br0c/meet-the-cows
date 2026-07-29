@@ -97,28 +97,61 @@ def detect_families(img, framed):
     if arrows:
         fam["arrows"] = arrows
 
-    # thin black ellipse ring
+    # Thin black ellipse ring. Found as a HOLE in the thin-dark mask rather than by
+    # fitting a curve to every dark pixel in the photo: over a whole frame the ring is a
+    # small minority of thin-dark pixels (field edges, roads, shadows), which starves
+    # random sampling and any support-fraction test. A hole also carries its own shape
+    # test — enclosed area over fitted-ellipse area is 1.0 for an ellipse and 4/pi ~ 1.27
+    # for a rectangle, so a bordered strip does not masquerade as a ring.
     bh = cv2.morphologyEx(v, cv2.MORPH_BLACKHAT,
                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
     dark = ((((bh > 25) & (v < 60)) | (v < 42)).astype(np.uint8) * 255) & win
-    for m in masks:
-        dark &= cv2.bitwise_not(cv2.dilate(m, np.ones((9, 9), np.uint8)))
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(dark)
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] > 800:
-            dark[lab == i] = 0
-    pts = np.column_stack(np.nonzero(dark))[:, ::-1].astype(np.float32)
-    if len(pts) >= 150:
-        try:
-            ell = tc._ransac_ellipse(pts, iters=1500)
-            (cx, cy), (d1, d2), _ = ell
-            support = int((tc._ring_dist(ell, pts) < 3).sum())
-            # a real drawn ring keeps most of the thin-dark pixels on the curve
-            if support > 200 and support > 0.45 * len(pts) and 60 < d1 and 60 < d2:
-                fam["ellipse"] = 1
-                masks.append(dark)
-        except Exception:  # noqa: BLE001 - no ring is a normal outcome
-            pass
+    rings = []
+    cnts, hier = cv2.findContours(dark, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    if hier is not None:
+        for i, c in enumerate(cnts):
+            if hier[0][i][3] == -1 or len(c) < 5:
+                continue
+            area = cv2.contourArea(c)
+            if area < 1500:
+                continue
+            (cx, cy), (d1, d2), ang = cv2.fitEllipse(c)
+            fitted = math.pi * d1 * d2 / 4
+            if not fitted or min(d1, d2) < 40:
+                continue
+            if 0.82 <= area / fitted <= 1.18:
+                rings.append(((cx, cy), (d1, d2), ang))
+    if not rings:
+        # Partial ring: forest or a crossing arrow breaks the loop, so there is no hole.
+        # Fit each dark arc on its own and keep it only if the resulting ellipse's
+        # PERIMETER is largely painted — a scale-free test that does not care how much
+        # other dark clutter the frame holds.
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(dark)
+        probe = cv2.dilate(dark, np.ones((7, 7), np.uint8))
+        for i in range(1, n):
+            if stats[i, cv2.CC_STAT_AREA] < 80:
+                continue
+            pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
+            if len(pts) < 60:
+                continue
+            (cx, cy), (d1, d2), ang = cv2.fitEllipse(pts)
+            if min(d1, d2) < 40 or max(d1, d2) > 0.9 * min(dark.shape):
+                continue
+            poly = cv2.ellipse2Poly((round(cx), round(cy)),
+                                    (round(d1 / 2), round(d2 / 2)), round(ang), 0, 360, 5)
+            inside = [(0 <= x < probe.shape[1] and 0 <= y < probe.shape[0]) for x, y in poly]
+            if not any(inside):
+                continue
+            hit = sum(1 for (x, y), ok in zip(poly, inside) if ok and probe[y, x])
+            if hit / len(poly) >= 0.55:
+                rings.append(((cx, cy), (d1, d2), ang))
+                break
+    if rings:
+        fam["ellipse"] = len(rings)
+        ring_mask = np.zeros(dark.shape, np.uint8)
+        for e in rings:
+            cv2.ellipse(ring_mask, e, 255, 6)
+        masks.append(ring_mask)
     return fam, masks
 
 
@@ -154,8 +187,19 @@ def main():
                     fv.ortho_crop(f.get("lat") or f["latitude"],
                                   f.get("lon") or f["longitude"], 1800, cur_path, "FR")
                 cur = cv2.imread(str(cur_path))
-                _, stats = tc.register(img, cur, framed, masks, name,
-                                       prescales=(1, 1.5, 2, 3, 4))
+                try:
+                    _, stats = tc.register(img, cur, framed, masks, name,
+                                           prescales=(1, 1.5, 2, 3, 4))
+                except RuntimeError:
+                    # feature-starved frames (half lake, uniform forest) register against
+                    # a wider crop of the same datum — Prunieres needs this
+                    wide_path = AIRES / f"{fid}_wide.jpg"
+                    if not wide_path.exists():
+                        fv.ortho_crop(f.get("lat") or f["latitude"],
+                                      f.get("lon") or f["longitude"], 4500, wide_path, "FR")
+                    _, stats = tc.register(img, cv2.imread(str(wide_path)), framed, masks,
+                                           f"{name}(wide)", prescales=(1, 1.5, 2, 3, 4))
+                    stats["via"] = "wide 4500 m crop"
                 view["registration"] = stats
             except Exception as err:  # noqa: BLE001 - verdict rows carry failures
                 view["registration_error"] = str(err)[:200]
