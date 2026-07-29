@@ -38,6 +38,12 @@ const PACKS = {
   west: [SHARED, field('w1', 'West One', 45.91, 7.61), field('w2', 'West Two', 45.92, 7.62)],
   east: [SHARED, field('e1', 'East One', 46.10, 8.40)],
 };
+// A range pack and a country pack that both carry the same aerodrome — the real case: a field
+// in both the Pyrenees and the Spain pack belongs to the range, whatever order the pilot's
+// stored selection is in. `range` is listed first in packs.json below, so it must win.
+const BORDER = field('border1', 'Border Field', 42.60, 0.90);
+PACKS.range = [BORDER, field('r1', 'Range One', 42.61, 0.91)];
+PACKS.country = [BORDER, field('c1', 'Country One', 42.30, 0.50)];
 
 await rm(ROOT, { recursive: true, force: true });
 await mkdir(path.join(ROOT, 'src'), { recursive: true });
@@ -148,7 +154,22 @@ const rowCount = text => text.trim().split(/\r\n/).length - 1;  // minus the hea
 check('no field is lost between the two files', rowCount(westText) + rowCount(eastText) === 4,
   `${rowCount(westText)} + ${rowCount(eastText)}`);
 
-console.log('\n2. One pack selected -> a plain .cup, not a zip of one');
+console.log('\n2. Precedence: the range pack keeps the shared field, whatever order it is stored in');
+// Stored deliberately country-first — the order an older settings blob, or the Alps-split
+// migration branch (which appends), can leave behind. Load order must follow packs.json anyway.
+const border = await exportWith(['country', 'range']);
+const borderZip = JSON.parse(execFileSync('python3', ['-c', `
+import json, zipfile
+with zipfile.ZipFile(${JSON.stringify(border.saved)}) as z:
+    print(json.dumps({n: z.read(n).decode("utf-8") for n in z.namelist()}))
+`], { encoding: 'utf8' }));
+const rangeText = borderZip[Object.keys(borderZip).find(n => n.includes('-range-'))];
+const countryText = borderZip[Object.keys(borderZip).find(n => n.includes('-country-'))];
+check('the range pack carries the shared aerodrome', rangeText.includes('Border Field'));
+check('the country pack leaves it out', !countryText.includes('Border Field'));
+check('the country pack keeps its own fields', countryText.includes('Country One'));
+
+console.log('\n3. One pack selected -> a plain .cup, not a zip of one');
 const single = await exportWith(['west']);
 check('download is a .cup', single.filename.endsWith('.cup'), single.filename);
 check('filename names the pack', single.filename.includes('-west-'), single.filename);

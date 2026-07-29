@@ -995,7 +995,19 @@ function activePackIds() {
     // mixed selections too — rather than silently dropping the pilot's Alps coverage.
     chosen = [...chosen, ...['alps-west', 'alps-east', 'alps'].filter(available)];
   }
-  return chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
+  chosen = chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
+  // Always in published pack order (packs.json = the picker's order: the mountain ranges, then
+  // the country packs), never in whatever order the ids happen to sit in localStorage. Packs
+  // overlap, and loadSelectedPacks gives each shared field to the FIRST pack that carries it —
+  // so this order decides whether a field in both the Pyrenees and Spain packs belongs to the
+  // range or to the country. The range is the answer a pilot expects, and it must not depend on
+  // the order a stored selection was written in (the Alps-split branch above appends, and older
+  // settings predate the picker order entirely).
+  const rank = id => {
+    const index = state.packs.findIndex(p => p.id === id);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  return [...chosen].sort((a, b) => rank(a) - rank(b));
 }
 
 function activePacks() {
@@ -2049,8 +2061,9 @@ function scheduleRender() {
 self.__mtcScheduleRenderProbe = scheduleRender;
 self.__mtcState = state;   // read-only diagnostics hook for the browser tests
 // The waypoint file is the one output that leaves for another device, so a test needs to read it
-// without driving a download. Pure function of state; calling it changes nothing.
-self.__mtcGenerateCupProbe = () => generateCupText();
+// without driving a download. Pure function of state; calling it changes nothing. Defaults to
+// every loaded field so a caller that only wants to inspect the CUP rows need not group by pack.
+self.__mtcGenerateCupProbe = fields => generateCupText(fields || state.fields);
 
 function updateStatusStrip() {
   const el = document.querySelector('#statusArea');
