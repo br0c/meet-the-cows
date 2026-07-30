@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
-const APP_VERSION = '0.8.11-beta';
+const APP_VERSION = '0.8.12-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';

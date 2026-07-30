@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.12-beta",
+    "date": "2026-07-30",
+    "en": [
+      "Terrain routing now covers the fields at the top of the list rather than the nearest ones, so a top result no longer shows an optimistic straight-line glide"
+    ],
+    "fr": [
+      "Le contournement du relief couvre désormais les terrains en haut de la liste plutôt que les plus proches : un premier résultat n’affiche plus une finesse en ligne droite trop optimiste"
+    ],
+    "de": [
+      "Der Gleitpfad um das Gelände wird jetzt für die obersten Einträge der Liste berechnet statt für die nächstgelegenen, sodass oben keine zu optimistische Gleitzahl in gerader Linie mehr steht"
+    ]
+  },
+  {
     "version": "0.8.11-beta",
     "date": "2026-07-30",
     "en": [
