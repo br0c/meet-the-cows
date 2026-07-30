@@ -1,0 +1,24 @@
+{
+ "photo": "522_grisail_2.jpg",
+ "sha256": "ddca29e2f8edcaf91834e18d6091db62801669cafee46c35345c69e58584ea7e",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "350\n240",
+  "350\n060"
+ ],
+ "labels": [
+  {
+   "text": "350\n240",
+   "length_m": 350.0,
+   "bearing_deg": 240.0,
+   "arrow": "other"
+  },
+  {
+   "text": "350\n060",
+   "length_m": 350.0,
+   "bearing_deg": 60.0,
+   "arrow": "other"
+  }
+ ]
+}

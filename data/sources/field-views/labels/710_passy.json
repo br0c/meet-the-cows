@@ -1,0 +1,17 @@
+{
+ "photo": "710_passy.jpg",
+ "sha256": "be020562775830d40ce986f971a4ad65c985e6ee4b71bd2ab7f7dba10fe2efe8",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "600m\n160.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "600m\n160.0\u00b0",
+   "length_m": 600.0,
+   "bearing_deg": 160.0,
+   "arrow": "blue"
+  }
+ ]
+}

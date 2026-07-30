@@ -1,0 +1,17 @@
+{
+ "photo": "310_la_faurie_1.jpg",
+ "sha256": "cea84d283a0413ea8f6a031d8d9a3581a0244c2792cd02e37a3fd3cd80e0b36e",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "300 m\n105.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "300 m\n105.0\u00b0",
+   "length_m": 300.0,
+   "bearing_deg": 105.0,
+   "arrow": "white"
+  }
+ ]
+}

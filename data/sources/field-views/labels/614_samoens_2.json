@@ -1,0 +1,39 @@
+{
+ "photo": "614_samoens_2.jpg",
+ "sha256": "673d0c3b59f99866fd1b3811885006bafc5d42a73142a44fa53691b556ca4111",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "350\n090",
+  "350\n270",
+  "350\n180",
+  "350\n000",
+  "350\n090"
+ ],
+ "labels": [
+  {
+   "text": "350\n090",
+   "length_m": 350.0,
+   "bearing_deg": 90.0,
+   "arrow": "white"
+  },
+  {
+   "text": "350\n270",
+   "length_m": 350.0,
+   "bearing_deg": 270.0,
+   "arrow": "white"
+  },
+  {
+   "text": "350\n180",
+   "length_m": 350.0,
+   "bearing_deg": 180.0,
+   "arrow": "white"
+  },
+  {
+   "text": "350\n000",
+   "length_m": 350.0,
+   "bearing_deg": 0.0,
+   "arrow": "white"
+  }
+ ]
+}

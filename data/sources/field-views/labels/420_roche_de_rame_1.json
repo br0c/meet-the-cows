@@ -1,0 +1,24 @@
+{
+ "photo": "420_roche_de_rame_1.jpg",
+ "sha256": "5e2761e56b2fc1afedb1c5438ea8db726176e8af360f60c37f930e4e26313080",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "145 m\n350.0\u00b0",
+  "130 m\n180.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "145 m\n350.0\u00b0",
+   "length_m": 145.0,
+   "bearing_deg": 350.0,
+   "arrow": "red"
+  },
+  {
+   "text": "130 m\n180.0\u00b0",
+   "length_m": 130.0,
+   "bearing_deg": 180.0,
+   "arrow": "blue"
+  }
+ ]
+}

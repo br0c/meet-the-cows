@@ -1,0 +1,17 @@
+{
+ "photo": "320_Bayons.jpg",
+ "sha256": "62ef055fa814032a842fde153351281fca635b4ffca1604b20a9a33e56fe5d76",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "261 m\n60.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "261 m\n60.0\u00b0",
+   "length_m": 261.0,
+   "bearing_deg": 60.0,
+   "arrow": "red"
+  }
+ ]
+}

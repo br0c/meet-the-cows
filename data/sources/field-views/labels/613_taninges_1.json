@@ -1,0 +1,38 @@
+{
+ "photo": "613_taninges_1.jpg",
+ "sha256": "55a2420b0eff1b50d5a51b95645848753c6301394d17e8c42d3e8884afe432ba",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "330 m\n19.0\u00b0",
+  "370 m\n17.0\u00b0",
+  "200 m\n19.0\u00b0",
+  "310 m\n15.9\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "330 m\n19.0\u00b0",
+   "length_m": 330.0,
+   "bearing_deg": 19.0,
+   "arrow": "red"
+  },
+  {
+   "text": "370 m\n17.0\u00b0",
+   "length_m": 370.0,
+   "bearing_deg": 17.0,
+   "arrow": "red"
+  },
+  {
+   "text": "200 m\n19.0\u00b0",
+   "length_m": 200.0,
+   "bearing_deg": 19.0,
+   "arrow": "red"
+  },
+  {
+   "text": "310 m\n15.9\u00b0",
+   "length_m": 310.0,
+   "bearing_deg": 15.9,
+   "arrow": "red"
+  }
+ ]
+}

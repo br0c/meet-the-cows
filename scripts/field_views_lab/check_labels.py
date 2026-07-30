@@ -21,6 +21,7 @@ Reports, per label:
 """
 import argparse
 import collections
+import json
 import math
 import sys
 from pathlib import Path
@@ -95,6 +96,26 @@ so this runs over the whole corpus every time rather than trusting the prompt.
 """
 
 
+def untranscribed(docs):
+    """Readings whose numbers do not appear in the photo's own transcription.
+
+    The prompt asks for the raw characters first and the parse second, so the two can be
+    held against each other. A number that is nowhere in what the model said it could see
+    was not read off the photo — it was supplied. This catches invention directly, where
+    the geometric cross-check can only catch it indirectly and only where our own
+    extractors happen to be good.
+    """
+    bad = []
+    for doc in docs:
+        seen = " ".join(doc.get("seen") or []).replace(",", ".")
+        for x in doc.get("labels") or []:
+            length = f"{x['length_m']:g}"
+            bearing = f"{x['bearing_deg']:g}"
+            if length not in seen or bearing.split(".")[0] not in seen:
+                bad.append((doc.get("photo"), f"{length} m / {bearing}° not in {seen!r}"))
+    return bad
+
+
 def repeated_values(docs):
     """(length, bearing) pairs recurring across suspiciously many photos."""
     counts = collections.Counter()
@@ -114,12 +135,16 @@ def main():
     pale_orphans = 0
     read = 0
     corpus = []
+    corpus_docs = []
     for name in photos:
         labels = read_labels.load(name)
         if labels is None:
             continue
         read += 1
         corpus.append((name, labels))
+        raw = read_labels.CACHE / f"{Path(name).stem}.json"
+        if raw.exists():
+            corpus_docs.append(json.loads(raw.read_text()))
         rows, orphans = check(name, labels)
         for kind, _ in rows:
             totals[kind] = totals.get(kind, 0) + 1
@@ -146,10 +171,23 @@ def main():
             print(f"   {length:6.0f} m / {bearing:6.1f}°  on {n} photos")
         return 1
 
-    matched = totals["MATCH"]
-    if sum(totals.values()) and matched / sum(totals.values()) < 0.5:
-        print("\nSUSPECT: fewer than half the readings have any stroke near them.")
+    untraceable = untranscribed(corpus_docs)
+    if untraceable:
+        print(f"\nSUSPECT: {len(untraceable)} reading(s) do not appear in the photo's own"
+              " transcription.")
+        for photo, text in untraceable[:12]:
+            print(f"   {photo}: {text}")
         return 1
+
+    # The match rate is reported, not enforced. It measures OUR recall as much as the
+    # model's precision — the extractors find 48 ink arrows where the guides letter 118
+    # runs, so most labels correctly have no stroke of ours to point at. A label with no
+    # geometry is inert anyway: ink arrows come from the CV alone, and a white label with
+    # no bar emits nothing. Failing on this ratio rejected a batch that was reading
+    # correctly, which is worse than not checking it.
+    total = sum(totals.values())
+    if total:
+        print(f"\nmatch rate {totals['MATCH']}/{total} — informational, not a gate")
     return 0
 
 

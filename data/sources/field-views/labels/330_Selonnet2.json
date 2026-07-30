@@ -1,0 +1,17 @@
+{
+ "photo": "330_Selonnet2.jpg",
+ "sha256": "60a8c5239369b13e77fe46c3f6ebcc5d2c487873b294775e745de494fd468347",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "390 m\n158.2\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "390 m\n158.2\u00b0",
+   "length_m": 390.0,
+   "bearing_deg": 158.2,
+   "arrow": "blue"
+  }
+ ]
+}

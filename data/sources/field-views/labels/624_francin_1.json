@@ -1,0 +1,17 @@
+{
+ "photo": "624_francin_1.jpg",
+ "sha256": "2791a7841382a4fa8e8b3507703b32e10988dc9568ac9253e44055267670a19f",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "400 m\n330.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "400 m\n330.0\u00b0",
+   "length_m": 400.0,
+   "bearing_deg": 330.0,
+   "arrow": "red"
+  }
+ ]
+}

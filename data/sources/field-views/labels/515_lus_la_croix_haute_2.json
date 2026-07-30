@@ -1,0 +1,38 @@
+{
+ "photo": "515_lus_la_croix_haute_2.jpg",
+ "sha256": "b4c7ddca6f0d11b68fdf387f9c5297a5c32b24fe4901dd7be3b8771c0f859414",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "240 m\n73.0\u00b0",
+  "300 m\n0.0\u00b0",
+  "275 m\n152\u00b0",
+  "300 m\n68.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "240 m\n73.0\u00b0",
+   "length_m": 240.0,
+   "bearing_deg": 73.0,
+   "arrow": "white"
+  },
+  {
+   "text": "300 m\n0.0\u00b0",
+   "length_m": 300.0,
+   "bearing_deg": 0.0,
+   "arrow": "red"
+  },
+  {
+   "text": "275 m\n152\u00b0",
+   "length_m": 275.0,
+   "bearing_deg": 152.0,
+   "arrow": "red"
+  },
+  {
+   "text": "300 m\n68.0\u00b0",
+   "length_m": 300.0,
+   "bearing_deg": 68.0,
+   "arrow": "white"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "photo": "611_megevette_1.jpg",
+ "sha256": "47c2e91f3d5a23881d9037c122dd1e52f3e0075e305d38019a86e7f980dbfab3",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "300 m\n13.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "300 m\n13.0\u00b0",
+   "length_m": 300.0,
+   "bearing_deg": 13.0,
+   "arrow": "red"
+  }
+ ]
+}

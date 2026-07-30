@@ -1,0 +1,24 @@
+{
+ "photo": "610_bernex_1.jpg",
+ "sha256": "216c0d0cf44c5aa2e00ac1b5bdeef96f90b51ccd84d8b7277b0d3f37e9ae569f",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "365 m\n260.0\u00b0",
+  "400 m\n90.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "365 m\n260.0\u00b0",
+   "length_m": 365.0,
+   "bearing_deg": 260.0,
+   "arrow": "white"
+  },
+  {
+   "text": "400 m\n90.0\u00b0",
+   "length_m": 400.0,
+   "bearing_deg": 90.0,
+   "arrow": "white"
+  }
+ ]
+}

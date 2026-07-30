@@ -1,0 +1,10 @@
+{
+ "photo": "521_vizille.jpg",
+ "sha256": "8d5a17bb3852318db9d7f15065288e130672bd6bef6494734d3d4d172ad47d7b",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "349.98 m"
+ ],
+ "labels": []
+}

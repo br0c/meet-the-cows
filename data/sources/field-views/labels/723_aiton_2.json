@@ -1,0 +1,24 @@
+{
+ "photo": "723_aiton_2.jpg",
+ "sha256": "579edca46c5180e37b95a06c2735af5143a4994f955f4936c1498c85505e0941",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "450\n240",
+  "450\n060"
+ ],
+ "labels": [
+  {
+   "text": "450\n240",
+   "length_m": 450.0,
+   "bearing_deg": 240.0,
+   "arrow": "other"
+  },
+  {
+   "text": "450\n060",
+   "length_m": 450.0,
+   "bearing_deg": 60.0,
+   "arrow": "other"
+  }
+ ]
+}

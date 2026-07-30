@@ -1,0 +1,38 @@
+{
+ "photo": "529_chauffayer_2.jpg",
+ "sha256": "1f486f7ba831cc84250170c78a58e722c6d1d3709ba405f210ecd236e03fe19a",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "550\n070",
+  "550\n250",
+  "450\n070",
+  "450\n250"
+ ],
+ "labels": [
+  {
+   "text": "550\n070",
+   "length_m": 550.0,
+   "bearing_deg": 70.0,
+   "arrow": "white"
+  },
+  {
+   "text": "550\n250",
+   "length_m": 550.0,
+   "bearing_deg": 250.0,
+   "arrow": "white"
+  },
+  {
+   "text": "450\n070",
+   "length_m": 450.0,
+   "bearing_deg": 70.0,
+   "arrow": "white"
+  },
+  {
+   "text": "450\n250",
+   "length_m": 450.0,
+   "bearing_deg": 250.0,
+   "arrow": "white"
+  }
+ ]
+}

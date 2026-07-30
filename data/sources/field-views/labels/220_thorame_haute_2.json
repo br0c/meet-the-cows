@@ -1,0 +1,17 @@
+{
+ "photo": "220_thorame_haute_2.jpg",
+ "sha256": "4adba50cf70bc618add6cbc2ca825ef34180f969ae632b050e1dd4fb485f7665",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "350\n180"
+ ],
+ "labels": [
+  {
+   "text": "350\n180",
+   "length_m": 350.0,
+   "bearing_deg": 180.0,
+   "arrow": "white"
+  }
+ ]
+}

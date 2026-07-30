@@ -1,0 +1,17 @@
+{
+ "photo": "525_Montmeilleur.jpg",
+ "sha256": "9acf63a5a90813c38e07222b756d06e63d1d3bfb2ef8afb9476368518457e0f1",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "511 m\n84.8\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "511 m\n84.8\u00b0",
+   "length_m": 511.0,
+   "bearing_deg": 84.8,
+   "arrow": "white"
+  }
+ ]
+}

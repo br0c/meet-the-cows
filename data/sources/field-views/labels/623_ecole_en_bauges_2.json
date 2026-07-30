@@ -1,0 +1,17 @@
+{
+ "photo": "623_ecole_en_bauges_2.jpg",
+ "sha256": "78e35f079c782fa84bfd61d9a47c79e6396a1b1541cbcbe3eac68d7252a835c0",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "350m\n200\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "350m\n200\u00b0",
+   "length_m": 350.0,
+   "bearing_deg": 200.0,
+   "arrow": "other"
+  }
+ ]
+}

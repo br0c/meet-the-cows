@@ -1,0 +1,31 @@
+{
+ "photo": "523_st_jean_herans_1.jpg",
+ "sha256": "7ff23cd9e9f8e869de5d0127e8101323157ba98eefb19bbfc564bd306916f2af",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "373 m\n3500\u00b0",
+  "385 m\n75.0\u00b0",
+  "172 m\n78.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "373 m\n3500\u00b0",
+   "length_m": 373.0,
+   "bearing_deg": 350.0,
+   "arrow": "red"
+  },
+  {
+   "text": "385 m\n75.0\u00b0",
+   "length_m": 385.0,
+   "bearing_deg": 75.0,
+   "arrow": "white"
+  },
+  {
+   "text": "172 m\n78.0\u00b0",
+   "length_m": 172.0,
+   "bearing_deg": 78.0,
+   "arrow": "white"
+  }
+ ]
+}

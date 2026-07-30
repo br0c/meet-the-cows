@@ -1,0 +1,17 @@
+{
+ "photo": "720_marthod.jpg",
+ "sha256": "5fccd2cd1922bfa45d81594bf2a381a8bf0821444a249a443e033f3568a1c3ab",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "320 m\n33.2\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "320 m\n33.2\u00b0",
+   "length_m": 320.0,
+   "bearing_deg": 33.2,
+   "arrow": "red"
+  }
+ ]
+}

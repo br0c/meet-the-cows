@@ -1,0 +1,17 @@
+{
+ "photo": "722_la_bathie_2.jpg",
+ "sha256": "08bfb479c34ffdc811df812a3d19edf2a3dee23575c57f3fd8a72635c9f24c02",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "450\n180"
+ ],
+ "labels": [
+  {
+   "text": "450\n180",
+   "length_m": 450.0,
+   "bearing_deg": 180.0,
+   "arrow": "white"
+  }
+ ]
+}

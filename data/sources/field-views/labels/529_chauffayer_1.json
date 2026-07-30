@@ -1,0 +1,52 @@
+{
+ "photo": "529_chauffayer_1.jpg",
+ "sha256": "158a7c0c65124bbd3960d8c4a309c1a99f09b5a5311cb9d6485a6357b6ed59ee",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "280 m\n310\u00b0",
+  "200 m\n80.0\u00b0",
+  "184 m\n0.0\u00b0",
+  "240 m\n355.0\u00b0",
+  "236 m\n0.0\u00b0",
+  "265 m\n0.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "280 m\n310\u00b0",
+   "length_m": 280.0,
+   "bearing_deg": 310.0,
+   "arrow": "red"
+  },
+  {
+   "text": "200 m\n80.0\u00b0",
+   "length_m": 200.0,
+   "bearing_deg": 80.0,
+   "arrow": "red"
+  },
+  {
+   "text": "184 m\n0.0\u00b0",
+   "length_m": 184.0,
+   "bearing_deg": 0.0,
+   "arrow": "red"
+  },
+  {
+   "text": "240 m\n355.0\u00b0",
+   "length_m": 240.0,
+   "bearing_deg": 355.0,
+   "arrow": "red"
+  },
+  {
+   "text": "236 m\n0.0\u00b0",
+   "length_m": 236.0,
+   "bearing_deg": 0.0,
+   "arrow": "red"
+  },
+  {
+   "text": "265 m\n0.0\u00b0",
+   "length_m": 265.0,
+   "bearing_deg": 0.0,
+   "arrow": "red"
+  }
+ ]
+}

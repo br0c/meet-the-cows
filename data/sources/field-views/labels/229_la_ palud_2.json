@@ -1,0 +1,17 @@
+{
+ "photo": "229_la_ palud_2.jpg",
+ "sha256": "07a020ae37b32c028d64c2b47e77f3217885e975aa542fbc501f448293f3b8f9",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "240m\n100.0\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "240m\n100.0\u00b0",
+   "length_m": 240.0,
+   "bearing_deg": 100.0,
+   "arrow": "white"
+  }
+ ]
+}

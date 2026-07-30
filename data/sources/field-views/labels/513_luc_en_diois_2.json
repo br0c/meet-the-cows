@@ -1,0 +1,17 @@
+{
+ "photo": "513_luc_en_diois_2.jpg",
+ "sha256": "a1e5e29880603a3f6c78eb9d9446273fed5f2150d1448e0a7777c84b0373d41a",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "450m\n180\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "450m\n180\u00b0",
+   "length_m": 450.0,
+   "bearing_deg": 180.0,
+   "arrow": "white"
+  }
+ ]
+}

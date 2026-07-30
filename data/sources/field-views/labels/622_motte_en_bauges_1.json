@@ -1,0 +1,17 @@
+{
+ "photo": "622_motte_en_bauges_1.jpg",
+ "sha256": "4a60bae55cce056305a6bf7a25b52f67af3ea780800ac1086ee549b5dd6bddf6",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "550 m\n338\u00b00"
+ ],
+ "labels": [
+  {
+   "text": "550 m\n338\u00b00",
+   "length_m": 550.0,
+   "bearing_deg": 338.0,
+   "arrow": "red"
+  }
+ ]
+}

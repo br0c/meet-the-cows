@@ -1,0 +1,31 @@
+{
+ "photo": "615_bonneville_2.jpg",
+ "sha256": "035ace93536c301782b08ab062f4e3f6b17277eb23ee2a4c15723feda6479e85",
+ "model": "claude-sonnet-4-5-20250929",
+ "prompt_version": 3,
+ "seen": [
+  "450m\n200\u00b0",
+  "550m\n290\u00b0",
+  "500m\n110\u00b0"
+ ],
+ "labels": [
+  {
+   "text": "450m\n200\u00b0",
+   "length_m": 450.0,
+   "bearing_deg": 200.0,
+   "arrow": "white"
+  },
+  {
+   "text": "550m\n290\u00b0",
+   "length_m": 550.0,
+   "bearing_deg": 290.0,
+   "arrow": "white"
+  },
+  {
+   "text": "500m\n110\u00b0",
+   "length_m": 500.0,
+   "bearing_deg": 110.0,
+   "arrow": "white"
+  }
+ ]
+}
