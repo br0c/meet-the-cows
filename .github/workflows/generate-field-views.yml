@@ -66,6 +66,20 @@ jobs:
           # opencv/numpy are the annotation-transfer pipeline; Pillow renders; boto3 publishes
           python -m pip install opencv-python-headless numpy Pillow boto3
 
+      # A late failure must not cost the hours of orthophoto fetching that preceded it: a
+      # credential typo in the publish step already forced one full regeneration. The
+      # renderers all skip a field whose view is already on disk, so restoring this cache
+      # makes a rerun resume instead of restart. The key rotates daily so a deliberate
+      # refresh still gets fresh imagery, and restore-keys let today's run build on
+      # yesterday's partial work.
+      - name: Cache rendered views
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.FIELD_VIEWS_WORK }}
+          key: field-views-${{ github.event.inputs.channel }}-${{ github.run_id }}
+          restore-keys: |
+            field-views-${{ github.event.inputs.channel }}-
+
       - name: Build the field inventory
         run: |
           python scripts/field_views_lab/inventory.py \
