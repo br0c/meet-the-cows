@@ -11,9 +11,17 @@ name: Generate field views
 # should not find it silently shifted — so a refresh happens when imagery campaigns update,
 # roughly yearly, or when the pipeline itself improves.
 #
-# Renders go to R2 under <channel>/views/, the review artifacts (contact sheets + the
-# per-tier index) to GitHub artifacts, so results can be spot-checked before anything is
-# wired into a pack.
+# Structured as a pipeline of independent jobs rather than one long job, because the first
+# monolithic version cost 2.5 hours of orthophoto fetching twice: once to a crash in a
+# single field, once to a wrong secret name in the publish step. Now:
+#
+#   prepare  -> inventory, OSM runways, match            (~10 min, uploaded as an artifact)
+#   render   -> matrix: one job per country shard + aires + pyr, fail-fast off
+#   qa       -> automated review over every shard's index
+#   publish  -> renders to R2, and runs even when a shard or QA failed
+#
+# So a failure costs its own shard, "re-run failed jobs" is genuinely useful, and a
+# credential problem in publish can never destroy generation again.
 on:
   workflow_dispatch:
     inputs:
@@ -28,7 +36,7 @@ on:
         default: dev
         options: [dev, prod]
       limit:
-        description: "Cap fields per tier (0 = no cap; use a small number to smoke-test)"
+        description: "Cap fields per shard (0 = no cap; use a small number to smoke-test)"
         type: string
         default: "0"
       publish:
@@ -40,122 +48,190 @@ concurrency:
   group: field-views
   cancel-in-progress: false
 
+env:
+  PY_DEPS: opencv-python-headless numpy Pillow boto3
+
 jobs:
-  generate:
+  # ---------------------------------------------------------------------- prepare
+  prepare:
     runs-on: ubuntu-latest
-    # The OSM tier is ~2,400 orthophoto fetches against public services at 4 workers.
-    timeout-minutes: 330
-
-    env:
-      FIELD_VIEWS_WORK: ${{ github.workspace }}/views-work
-      LIMIT: ${{ github.event.inputs.limit }}
-
+    timeout-minutes: 45
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
-
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # opencv/numpy are the annotation-transfer pipeline; Pillow renders; boto3 publishes
-          python -m pip install opencv-python-headless numpy Pillow boto3
-
-      # A late failure must not cost the hours of orthophoto fetching that preceded it: a
-      # credential typo in the publish step already forced one full regeneration. The
-      # renderers all skip a field whose view is already on disk, so restoring this cache
-      # makes a rerun resume instead of restart. The key rotates daily so a deliberate
-      # refresh still gets fresh imagery, and restore-keys let today's run build on
-      # yesterday's partial work.
-      - name: Cache rendered views
-        uses: actions/cache@v6
-        with:
-          path: ${{ env.FIELD_VIEWS_WORK }}
-          key: field-views-${{ github.event.inputs.channel }}-${{ github.run_id }}
-          restore-keys: |
-            field-views-${{ github.event.inputs.channel }}-
+        run: python -m pip install --quiet --upgrade pip $PY_DEPS
 
       - name: Build the field inventory
         run: |
           python scripts/field_views_lab/inventory.py \
-            --channel "${{ github.event.inputs.channel }}" \
-            --out "$FIELD_VIEWS_WORK/inventory.json"
+            --channel "${{ github.event.inputs.channel }}" --out work/inventory.json
 
-      # ---------------------------------------------------------------- OSM tier
-      - name: Fetch OSM runways
+      # Overpass and the match run once for every shard, so they belong here rather than
+      # repeated per country.
+      - name: Fetch OSM runways and match
         if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'osm' }}
         run: |
-          python scripts/field_views.py runways \
-            --fields "$FIELD_VIEWS_WORK/inventory.json" \
-            --out "$FIELD_VIEWS_WORK/runways.json"
+          python scripts/field_views.py runways --fields work/inventory.json \
+            --out work/runways.json
+          python scripts/field_views.py match --fields work/inventory.json \
+            --runways work/runways.json --out work/matches.json
 
-      - name: Match runways to fields
-        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'osm' }}
+      # One shard per country for the OSM tier: the countries are independent, each talks
+      # to a different national service (politer than hammering all six at once), and the
+      # whole tier no longer stands or falls together. CH and AT are small enough to share.
+      - name: Plan the render shards
+        id: plan
         run: |
-          python scripts/field_views.py match \
-            --fields "$FIELD_VIEWS_WORK/inventory.json" \
-            --runways "$FIELD_VIEWS_WORK/runways.json" \
-            --out "$FIELD_VIEWS_WORK/matches.json"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          tiers = os.environ["TIERS"]
+          shards = []
+          if tiers in ("all", "osm"):
+              for name, countries in (("osm-FR", "FR"), ("osm-DE", "DE"), ("osm-IT", "IT"),
+                                      ("osm-ES", "ES"), ("osm-CH-AT", "CH,AT")):
+                  shards.append({"tier": "osm", "name": name, "countries": countries})
+          if tiers in ("all", "aires"):
+              shards.append({"tier": "aires", "name": "aires", "countries": ""})
+          if tiers in ("all", "pyr"):
+              shards.append({"tier": "pyr", "name": "pyr", "countries": ""})
+          print("shards=" + json.dumps(shards))
+          PY
+        env:
+          TIERS: ${{ github.event.inputs.tiers }}
 
-      - name: Render the OSM tier
-        id: osm
-        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'osm' }}
-        # One tier failing must not cost the others, the review sheets, or the publish of
-        # what did render — the job's conclusion is set by the final gate below.
-        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: field-views-prepare
+          retention-days: 5
+          path: work/*.json
+
+  # ----------------------------------------------------------------------- render
+  render:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false          # a bad shard must not cancel its siblings
+      max-parallel: 3           # be a guest on public WMS services, not a crowd
+      matrix:
+        shard: ${{ fromJSON(needs.prepare.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install dependencies
+        run: python -m pip install --quiet --upgrade pip $PY_DEPS
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: field-views-prepare
+          path: work
+
+      # Renderers skip a field whose view is already on disk, so a restored cache turns a
+      # rerun into a resume rather than a restart.
+      - name: Cache this shard's renders
+        uses: actions/cache@v6
+        with:
+          path: work
+          key: fv-${{ github.event.inputs.channel }}-${{ matrix.shard.name }}-${{ github.run_id }}
+          restore-keys: |
+            fv-${{ github.event.inputs.channel }}-${{ matrix.shard.name }}-
+
+      - name: Render ${{ matrix.shard.name }}
+        env:
+          FIELD_VIEWS_WORK: ${{ github.workspace }}/work
         run: |
-          python scripts/field_views_lab/osm_render_all.py \
-            --matches "$FIELD_VIEWS_WORK/matches.json" \
-            --workers 4 --limit "$LIMIT"
+          case "${{ matrix.shard.tier }}" in
+            osm)
+              python scripts/field_views_lab/osm_render_all.py \
+                --matches work/matches.json --workers 4 \
+                --limit "${{ github.event.inputs.limit }}" \
+                --countries "${{ matrix.shard.countries }}" \
+                --shard "${{ matrix.shard.name }}" ;;
+            aires) python scripts/field_views_lab/aires_render.py ;;
+            pyr)   python scripts/field_views_lab/pyr_transfer.py ;;
+          esac
 
-      # -------------------------------------------------------------- Aires tier
-      - name: Render the Guide des Aires de Sécurité fields
-        id: aires
-        if: ${{ always() && (github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'aires') }}
-        continue-on-error: true
-        run: python scripts/field_views_lab/aires_render.py
-
-      # ---------------------------------------------------------------- Pyrenees
-      - name: Render the APVV Pyrenees champs
-        id: pyr
-        if: ${{ always() && (github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'pyr') }}
-        continue-on-error: true
-        run: python scripts/field_views_lab/pyr_transfer.py
-
-      # ------------------------------------------------------------------ review
-      # Automated review comes before the human kind: 2,500 views is past what anyone
-      # checks by eye, and the failure that matters most is silent — a field shipping an
-      # unmarked view when its photo plainly carries a drawing. Blocking findings fail the
-      # run (via the gate at the end) but never stop the artifacts being saved.
-      - name: Automated QA review
-        id: qa
+      - name: Upload ${{ matrix.shard.name }} renders
         if: always()
-        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: field-views-renders-${{ matrix.shard.name }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            work/${{ matrix.shard.tier }}/out/**
+
+  # --------------------------------------------------------------------------- qa
+  qa:
+    needs: [prepare, render]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      blocking: ${{ steps.review.outcome }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install dependencies
+        run: python -m pip install --quiet --upgrade pip $PY_DEPS
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: field-views-prepare
+          path: work
+      # Shard artifacts merge back into one work tree: each wrote only its own tier dir.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: field-views-renders-*
+          merge-multiple: true
+          path: work
+
+      # The OSM shards each wrote their own index; fold them into one per tier so QA and
+      # the sheets see the whole tier.
+      - name: Merge shard indexes
+        env:
+          FIELD_VIEWS_WORK: ${{ github.workspace }}/work
+        run: python scripts/field_views_lab/merge_indexes.py
+
+      - name: Automated QA review
+        id: review
+        continue-on-error: true          # findings are reported here, enforced by the gate
+        env:
+          FIELD_VIEWS_WORK: ${{ github.workspace }}/work
         run: python scripts/field_views_lab/qa_review.py
 
       - name: Build contact sheets
         if: always()
+        env:
+          FIELD_VIEWS_WORK: ${{ github.workspace }}/work
         run: |
           for tier in osm aires pyr; do
             case "$tier" in
-              osm)   dir="$FIELD_VIEWS_WORK/osm/out";   title="OSM tier" ;;
-              aires) dir="$FIELD_VIEWS_WORK/aires/out"; title="Guide des Aires de Sécurité" ;;
-              pyr)   dir="$FIELD_VIEWS_WORK/pyr/out";   title="APVV Pyrénées" ;;
+              osm)   title="OSM tier" ;;
+              aires) title="Guide des Aires de Sécurité" ;;
+              pyr)   title="APVV Pyrénées" ;;
             esac
-            [ -d "$dir" ] || continue
+            [ -d "work/$tier/out" ] || continue
             python scripts/field_views_lab/contact_sheets.py \
-              --dir "$dir" --out "$FIELD_VIEWS_WORK/sheets/$tier" --title "$title"
+              --dir "work/$tier/out" --out "work/sheets/$tier" --title "$title"
           done
-          # Sheets of just the flagged views — the ones worth a human's time.
-          if [ -d "$FIELD_VIEWS_WORK/qa/flagged" ]; then
+          # Sheets of just the flagged views — where a human's attention is worth spending.
+          if [ -d work/qa/flagged ]; then
             python scripts/field_views_lab/contact_sheets.py \
-              --dir "$FIELD_VIEWS_WORK/qa/flagged" \
-              --out "$FIELD_VIEWS_WORK/sheets/flagged" --title "QA flagged — review these"
+              --dir work/qa/flagged --out work/sheets/flagged \
+              --title "QA flagged — review these"
           fi
 
       - name: Summarise
@@ -164,17 +240,21 @@ jobs:
           {
             echo "## Generated field views"
             echo
-            echo "| tier | views | index |"
-            echo "|---|---:|---|"
+            echo "| tier | views |"
+            echo "|---|---:|"
             for tier in osm aires pyr; do
-              dir="$FIELD_VIEWS_WORK/$tier/out"
-              [ -d "$dir" ] || continue
-              n=$(find "$dir" -name 'final_*.jpg' | wc -l)
-              idx=$([ -f "$dir/index.json" ] && echo "yes" || echo "-")
-              echo "| $tier | $n | $idx |"
+              [ -d "work/$tier/out" ] || continue
+              n=$(find "work/$tier/out" -name 'final_*.jpg' | wc -l)
+              echo "| $tier | $n |"
             done
             echo
-            echo "Renders: R2 \`${{ github.event.inputs.channel }}/views/\`. Contact sheets are in this run's artifacts."
+            if [ -f work/qa_flagged.txt ]; then
+              echo "### QA findings (first 40)"
+              echo '```'
+              head -40 work/qa_flagged.txt
+              echo '```'
+            fi
+            echo "Renders: R2 \`${{ github.event.inputs.channel }}/views/\`. Contact sheets in this run's artifacts."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload review artifacts
@@ -182,20 +262,40 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: field-views-review
-          if-no-files-found: warn
           retention-days: 30
+          if-no-files-found: warn
           path: |
-            ${{ env.FIELD_VIEWS_WORK }}/sheets/**
-            ${{ env.FIELD_VIEWS_WORK }}/*/out/index.json
-            ${{ env.FIELD_VIEWS_WORK }}/pyr/out/verdicts.json
-            ${{ env.FIELD_VIEWS_WORK }}/matches.json
-            ${{ env.FIELD_VIEWS_WORK }}/qa_report.json
-            ${{ env.FIELD_VIEWS_WORK }}/qa_flagged.txt
+            work/sheets/**
+            work/*/out/index.json
+            work/pyr/out/verdicts.json
+            work/qa_report.json
+            work/qa_flagged.txt
+            work/matches.json
 
-      # Renders are large and derived, so they live in R2 rather than git or artifacts —
-      # the same split the source archive uses: git keeps what cannot be recreated.
+  # ---------------------------------------------------------------------- publish
+  # Runs even when a shard or QA failed: whatever rendered correctly is worth having, and
+  # the run's red status carries the warning. Decoupled from render on purpose — the
+  # publish step once failed on a wrong secret name and cost a full regeneration.
+  publish:
+    needs: [render, qa]
+    if: ${{ always() && github.event.inputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: python -m pip install --quiet boto3
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: field-views-renders-*
+          merge-multiple: true
+          path: work
+
       - name: Publish renders to R2
-        if: ${{ always() && github.event.inputs.publish == 'true' }}
         env:
           # CLOUDFLARE_ACCOUNT_ID is the name this repo's secret actually has — see
           # build-data-pack.yml; publish_packs_r2.py reads it as the R2_ACCOUNT_ID fallback.
@@ -206,26 +306,38 @@ jobs:
         run: |
           prefix="views"
           [ "${{ github.event.inputs.channel }}" = "prod" ] || prefix="${{ github.event.inputs.channel }}/views"
-          mkdir -p "$FIELD_VIEWS_WORK/publish"
+          mkdir -p publish
           for tier in osm aires pyr; do
-            dir="$FIELD_VIEWS_WORK/$tier/out"
-            [ -d "$dir" ] || continue
-            mkdir -p "$FIELD_VIEWS_WORK/publish/$tier"
-            find "$dir" -name 'final_*.jpg' -exec cp {} "$FIELD_VIEWS_WORK/publish/$tier/" \;
-            [ -f "$dir/index.json" ] && cp "$dir/index.json" "$FIELD_VIEWS_WORK/publish/$tier/"
+            [ -d "work/$tier/out" ] || continue
+            mkdir -p "publish/$tier"
+            find "work/$tier/out" -name 'final_*.jpg' -exec cp {} "publish/$tier/" \;
+            for idx in work/$tier/out/index*.json; do
+              [ -f "$idx" ] && cp "$idx" "publish/$tier/"
+            done
           done
-          python scripts/publish_packs_r2.py \
-            --dir "$FIELD_VIEWS_WORK/publish" --prefix "$prefix" --bucket "$BUCKET"
+          n=$(find publish -name '*.jpg' | wc -l)
+          echo "publishing $n renders to $prefix"
+          [ "$n" -gt 0 ] || { echo "nothing to publish"; exit 0; }
+          python scripts/publish_packs_r2.py --dir publish --prefix "$prefix" --bucket "$BUCKET"
 
-      # Everything above tolerates failure so partial results still reach R2 and the
-      # artifacts; this is where the run is actually marked bad, after they have.
-      - name: Fail the run if a tier did not finish
-        if: always()
+  # ------------------------------------------------------------------------- gate
+  # The last word on the run's status, set after everything above has saved its work.
+  gate:
+    needs: [prepare, render, qa, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
         run: |
           bad=""
-          [ "${{ steps.aires.outcome }}" = "failure" ] && bad="$bad aires"
-          [ "${{ steps.pyr.outcome }}" = "failure" ] && bad="$bad pyr"
-          [ "${{ steps.osm.outcome }}" = "failure" ] && bad="$bad osm"
-          [ "${{ steps.qa.outcome }}" = "failure" ] && bad="$bad qa(blocking-findings)"
-          if [ -n "$bad" ]; then echo "failed:$bad"; exit 1; fi
-          echo "all requested tiers finished, QA clean"
+          [ "${{ needs.prepare.result }}" = "failure" ] && bad="$bad prepare"
+          [ "${{ needs.render.result }}" = "failure" ] && bad="$bad render(one-or-more-shards)"
+          [ "${{ needs.qa.result }}" = "failure" ] && bad="$bad qa"
+          [ "${{ needs.publish.result }}" = "failure" ] && bad="$bad publish"
+          [ "${{ needs.qa.outputs.blocking }}" = "failure" ] && bad="$bad qa-blocking-findings"
+          if [ -n "$bad" ]; then
+            echo "attention needed:$bad"
+            echo "Renders and review artifacts were still saved — see the qa job's summary."
+            exit 1
+          fi
+          echo "all shards rendered, QA clean, renders published"

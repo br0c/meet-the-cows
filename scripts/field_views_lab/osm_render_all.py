@@ -44,13 +44,22 @@ def main():
     ap.add_argument("--workers", type=int, default=4,
                     help="parallel WMS fetches; keep low, these are public services")
     ap.add_argument("--limit", type=int, default=0, help="stop after N fields (smoke tests)")
+    ap.add_argument("--countries", default="",
+                    help="comma-separated ISO codes; empty means every country. CI runs one "
+                         "shard per country so a provider outage costs only its own shard")
+    ap.add_argument("--shard", default="",
+                    help="shard name; its index is written separately so parallel shards "
+                         "never overwrite one another's results")
     args = ap.parse_args()
 
     OUT.mkdir(parents=True, exist_ok=True)
     entries = [e for e in json.loads(Path(args.matches).read_text()) if e.get("osm")]
+    if args.countries:
+        want = {c.strip().upper() for c in args.countries.split(",") if c.strip()}
+        entries = [e for e in entries if (e.get("country") or "").upper() in want]
     if args.limit:
         entries = entries[:args.limit]
-    index_path = OUT / "index.json"
+    index_path = OUT / (f"index-{args.shard}.json" if args.shard else "index.json")
     index = json.loads(index_path.read_text()) if index_path.exists() else {}
 
     todo = [e for e in entries if str(e["id"]) not in index]
