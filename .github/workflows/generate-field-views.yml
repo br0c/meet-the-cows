@@ -165,7 +165,9 @@ jobs:
       - name: Publish renders to R2
         if: ${{ always() && github.event.inputs.publish == 'true' }}
         env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          # CLOUDFLARE_ACCOUNT_ID is the name this repo's secret actually has — see
+          # build-data-pack.yml; publish_packs_r2.py reads it as the R2_ACCOUNT_ID fallback.
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           BUCKET: ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }}
