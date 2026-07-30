@@ -128,6 +128,16 @@ jobs:
         run: python scripts/field_views_lab/pyr_transfer.py
 
       # ------------------------------------------------------------------ review
+      # Automated review comes before the human kind: 2,500 views is past what anyone
+      # checks by eye, and the failure that matters most is silent — a field shipping an
+      # unmarked view when its photo plainly carries a drawing. Blocking findings fail the
+      # run (via the gate at the end) but never stop the artifacts being saved.
+      - name: Automated QA review
+        id: qa
+        if: always()
+        continue-on-error: true
+        run: python scripts/field_views_lab/qa_review.py
+
       - name: Build contact sheets
         if: always()
         run: |
@@ -141,6 +151,12 @@ jobs:
             python scripts/field_views_lab/contact_sheets.py \
               --dir "$dir" --out "$FIELD_VIEWS_WORK/sheets/$tier" --title "$title"
           done
+          # Sheets of just the flagged views — the ones worth a human's time.
+          if [ -d "$FIELD_VIEWS_WORK/qa/flagged" ]; then
+            python scripts/field_views_lab/contact_sheets.py \
+              --dir "$FIELD_VIEWS_WORK/qa/flagged" \
+              --out "$FIELD_VIEWS_WORK/sheets/flagged" --title "QA flagged — review these"
+          fi
 
       - name: Summarise
         if: always()
@@ -173,6 +189,8 @@ jobs:
             ${{ env.FIELD_VIEWS_WORK }}/*/out/index.json
             ${{ env.FIELD_VIEWS_WORK }}/pyr/out/verdicts.json
             ${{ env.FIELD_VIEWS_WORK }}/matches.json
+            ${{ env.FIELD_VIEWS_WORK }}/qa_report.json
+            ${{ env.FIELD_VIEWS_WORK }}/qa_flagged.txt
 
       # Renders are large and derived, so they live in R2 rather than git or artifacts —
       # the same split the source archive uses: git keeps what cannot be recreated.
@@ -208,5 +226,6 @@ jobs:
           [ "${{ steps.aires.outcome }}" = "failure" ] && bad="$bad aires"
           [ "${{ steps.pyr.outcome }}" = "failure" ] && bad="$bad pyr"
           [ "${{ steps.osm.outcome }}" = "failure" ] && bad="$bad osm"
-          if [ -n "$bad" ]; then echo "tier(s) failed:$bad"; exit 1; fi
-          echo "all requested tiers finished"
+          [ "${{ steps.qa.outcome }}" = "failure" ] && bad="$bad qa(blocking-findings)"
+          if [ -n "$bad" ]; then echo "failed:$bad"; exit 1; fi
+          echo "all requested tiers finished, QA clean"

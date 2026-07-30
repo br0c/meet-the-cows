@@ -486,6 +486,14 @@ def ortho_crop(lat, lon, width_m, out_path, country="FR"):
                 continue
             if blankish(body):
                 last_error = f"blank coverage from {p['url']}"
+                # Blank normally means "outside my coverage", which no retry fixes. But a
+                # national service answering white over its OWN territory is a fault, and
+                # accepting it silently costs the field its annotation: St Blaise, deep
+                # inside France, degraded to an unmarked view because IGN blanked once.
+                # So retry the field's own national provider before giving up on it.
+                if p is candidates[0] and attempt == 0 and not p.get("bbox"):
+                    time.sleep(5)
+                    continue
                 break
             Path(out_path).write_bytes(body)
             return dict(mpp=width_m / PX_W, attribution=p["attribution"], provider_url=p["url"])

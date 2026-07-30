@@ -57,7 +57,7 @@ def _bands(img, win):
     return out
 
 
-def split_thin_and_boxes(mask, min_area=60):
+def split_thin_and_boxes(mask, min_area=60, band="red"):
     """Separate thin drawn lines (arrows) from hollow drawn rectangles (danger zones)."""
     n, lab, stats, _ = cv2.connectedComponentsWithStats(mask)
     thin, boxes = [], []
@@ -73,7 +73,19 @@ def split_thin_and_boxes(mask, min_area=60):
         # danger zone is a rectangle tens of pixels wide. Elongation cannot decide it —
         # Bayons' danger strip is 40 px wide and 6x as long, which an aspect test calls an
         # arrow.
-        if short <= 14:
+        # Pen strokes vary: Bayons' arrow has a 6 px half and a 16 px half, so a flat
+        # width cut split one arrow into "an arrow" and "a box" and measured it at a third
+        # of its length. Elongation carries the distinction — but a filled danger strip is
+        # elongated too, so its solidity breaks the tie (Bayons' danger fills 0.55 of its
+        # rectangle; an arrow shaft is a line in a much larger box).
+        aspect = long_ / max(short, 1)
+        fill = stats[i, cv2.CC_STAT_AREA] / max(long_ * short, 1)
+        # The solidity tie-break only applies to red, the one band that carries danger
+        # zones. Applied everywhere it also swallowed Bayons' own arrow, whose fatter half
+        # has almost the same shape as that field's danger strip — the thing separating
+        # them is the colour the Guide drew them in.
+        boxish = band == "red" and fill < 0.7 and aspect < 8 and short > 14
+        if short <= 30 and aspect >= 3 and not boxish:
             thin.append(i)
         else:
             # Anything red and chunky is a drawn danger zone, whether the Guide outlined
@@ -83,11 +95,11 @@ def split_thin_and_boxes(mask, min_area=60):
     return thin, boxes, lab
 
 
-def arrow_axes(mask, min_area=60, line_tol=40):
+def arrow_axes(mask, min_area=60, line_tol=40, gap_tol=90, band="red"):
     """Axes of each drawn arrow. Components collinear with one another belong to the same
     arrow — a label drawn across it splits the stroke in two — while a separate arrow
     elsewhere in the frame sits off that line."""
-    thin, _, lab = split_thin_and_boxes(mask, min_area)
+    thin, _, lab = split_thin_and_boxes(mask, min_area, band)
     groups = []
     for i in sorted(thin, key=lambda j: -int((lab == j).sum())):
         pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
@@ -98,7 +110,13 @@ def arrow_axes(mask, min_area=60, line_tol=40):
             norm = math.hypot(ux, uy) or 1
             ux, uy = ux / norm, uy / norm
             c = pts.mean(axis=0)
-            if abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux) <= line_tol:
+            # Collinear AND near: a label splitting an arrow leaves halves on the same
+            # line a short gap apart, while a different arrow parallel to it elsewhere in
+            # the frame is far along that line. Distance-only or offset-only both mis-group.
+            along = abs((c[0] - a[0]) * ux + (c[1] - a[1]) * uy)
+            span = math.hypot(b[0] - a[0], b[1] - a[1])
+            if (abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux) <= line_tol
+                    and along <= span + gap_tol):
                 gp["pts"] = np.vstack([gp["pts"], pts])
                 gp["axis"] = tc.axis_of(cv2.boxPoints(cv2.minAreaRect(gp["pts"])))
                 placed = True
@@ -155,10 +173,10 @@ def annotations(img, framed):
     bands = _bands(img, win)
     arrows, danger = [], []
     for name, mask in bands.items():
-        axes = arrow_axes(mask)
+        axes = arrow_axes(mask, band=name)
         arrows += axes
         if name == "red":
-            _, boxes, _ = split_thin_and_boxes(mask)
+            _, boxes, _ = split_thin_and_boxes(mask, band=name)
             # An arrowhead is a wide blob and would otherwise read as a danger zone, so
             # drop any box sitting on one of this band's own arrow axes.
             for quad in boxes:
@@ -250,29 +268,49 @@ def transfer_field(f, photos):
             continue
         # A measured arrow is a scale bar: the field's own lengthM over the arrow's pixel
         # length gives the old photo's ground resolution, which pins the transform's scale.
+        # A measured arrow gives the old photo's ground scale — but only if it was
+        # measured correctly. When the mask fragments (a label drawn across the shaft),
+        # the derived prior is wrong, and as a FILTER it then rejects the true model:
+        # Bayons' arrow read 77 px instead of ~200, yielding a prior of 1.84 that threw
+        # away the correct 0.67 registration and left the field with no drawing at all.
+        # So the prior is a rescue, never a gate — plain registration is tried first and
+        # the prior only gets a turn when that finds nothing.
         expect = None
         if ann["arrows"] and f.get("lengthM"):
             longest = max(math.dist(*a) for a in ann["arrows"])
             if longest > 30:
-                expect = (float(f["lengthM"]) / longest) / MPP
-                if not 0.05 < expect < 20:
-                    expect = None
-        try:
-            M, stats = tc.register(img, cur, framed, masks, name, expect_scale=expect)
-        except RuntimeError:
+                cand = (float(f["lengthM"]) / longest) / MPP
+                expect = cand if 0.05 < cand < 20 else None
+        attempts = [dict(expect_scale=None)]
+        if expect:
+            attempts.append(dict(expect_scale=expect))
+        M = stats = None
+        for kwargs in attempts:
+            try:
+                M, stats = tc.register(img, cur, framed, masks, name, **kwargs)
+                break
+            except RuntimeError:
+                continue
+        if M is None:
             wide_path = AIRES / f"{fid}_wide.jpg"
             if not wide_path.exists():
                 fv.ortho_crop(lat, lon, 4500, wide_path, country)
-            try:
-                Mw, stats = tc.register(img, cv2.imread(str(wide_path)), framed, masks,
-                                        f"{name}(wide)",
-                                        expect_scale=expect / 2.5 if expect else None)
-            except RuntimeError:
+            wide = cv2.imread(str(wide_path))
+            for kwargs in ([dict(expect_scale=None)] +
+                           ([dict(expect_scale=expect / 2.5)] if expect else [])):
+                try:
+                    Mw, stats = tc.register(img, wide, framed, masks,
+                                            f"{name}(wide)", **kwargs)
+                except RuntimeError:
+                    continue
+                k = (4500 / 975) / MPP
+                C = np.array([[k, 0, DATUM[0] * (1 - k)], [0, k, DATUM[1] * (1 - k)],
+                              [0, 0, 1]])
+                M = (C @ np.vstack([Mw, [0, 0, 1]]))[:2]
+                stats["via"] = "wide 4500 m crop"
+                break
+            if M is None:
                 continue
-            k = (4500 / 975) / MPP
-            C = np.array([[k, 0, DATUM[0] * (1 - k)], [0, k, DATUM[1] * (1 - k)], [0, 0, 1]])
-            M = (C @ np.vstack([Mw, [0, 0, 1]]))[:2]
-            stats["via"] = "wide 4500 m crop"
         stats["photo"] = name
         regs.append(stats)
         for key, src in (("quads", ann["quads"]), ("rings", ann["rings"]),
@@ -351,6 +389,7 @@ def main():
                 path = render(f, geom, regs)
                 index[fid] = {"name": f["name"], "mode": "annotated",
                               "shapes": {k: len(v) for k, v in geom.items()},
+                              "run_lengths_m": [round(math.dist(*r)) for r in geom["runs"]],
                               "registration": regs, "file": path.name}
                 print(f"{fid} {f['name']}: annotated "
                       f"{ {k: len(v) for k, v in geom.items() if v} } "
