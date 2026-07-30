@@ -141,25 +141,51 @@ Sources, newest first, which is what matters for judging whether a parcel is sti
 | Alto Adige | `p_bz-Orthoimagery:Aerial-2023-RGB`, EPSG:25832 only | 2023 — CC BY 4.0, verified serving |
 | PCN national | `OI.ORTOIMMAGINI.2012.32` / `.33`, WMS 1.1.1 | 2012 — open by statute, fallback |
 
-**AGEA imagery is not ours to use, in any region (settled 2026-07-29).** Hunting for recent
-regional services to replace the 2012 fallback found them easily — Veneto 2024, Piemonte 2024
-(`opengis.csi.it/mp/regp_agea_2024`), Emilia-Romagna 2023 — and every one is AGEA imagery
-carrying `AGEA (c) TUTTI I DIRITTI RISERVATI` plus the AGEA/CISIS framework terms. Veneto's own
-orthophoto page says the imagery may be distributed free **only to Enti Locali**; Piemonte's
-metadata says use conditions "sconosciute" over an all-rights-reserved notice; Emilia-Romagna
-labels it "utilizzo ristretto dei dati". An express reservation is exactly the condition that
-removes the CAD art. 52 c.2 route (published WITHOUT a licence => open by statute), so AGEA is
-an ask-permission case like ENAIRE's charts, not an open one.
+**Italy's regional imagery: reserved on the paper, cleared by asking (2026-07-29 → 30).**
+Hunting for recent regional services to replace the 2012 fallback found them easily — Veneto
+2024, Piemonte 2024 (`opengis.csi.it/mp/regp_agea_2024`), Emilia-Romagna 2023 — and every one
+is AGEA imagery whose paperwork reads closed. The layer metadata carries
+`AGEA (c) tutti i diritti riservati` with `useConstraints: Condizioni sconosciute`; the
+institutional sub-licence for the raw ECW files (MASAF property, Agea delegated) permits use
+only `per fini istituzionali`, forbids `la cessione [...] a terzi`, and forbids commercial use;
+Veneto's orthophoto page limits free distribution to Enti Locali; and Piemonte's own copyright
+page grants CC BY 4.0 by default but defers per layer — "le basi di dati, i geoservizi e le
+mappe sono di proprietà dei rispettivi titolari, indicati nei metadati, e sono soggetti alle
+licenze associate [...] tranne per i materiali specificatamente ed espressamente indicati come
+diversamente tutelati". On that reading the layers were pulled from PROVIDERS on 2026-07-29.
 
-This was a live defect, not a hypothetical: a Veneto AGEA layer sat in PROVIDERS from
-`4679ffd` until it was removed, added on a misreading of the geoportal's general "IODL 2.0 or
-CC-BY" statement, which the orthophoto pages override with the AGEA notice. The lesson for the
-next provider: read the LAYER's own terms, never the portal's blanket statement.
+Fabien then took it up with the regional portals directly and confirmed on 2026-07-30 that
+CC BY 4.0 applies to the published web services for our use, provided the source is cited, so
+they are back. Worth recording precisely because the documents alone do not say that: the
+clearance rests on the confirmation, not on the metadata, and if the question is ever reopened
+this is the paper trail to re-check. Asking is what settled Spain's charts too.
 
-What remains for Italy is provincial imagery a province licences itself (Bolzano, CC BY 4.0)
-covering 6 of our 477 Italian fields, and PCN 2012 for the other 471. Regions that licence
-their own non-AGEA flights are still worth finding; asking AGEA/CISIS for permission is the
-other route, and the ENAIRE precedent says it can work.
+**Attribution names the service we fetch from, never an upstream owner.** Under CC BY the
+credit runs to the licensor whose grant is being relied on, and every source in the table
+carries its own licence. Crediting MASAF/Agea on a Veneto stream would assert reliance on the
+institutional terms we are specifically not using, and would not follow if the provider were
+swapped. So: `Orthophoto © Regione del Veneto (CC BY 4.0)`, not the AGEA notice.
+
+What Italy runs on now: Piemonte and Veneto 2024 and Bolzano 2023 where they cover the field,
+PCN 2012 nationally otherwise. Piemonte's host was refusing connections when this was written
+(HTTPS reset, HTTP 503), which the blank-coverage fall-through handles silently — the credit
+line on a rendered view is the only way to tell which service actually answered.
+
+## Generation runs in CI, not in a session container (2026-07-30)
+
+Four container recycles during this work destroyed the renders each time, which settled where
+generation belongs. `.github/workflows/generate-field-views.yml` is dispatch-only and runs all
+three tiers: `inventory.py` unions every published pack's fields, `field_views.py runways` and
+`match` do the OSM pass, then `osm_render_all.py` (resume + a 4-worker pool, because these are
+public services), `aires_render.py` and `pyr_transfer.py` render. `contact_sheets.py` puts 24
+views on a page so a tier can be reviewed by eye rather than as thousands of files, and an
+unreadable render draws a red box instead of vanishing quietly.
+
+Where output lands: renders and per-tier `index.json` to R2 under `<channel>/views/`, review
+sheets and indexes to GitHub artifacts (30 days). Not git — the same split as the source
+archive, which keeps only what cannot be recreated. Dispatch-only is deliberate: views are
+stable by design, and a refresh is an act someone chooses, not something the nightly pack
+build redoes.
 
 All of this is implemented in `field_views.py` (PROVIDERS table + `ortho_crop`): per-provider
 WMS version and CRS with a dependency-free UTM projection, bbox routing with blank-coverage
