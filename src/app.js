@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
-const APP_VERSION = '0.8.9-beta';
+const APP_VERSION = '0.8.10-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -284,7 +284,7 @@ const STRINGS = {
     pack: 'Pack', selectedPack: 'Selected pack', name: 'Name', updated: 'Updated',
     fieldsCount: 'Fields', offline: 'Offline', noPackLoaded: 'No pack loaded',
     noPackSelected: 'No pack selected', noPackSelectedHint: 'No pack selected — choose one in Settings (⚙).',
-    downloadMedia: 'Download / verify media & docs', reloadPack: 'Reload pack',
+    downloadMedia: 'Download', reloadPack: 'Reload',
     exportCup: n => `Export CUP (${n} fields)`,
     cupNote: 'Waypoints file for your preferred navigation app. Brief a field here and route to it with your preferred navigation app.',
     nearestList: 'Nearest list',
@@ -369,13 +369,13 @@ const STRINGS = {
     dlSaving: 'Saving offline', dlFailed: 'failed', dlChecking: 'Checking files',
     cacheIncomplete: 'incomplete', cacheNotDownloaded: 'not downloaded', cacheErrorStatus: 'error',
     cacheUnknown: 'unknown',
-    cpNoMedia: 'No media/docs to cache', cpNoPack: 'No pack loaded',
-    cpCached: (c, total) => `${c}/${total} media/docs cached`,
-    cpCachedFailed: (ok, total, failed) => `${ok}/${total} media/docs cached · ${failed} failed`,
-    cpInit: total => `0/${total} media/docs`,
+    cpNoMedia: 'Nothing to cache', cpNoPack: 'No pack loaded',
+    cpCached: (c, total) => `${c}/${total} cached`,
+    cpCachedFailed: (ok, total, failed) => `${ok}/${total} cached · ${failed} failed`,
+    cpInit: total => `0/${total}`,
     cpClearing: 'Clearing cached pack', cpCleared: n => `Cleared ${n} cached pack entries`,
     cpFetchIndex: 'Fetching fresh pack index', cpFetchPack: 'Fetching fresh pack',
-    cpFresh: extra => `Fresh pack loaded · ${extra}`, cpNotChecked: 'media/docs not checked',
+    cpFresh: extra => `Fresh pack loaded · ${extra}`, cpNotChecked: 'not checked',
     cpRefreshing: 'Refreshing field data…',
     cpUpdating: (ok, total, failed) => `Updating ${ok}/${total} file(s)${failed ? ` · ${failed} failed` : ''}`,
     cpUpdated: (ok, evicted, failed) => `Updated ${ok} file(s)${evicted ? `, removed ${evicted}` : ''}${failed ? `, ${failed} failed` : ''}`,
@@ -443,7 +443,7 @@ const STRINGS = {
     pack: 'Pack', selectedPack: 'Pack sélectionné', name: 'Nom', updated: 'Mis à jour',
     fieldsCount: 'Terrains', offline: 'Hors ligne', noPackLoaded: 'Aucun pack chargé',
     noPackSelected: 'Aucun pack sélectionné', noPackSelectedHint: 'Aucun pack sélectionné — choisissez-en un dans les Réglages (⚙).',
-    downloadMedia: 'Télécharger / vérifier médias & docs', reloadPack: 'Recharger le pack',
+    downloadMedia: 'Télécharger', reloadPack: 'Recharger',
     exportCup: n => `Exporter CUP (${n} terrains)`,
     cupNote: "Fichier de points de virage pour l'application de navigation de votre choix. Consultez un terrain ici, puis rejoignez-le avec l'application de navigation de votre choix.",
     nearestList: 'Liste des plus proches',
@@ -529,12 +529,12 @@ const STRINGS = {
     cacheIncomplete: 'incomplet', cacheNotDownloaded: 'non téléchargé', cacheErrorStatus: 'erreur',
     cacheUnknown: 'inconnu',
     cpNoMedia: 'Aucun média/doc à mettre en cache', cpNoPack: 'Aucun pack chargé',
-    cpCached: (c, total) => `${c}/${total} médias/docs en cache`,
-    cpCachedFailed: (ok, total, failed) => `${ok}/${total} médias/docs en cache · ${failed} échec(s)`,
-    cpInit: total => `0/${total} médias/docs`,
+    cpCached: (c, total) => `${c}/${total} en cache`,
+    cpCachedFailed: (ok, total, failed) => `${ok}/${total} en cache · ${failed} échec(s)`,
+    cpInit: total => `0/${total}`,
     cpClearing: 'Effacement du pack en cache', cpCleared: n => `${n} entrées de pack effacées`,
     cpFetchIndex: "Récupération de l'index des packs", cpFetchPack: 'Récupération du pack',
-    cpFresh: extra => `Pack à jour chargé · ${extra}`, cpNotChecked: 'médias/docs non vérifiés',
+    cpFresh: extra => `Pack à jour chargé · ${extra}`, cpNotChecked: 'non vérifiés',
     cpRefreshing: 'Actualisation des données…',
     cpUpdating: (ok, total, failed) => `Mise à jour ${ok}/${total} fichier(s)${failed ? ` · ${failed} échec(s)` : ''}`,
     cpUpdated: (ok, evicted, failed) => `${ok} fichier(s) mis à jour${evicted ? `, ${evicted} supprimé(s)` : ''}${failed ? `, ${failed} échec(s)` : ''}`,
@@ -602,7 +602,7 @@ const STRINGS = {
     pack: 'Paket', selectedPack: 'Ausgewähltes Paket', name: 'Name', updated: 'Aktualisiert',
     fieldsCount: 'Felder', offline: 'Offline', noPackLoaded: 'Kein Paket geladen',
     noPackSelected: 'Kein Paket ausgewählt', noPackSelectedHint: 'Kein Paket ausgewählt — wähle eines in den Einstellungen (⚙).',
-    downloadMedia: 'Medien & Dokumente laden / prüfen', reloadPack: 'Paket neu laden',
+    downloadMedia: 'Herunterladen', reloadPack: 'Neu laden',
     exportCup: n => `CUP exportieren (${n} Felder)`,
     cupNote: 'Wegpunktdatei für die Navigations-App Ihrer Wahl. Feld hier briefen und mit der Navigations-App Ihrer Wahl anfliegen.',
     nearestList: 'Nächstgelegene Felder',
@@ -687,13 +687,13 @@ const STRINGS = {
     dlSaving: 'Offline speichern', dlFailed: 'fehlgeschlagen', dlChecking: 'Dateien werden geprüft',
     cacheIncomplete: 'unvollständig', cacheNotDownloaded: 'nicht geladen', cacheErrorStatus: 'Fehler',
     cacheUnknown: 'unbekannt',
-    cpNoMedia: 'Keine Medien/Dokumente zum Zwischenspeichern', cpNoPack: 'Kein Paket geladen',
-    cpCached: (c, total) => `${c}/${total} Medien/Dokumente zwischengespeichert`,
-    cpCachedFailed: (ok, total, failed) => `${ok}/${total} Medien/Dokumente zwischengespeichert · ${failed} fehlgeschlagen`,
-    cpInit: total => `0/${total} Medien/Dokumente`,
+    cpNoMedia: 'Nichts zwischenzuspeichern', cpNoPack: 'Kein Paket geladen',
+    cpCached: (c, total) => `${c}/${total} zwischengespeichert`,
+    cpCachedFailed: (ok, total, failed) => `${ok}/${total} zwischengespeichert · ${failed} fehlgeschlagen`,
+    cpInit: total => `0/${total}`,
     cpClearing: 'Zwischengespeichertes Paket wird gelöscht', cpCleared: n => `${n} zwischengespeicherte Paketeinträge gelöscht`,
     cpFetchIndex: 'Paketindex wird geladen', cpFetchPack: 'Paket wird geladen',
-    cpFresh: extra => `Aktuelles Paket geladen · ${extra}`, cpNotChecked: 'Medien/Dokumente nicht geprüft',
+    cpFresh: extra => `Aktuelles Paket geladen · ${extra}`, cpNotChecked: 'nicht geprüft',
     cpRefreshing: 'Felddaten werden aktualisiert…',
     cpUpdating: (ok, total, failed) => `Aktualisiere ${ok}/${total} Datei(en)${failed ? ` · ${failed} fehlgeschlagen` : ''}`,
     cpUpdated: (ok, evicted, failed) => `${ok} Datei(en) aktualisiert${evicted ? `, ${evicted} entfernt` : ''}${failed ? `, ${failed} fehlgeschlagen` : ''}`,
@@ -995,7 +995,19 @@ function activePackIds() {
     // mixed selections too — rather than silently dropping the pilot's Alps coverage.
     chosen = [...chosen, ...['alps-west', 'alps-east', 'alps'].filter(available)];
   }
-  return chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
+  chosen = chosen.length ? chosen : (state.packs[0] ? [state.packs[0].id] : []);
+  // Always in published pack order (packs.json = the picker's order: the mountain ranges, then
+  // the country packs), never in whatever order the ids happen to sit in localStorage. Packs
+  // overlap, and loadSelectedPacks gives each shared field to the FIRST pack that carries it —
+  // so this order decides whether a field in both the Pyrenees and Spain packs belongs to the
+  // range or to the country. The range is the answer a pilot expects, and it must not depend on
+  // the order a stored selection was written in (the Alps-split branch above appends, and older
+  // settings predate the picker order entirely).
+  const rank = id => {
+    const index = state.packs.findIndex(p => p.id === id);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  return [...chosen].sort((a, b) => rank(a) - rank(b));
 }
 
 function activePacks() {
@@ -2049,8 +2061,9 @@ function scheduleRender() {
 self.__mtcScheduleRenderProbe = scheduleRender;
 self.__mtcState = state;   // read-only diagnostics hook for the browser tests
 // The waypoint file is the one output that leaves for another device, so a test needs to read it
-// without driving a download. Pure function of state; calling it changes nothing.
-self.__mtcGenerateCupProbe = () => generateCupText();
+// without driving a download. Pure function of state; calling it changes nothing. Defaults to
+// every loaded field so a caller that only wants to inspect the CUP rows need not group by pack.
+self.__mtcGenerateCupProbe = fields => generateCupText(fields || state.fields);
 
 function updateStatusStrip() {
   const el = document.querySelector('#statusArea');
@@ -2959,6 +2972,12 @@ function formatFrequency(field) {
 
 function renderMediaItem(item, base) {
   const caption = item.caption || item.source || item.type;
+  // Credit the publisher on the card itself. The manifest and the pack notices carry it too, but
+  // this is where a pilot actually opens a chart, and some publishers require the attribution
+  // wherever their cartography appears (ENAIRE's permission is explicit about it). Suppressed
+  // when it would only repeat the caption — a photo whose caption already IS its source.
+  const credit = item.source && item.source !== caption
+    ? `<div class="media-credit">${escapeHtml(item.source)}</div>` : '';
   // A gated chart is fetched from the chart Worker; everything else, and any chart in a
   // deployment with no Worker configured, keeps using the URL published in the pack.
   const gated = chartUrl(item);
@@ -2967,15 +2986,15 @@ function renderMediaItem(item, base) {
   // (see attachFieldRowEvents) with the best URL there is — tokened, or bare when minting
   // failed, which the service worker still answers from the cache for a downloaded chart.
   if (gated && !chartToken.value && chartTokenPending) {
-    return `<div class="media-card"><div class="caption">${escapeHtml(caption)}</div></div>`;
+    return `<div class="media-card"><div class="caption">${escapeHtml(caption)}</div>${credit}</div>`;
   }
   const mediaUrl = gated
     ? tokenedChartUrl(gated)
     : new URL(item.url, base || state.currentManifestUrl || BASE_URL).toString();
   if (item.type === 'pdf') {
-    return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">${t('openPdf')}</a> · ${escapeHtml(caption)}</div></div>`;
+    return `<div class="media-card"><iframe src="${mediaUrl}" title="${escapeHtml(caption)}"></iframe><div class="caption"><a href="${mediaUrl}" target="_blank" rel="noopener">${t('openPdf')}</a> · ${escapeHtml(caption)}</div>${credit}</div>`;
   }
-  return `<div class="media-card"><img src="${mediaUrl}" alt="${escapeHtml(caption)}" loading="lazy" /><div class="caption">${escapeHtml(caption)}</div></div>`;
+  return `<div class="media-card"><img src="${mediaUrl}" alt="${escapeHtml(caption)}" loading="lazy" /><div class="caption">${escapeHtml(caption)}</div>${credit}</div>`;
 }
 
 // --- Community contribution form (Phase 2) ---
@@ -4270,10 +4289,10 @@ function cupDescription(field) {
   return parts.join(' · ');
 }
 
-function generateCupText() {
+function generateCupText(fields) {
   // Style: 5 = airfield (solid surface), 3 = outlanding field.
   const rows = ['name,code,country,lat,lon,elev,style,rwdir,rwlen,freq,desc'];
-  for (const field of state.fields) {
+  for (const field of fields) {
     if (!Number.isFinite(field.latitude) || !Number.isFinite(field.longitude)) continue;
     const name = String(field.name || displayCode(field) || 'field').replace(/^#?\d+\s+/, '').trim();
     const elev = Number.isFinite(field.elevationM) ? `${Math.round(field.elevationM)}m` : '';
@@ -4296,25 +4315,136 @@ function generateCupText() {
   return rows.join('\r\n') + '\r\n';
 }
 
-async function exportCup() {
-  if (!state.fields.length) { alert(t('noPackYet')); return; }
-  const ids = activePackIds();
-  const packLabel = ids.length === 1 ? ids[0] : 'selection';
-  const filename = `meet-the-cows-${packLabel}-${resolveLang()}.cup`;
-  const text = generateCupText();
+// One CUP per selected pack, in picker order. Fields are deduped by id when the packs load and
+// tagged with the pack they came from, so a field the Alps and France packs share is written to
+// exactly one file — importing the whole set never produces duplicate waypoints.
+function cupFilesByPack() {
+  const order = activePackIds();
+  if (!order.length) return [];
+  const groups = new Map(order.map(id => [id, []]));
+  for (const field of state.fields) {
+    if (!Number.isFinite(field.latitude) || !Number.isFinite(field.longitude)) continue;
+    groups.get(groups.has(field._packId) ? field._packId : order[0]).push(field);
+  }
+  const lang = resolveLang();
+  return [...groups]
+    .filter(([, fields]) => fields.length)
+    .map(([id, fields]) => ({
+      name: `meet-the-cows-${id}-${lang}.cup`,
+      text: generateCupText(fields),
+    }));
+}
+
+// --- Minimal ZIP writer -----------------------------------------------------------------
+// Written here rather than pulled from a library: the app is offline-first and its CSP allows
+// no third-party script. Deflate when the platform offers it, stored otherwise — both are
+// valid ZIP, so a browser without CompressionStream still gets a readable file.
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let bit = 0; bit < 8; bit += 1) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i += 1) {
+    crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+async function deflateRawBytes(bytes) {
+  if (typeof CompressionStream !== 'function') return null;
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    const out = new Uint8Array(await new Response(stream).arrayBuffer());
+    return out.length < bytes.length ? out : null;
+  } catch (error) {
+    console.warn('deflate unavailable, storing ZIP entries uncompressed', error);
+    return null;
+  }
+}
+
+/** entries: [{ name, text }] -> Blob of a ZIP archive. */
+async function buildZipBlob(entries) {
+  const encoder = new TextEncoder();
+  const now = new Date();
+  // MS-DOS packed date/time: seconds have 2-second resolution, years count from 1980.
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const nameBytes = encoder.encode(entry.name);
+    const raw = encoder.encode(entry.text);
+    const deflated = await deflateRawBytes(raw);
+    const body = deflated || raw;
+    const method = deflated ? 8 : 0;
+    const crc = crc32(raw);
+
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034B50, true);
+    local.setUint16(4, 20, true);           // version needed
+    local.setUint16(6, 0, true);            // flags
+    local.setUint16(8, method, true);
+    local.setUint16(10, dosTime, true);
+    local.setUint16(12, dosDate, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, body.length, true);
+    local.setUint32(22, raw.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    local.setUint16(28, 0, true);           // extra length
+    parts.push(new Uint8Array(local.buffer), nameBytes, body);
+
+    const dir = new DataView(new ArrayBuffer(46));
+    dir.setUint32(0, 0x02014B50, true);
+    dir.setUint16(4, 20, true);             // version made by
+    dir.setUint16(6, 20, true);             // version needed
+    dir.setUint16(8, 0, true);
+    dir.setUint16(10, method, true);
+    dir.setUint16(12, dosTime, true);
+    dir.setUint16(14, dosDate, true);
+    dir.setUint32(16, crc, true);
+    dir.setUint32(20, body.length, true);
+    dir.setUint32(24, raw.length, true);
+    dir.setUint16(28, nameBytes.length, true);
+    dir.setUint32(42, offset, true);        // local header offset
+    central.push(new Uint8Array(dir.buffer), nameBytes);
+
+    offset += 30 + nameBytes.length + body.length;
+  }
+
+  const centralSize = central.reduce((sum, chunk) => sum + chunk.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054B50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+
+async function shareOrDownload(blob, filename) {
   // Prefer the share sheet on phones (Save to Files, or open straight into a nav app).
   try {
-    const file = new File([text], filename, { type: 'text/plain' });
+    const file = new File([blob], filename, { type: blob.type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: filename });
       return;
     }
   } catch (error) {
     if (error?.name === 'AbortError') return;
-    console.warn('CUP share failed, falling back to download', error);
+    console.warn('share failed, falling back to download', error);
   }
   // Fallback: a direct file download (desktop, Android).
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
@@ -4322,6 +4452,19 @@ async function exportCup() {
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+async function exportCup() {
+  if (!state.fields.length) { alert(t('noPackYet')); return; }
+  const files = cupFilesByPack();
+  if (!files.length) { alert(t('noPackYet')); return; }
+  // One pack selected stays one .cup: zipping a single file would only make the pilot unpack it.
+  if (files.length === 1) {
+    await shareOrDownload(new Blob([files[0].text], { type: 'text/plain' }), files[0].name);
+    return;
+  }
+  const blob = await buildZipBlob(files);
+  await shareOrDownload(blob, `meet-the-cows-${resolveLang()}.zip`);
 }
 
 function haversineMeters(lat1, lon1, lat2, lon2) {

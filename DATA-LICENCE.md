@@ -33,6 +33,10 @@ project builds on. In particular:
 | Source | Terms |
 |---|---|
 | SIA — Service de l'Information Aéronautique (VAC documents) | [Licence Ouverte](https://www.etalab.gouv.fr/licence-ouverte-open-licence/) — freely reusable with attribution; cycle-specific documents |
+| Austro Control (AIP Austria aerodrome charts) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) per AIP Austria GEN 3.2; attribution to Austro Control GmbH |
+| DFS — Deutsche Flugsicherung (AIP VFR Germany / BasicVFR charts) | © DFS Deutsche Flugsicherung GmbH; free-of-charge official German AIP VFR |
+| ENAV S.p.A. (AIP Italia aerodrome charts) | © ENAV S.p.A.; retrieved from ENAV's free online self-briefing service |
+| ENAIRE (AIP España aerodrome charts) | © ENAIRE — ENAIRE holds the intellectual and industrial property rights to the AIP España cartography; reproduced with ENAIRE's permission (2026-07-29) |
 | OpenAIP (airfield records) | [OpenAIP terms](https://www.openaip.net) apply to their records |
 | planeur-net (outlanding fields) | |
 | APVV — Guide des champs pyrénéens, 2008 (Pyrenees fields, club photos) | Used with access granted to the project; only the clubs' own photos are reproduced — the guide's Google Earth and Michelin excerpts are not |

@@ -213,7 +213,13 @@ _DEEPL_LOCK = threading.Lock()
 # v20: pack picker order (packs.json follows PACK_DEFINITIONS: mountain ranges first). Order
 #      is output: without the bump the incremental check calls the rebuild unnecessary and the
 #      published packs.json keeps the old order.
-PACK_SCHEMA_VERSION = 20
+# v21: Spanish aerodrome charts from the ENAIRE AIP España and Guía VFR (permission granted
+#      2026-07-29) and the reworded Spain/Pyrenees chart notice. New media and a new notice
+#      string are output.
+# v22: E13 Graus dropped from the APVV Pyrenees source — the field is a photovoltaic
+#      plant in current imagery. Fewer fields is a pack-output change, so the incremental
+#      check must not short-circuit past it.
+PACK_SCHEMA_VERSION = 22
 
 # Localized header for community-contributed note fragments ("Pilot report 2026-07-08: …").
 CONTRIB_NOTE_HEADER = {"en": "Pilot report", "fr": "Rapport pilote", "de": "Pilotenbericht"}
@@ -296,6 +302,8 @@ def main() -> None:
     parser.add_argument("--at-vac-root", default=os.environ.get("AT_VAC_ROOT", "auto"), help="Austrian charts: auto (resolve the effective complete-AIP ZIP), an explicit AIP_AUSTRIA ZIP URL, or none to disable")
     parser.add_argument("--de-vac-root", default=os.environ.get("DE_VAC_ROOT", "auto"), help="DFS BasicVFR root chapter URL, auto to follow the portal redirect to the current cycle, or none to disable German charts")
     parser.add_argument("--it-vac-dir", default=os.environ.get("IT_VAC_DIR", ""), help="Directory of pre-fetched ENAV Italian charts (<ICAO>.pdf files + manifest.json, produced by scripts/fetch_enav_charts.py in a separate authenticated CI step); empty or none disables Italian charts.")
+    parser.add_argument("--es-vac-root", default=os.environ.get("ES_VAC_ROOT", "auto"), help="ENAIRE AIP España index URL, auto for the published English index, or none to disable AIP charts")
+    parser.add_argument("--es-guia-root", default=os.environ.get("ES_GUIA_ROOT", "auto"), help="ENAIRE Guía VFR index URL, auto for the published portal, or none to disable Guía VFR charts")
     parser.add_argument("--max-vac", type=int, default=0, help="Debug limit for VAC downloads; 0 means no limit")
     parser.add_argument("--include-vac-airfields", action="store_true", help="Create VAC-only airfield entries when an LFxx VAC exists but the airfield is absent from the CUP")
     parser.add_argument("--airports-csv", default=os.environ.get("AIRPORTS_CSV", OURAIRPORTS_AIRPORTS_URL), help="Airport CSV URL/path with at least ident,name,latitude_deg,longitude_deg,elevation_ft; defaults to OurAirports")
@@ -375,6 +383,8 @@ def main() -> None:
     at_zip_url, at_zip_date = resolve_at_chart_zip(args.at_vac_root)
     de_vac_root, de_vac_date = resolve_de_vac_root(args.de_vac_root)
     it_vac_dir, it_vac_date, it_vac_fingerprint = resolve_it_vac_dir(args.it_vac_dir)
+    es_vac_root, es_vac_date = resolve_es_vac_root(args.es_vac_root)
+    es_guia_root, es_guia_fingerprint = resolve_es_guia_root(args.es_guia_root)
     # Active extra CUPs (Champs des Alpes, BASULM, ...) resolved from their flags; 'none'/empty off.
     active_extra_cups = [
         (spec, url) for spec in EXTRA_CUPS
@@ -390,15 +400,18 @@ def main() -> None:
         vac_at=at_zip_date or at_zip_url,
         vac_de=de_vac_date or de_vac_root,
         vac_it=it_vac_fingerprint,
+        vac_es=f"{es_vac_date or es_vac_root}|{es_guia_fingerprint}",
         contributions=contributions_fingerprint(root / "contributions"),
     )
     # Record the cache's AIRAC-cycle identity and drop prior-cycle artifacts (CI keys the source
     # download cache on this file — see build-data-pack.yml — so it re-saves only on a cycle roll).
     write_source_versions(raw_dir, {
         "at": at_zip_date, "de": de_vac_date, "sia": resolved_vac_date,
-        "it": it_vac_fingerprint, "cup": cup_tag,
+        "it": it_vac_fingerprint, "es": es_vac_date, "esGuia": es_guia_fingerprint,
+        "cup": cup_tag,
     })
-    prune_source_cache(raw_dir, at_zip_date=at_zip_date, de_vac_date=de_vac_date, vac_date=resolved_vac_date)
+    prune_source_cache(raw_dir, at_zip_date=at_zip_date, de_vac_date=de_vac_date,
+                       vac_date=resolved_vac_date, es_vac_date=es_vac_date)
     if args.state_url and not args.force_full:
         if source_states_match(read_previous_state(args.state_url), source_state):
             print(f"No source changes since last build (schema {PACK_SCHEMA_VERSION}); skipping rebuild.", file=sys.stderr)
@@ -472,6 +485,7 @@ def main() -> None:
     at_chart_count = 0
     de_vac_count = 0
     it_chart_count = 0
+    es_chart_count = 0
 
     # Chart/VAC importers share one spec list that drives the parallel import pass below.
     # Per-call kwargs (fields/docs_dir/max_vac) are applied at call time.
@@ -485,6 +499,10 @@ def main() -> None:
     if it_vac_dir:
         importer_specs.append(("it_charts", import_it_chart_pdfs, dict(
             charts_dir=it_vac_dir, it_vac_date=it_vac_date)))
+    if es_vac_root or es_guia_root:
+        importer_specs.append(("es_charts", import_es_chart_pdfs, dict(
+            index_url=es_vac_root, guia_url=es_guia_root, es_vac_date=es_vac_date,
+            raw_dir=raw_dir)))
     if resolved_vac_root:
         importer_specs.append(("vac", import_vac_pdfs, dict(
             vac_root=resolved_vac_root, vac_date=resolved_vac_date,
@@ -492,12 +510,12 @@ def main() -> None:
             frequency_index=frequency_index, extra_codes=extra_codes, pack_id=args.pack_id,
             raw_dir=raw_dir)))
 
-    # VAC/chart imports (FR + AT + DE + IT) are independent network-heavy tasks after
+    # VAC/chart imports (FR + AT + DE + IT + ES) are independent network-heavy tasks after
     # OpenAIP/candidate preparation. Run them in parallel to avoid sitting idle on one
     # remote source while the others could already be downloading. The importers mutate
-    # disjoint fields (LF vs LO/ED/LI codes), so concurrent attachment is safe.
+    # disjoint fields (LF vs LO/ED/LI/LE-GC-GE codes), so concurrent attachment is safe.
     futures: dict[Any, str] = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         for importer_name, importer, importer_kwargs in importer_specs:
             futures[executor.submit(
                 importer, fields=fields, docs_dir=docs_dir, max_vac=args.max_vac,
@@ -515,6 +533,8 @@ def main() -> None:
                 de_vac_count = future.result()
             elif task == "it_charts":
                 it_chart_count = future.result()
+            elif task == "es_charts":
+                es_chart_count = future.result()
 
     # Drop major airports / military bases (any source) before translating or merging: a glider
     # must not land there, and they otherwise dominate the pinned "best options" list.
@@ -537,7 +557,7 @@ def main() -> None:
 
     generated_at = dt.datetime.now(dt.UTC).isoformat()
     version = source_state_version(source_state)
-    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_zip_url, at_zip_date, de_vac_root, de_vac_date, it_vac_dir, it_vac_date)
+    sources = build_pack_sources(args, resolved_vac_root, resolved_vac_date, frequency_index, at_zip_url, at_zip_date, de_vac_root, de_vac_date, it_vac_dir, it_vac_date, es_vac_root, es_vac_date, es_guia_root)
 
     if args.multi_pack:
         # Slice the one merged, translated field set into every pack (media staged in out_dir).
@@ -561,6 +581,7 @@ def main() -> None:
             "atChartCount": at_chart_count,
             "deVacCount": de_vac_count,
             "itChartCount": it_chart_count,
+            "esChartCount": es_chart_count,
             "vacOnlyAirfieldsCreated": vac_created_airfields,
             "contributionNotes": contrib_notes,
             "contributionPhotos": contrib_photos,
@@ -604,7 +625,7 @@ def main() -> None:
     label = f"{len(packs.PACK_DEFINITIONS)} packs" if args.multi_pack else args.pack_name
     print(
         f"Built {label}: {len(fields)} merged entries, {copied_media} CUP photos, "
-        f"{vac_count} FR + {at_chart_count} AT + {de_vac_count} DE + {it_chart_count} IT VAC PDFs, {vac_created_airfields} VAC-only airfields"
+        f"{vac_count} FR + {at_chart_count} AT + {de_vac_count} DE + {it_chart_count} IT + {es_chart_count} ES VAC PDFs, {vac_created_airfields} VAC-only airfields"
     )
 
 
@@ -761,7 +782,7 @@ def write_source_versions(raw_dir: Path, versions: dict[str, str]) -> None:
 
 
 def prune_source_cache(raw_dir: Path, *, at_zip_date: str = "", de_vac_date: str = "",
-                       vac_date: str = "") -> None:
+                       vac_date: str = "", es_vac_date: str = "") -> None:
     """Drop versioned download artifacts from earlier AIRAC cycles so the persisted cache stays
     roughly one cycle in size (one 450 MB AT ZIP, not one per cycle ever seen)."""
     def digits(value: str) -> str:
@@ -772,6 +793,7 @@ def prune_source_cache(raw_dir: Path, *, at_zip_date: str = "", de_vac_date: str
         if path.name != keep_zip:
             path.unlink(missing_ok=True)
     for parent, keep in ((raw_dir / "vac-fr", digits(vac_date) or "nodate"),
+                         (raw_dir / "vac-es", digits(es_vac_date) or "nodate"),
                          (raw_dir / "de", digits(de_vac_date) or "nocycle")):
         if parent.is_dir():
             for child in parent.iterdir():
@@ -809,7 +831,7 @@ def source_version_tag(url_or_path: str) -> str:
     return ""
 
 
-def build_source_state(*, cupx: str, vac: str, contributions: str = "", vac_at: str = "", vac_de: str = "", vac_it: str = "") -> dict[str, Any]:
+def build_source_state(*, cupx: str, vac: str, contributions: str = "", vac_at: str = "", vac_de: str = "", vac_it: str = "", vac_es: str = "") -> dict[str, Any]:
     return {
         "schemaVersion": PACK_SCHEMA_VERSION,
         "cupx": cupx,
@@ -817,6 +839,7 @@ def build_source_state(*, cupx: str, vac: str, contributions: str = "", vac_at: 
         "vacAt": vac_at,
         "vacDe": vac_de,
         "vacIt": vac_it,
+        "vacEs": vac_es,
         "contributions": contributions,
     }
 
@@ -1102,7 +1125,9 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
                        frequency_index: dict[str, Any],
                        at_zip_url: str = "", at_zip_date: str = "",
                        de_vac_root: str = "", de_vac_date: str = "",
-                       it_vac_dir: str = "", it_vac_date: str = "") -> list[dict[str, Any]]:
+                       it_vac_dir: str = "", it_vac_date: str = "",
+                       es_vac_root: str = "", es_vac_date: str = "",
+                       es_guia_root: str = "") -> list[dict[str, Any]]:
     """The attribution/sources block shared by every pack's manifest."""
     return [
         {
@@ -1144,6 +1169,21 @@ def build_pack_sources(args, resolved_vac_root: str, resolved_vac_date: str,
             "url": "https://onlineservices.enav.it" if it_vac_dir else "not imported",
             "updatedAt": it_vac_date or None,
             "note": "© ENAV S.p.A. (AIP Italia), retrieved from ENAV's free online self-briefing service. Verify current official publications before flight.",
+        },
+        {
+            "name": "ENAIRE Guía VFR aerodrome charts",
+            "url": es_guia_root or "not imported",
+            "note": "© ENAIRE — ENAIRE holds the intellectual and industrial property rights to the "
+                    "Guía VFR cartography, used with ENAIRE's permission. Verify current official "
+                    "publications before flight.",
+        },
+        {
+            "name": "ENAIRE AIP España aerodrome charts",
+            "url": es_vac_root or "not imported",
+            "updatedAt": es_vac_date or None,
+            "note": "© ENAIRE — ENAIRE holds the intellectual and industrial property rights to the "
+                    "AIP España cartography, used with ENAIRE's permission. Verify current official "
+                    "publications before flight.",
         },
         {
             "name": "OpenAIP glider airfields" if args.airfield_source == "openaip" else "OurAirports airport/runway coordinates",
@@ -2235,6 +2275,24 @@ def optimize_pdf_bytes(data: bytes, label: str = "") -> bytes:
     return data
 
 
+def merge_pdf_bytes(chunks: list[bytes]) -> bytes:
+    """Concatenate PDFs into one document, in order. A single chunk is passed through untouched
+    so an aerodrome with one chart never pays a pypdf rewrite."""
+    if not chunks:
+        raise ValueError("no PDF chunks to merge")
+    if len(chunks) == 1:
+        return chunks[0]
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    for chunk in chunks:
+        for page in PdfReader(io.BytesIO(chunk)).pages:
+            writer.add_page(page)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 # --- Austria: aerodrome charts from the complete-AIP ZIP ---------------------------------------
 # The free eAIP AD 2 PDFs are text-only data sheets; the actual charts are published in the
 # complete-AIP ZIP on the Austro Control AIM page (per cycle, with-charts variant), licensed
@@ -2703,6 +2761,240 @@ def import_it_chart_pdfs(
         }
         if it_vac_date:
             media["updatedAt"] = it_vac_date
+        for field in by_code[code]:
+            if has_vac_doc(field):
+                continue
+            field["media"].append(dict(media))
+            field.setdefault("docs", {})["vac"] = media["url"]
+        if newly_written:
+            attached += 1
+        progress.update(index, extra=f"{code}: attached | ok {attached}, err {errors}")
+    progress.done(f"attached {attached}, err {errors}")
+    return attached
+
+
+# --- Spain: aerodrome charts from the ENAIRE AIP España ---------------------------------------
+# ENAIRE granted use of "la cartografía asociada a la publicación AIP ESPAÑA" on 2026-07-29,
+# conditioned on naming ENAIRE as the holder of the intellectual and industrial property rights
+# wherever the charts appear — hence the source label below, which the app shows on every chart.
+# The AIP is public (no login, unlike ENAV) and chart URLs carry no AIRAC cycle: ENAIRE serves the
+# effective cycle at a stable path, so the cycle is read from the index only for attribution and
+# cache invalidation. AD 2 covers the certified aerodromes; the small VFR fields that make up most
+# of the Spanish pack live in the separate Guía VFR publication, which this permission does not
+# mention and which is therefore not imported.
+
+ES_AIP_INDEX = "https://aip.enaire.es/AIP/AIP-en.html"
+# The Guía VFR is the other half of the grant, and the half that matters here: AIP AD 2 publishes
+# the certified aerodromes (4 of our fields), while the Guía covers the VFR/GA airfields (87 more).
+# The two partition cleanly — no aerodrome appears in both — and the Guía's layout is one flat PDF
+# per ICAO, so it needs no chart selection at all.
+ES_GUIA_INDEX = "https://guiavfr.enaire.es/"
+ICAO_ES_RE = re.compile(r"^(?:LE|GC|GE)[A-Z]{2}$")
+ES_VAC_UA = "Mozilla/5.0 (compatible; MeetTheCows/0.9)"
+ES_CHART_SOURCE = "ENAIRE (AIP España) — © ENAIRE, all IP rights reserved"
+ES_GUIA_SOURCE = "ENAIRE (Guía VFR) — © ENAIRE, all IP rights reserved"
+ES_GUIA_RE = re.compile(r"(contenido_GuiaVFR/AD/[A-Z]{2}_guiaVFR_([A-Z]{4})\.pdf)", re.I)
+# Visual charts only, mirroring the Italian selection: VAC (visual approach) and ADC (aerodrome
+# chart). Instrument procedures (IAC/SID/STAR/DEP), obstacle (AOC), parking (PDC), ground movement
+# (GMC) and terrain (PATC) charts are excluded — an outlanding needs the visual picture, and the
+# packs stay flyable-size. The suffix group is repeatable: LEHC publishes ADC_1_1 and ADC_1_3.
+# The whole path is captured rather than rebuilt from the ICAO code: ENAIRE files every aerodrome
+# under the LE_AD_2_ prefix, including the Canary GC**/GE** ones, so reconstructing it 404s.
+ES_CHART_RE = re.compile(
+    r"(contenido_AIP/AD/AD2/[^/\"']+/[A-Z]{2}_AD_2_([A-Z]{4})_(VAC|ADC)((?:_\d+)*)_(en|es)\.pdf)",
+    re.I)
+ES_WEF_RE = re.compile(r"(\d{2})-([A-Z]{3})-(\d{2})\s*\(Incorporados\s+([^)<]+)\)", re.I)
+ES_MONTHS = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+             "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+
+
+def _fetch_es_vac(url: str, cache_dir: Path | None = None) -> bytes:
+    """Fetch an ENAIRE AIP URL, retrying transient failures; separate so tests can stub it.
+
+    `cache_dir` (keyed by AIRAC cycle by the caller) makes a rebuild within one cycle reuse the
+    index and the chart PDFs instead of re-downloading them."""
+    cache_path: Path | None = None
+    if cache_dir is not None:
+        cache_path = cache_dir / (re.sub(r"[^A-Za-z0-9]+", "_", url)[-120:] + ".bin")
+        if cache_path.is_file():
+            return cache_path.read_bytes()
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": ES_VAC_UA})
+            with urllib.request.urlopen(request, timeout=90) as response:
+                body = response.read()
+            if cache_path is not None:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_bytes(body)
+            return body
+        except Exception as error:  # noqa: BLE001 - retry transient network/CDN failures
+            last_error = error
+            time.sleep(1 + attempt)
+    raise RuntimeError(f"could not fetch {url}: {last_error}")
+
+
+def es_cycle_date(index_html: str) -> str:
+    """'09-JUL-26 (Incorporados AIRAC 06/26 …)' from the AIP header -> '2026-07-09'."""
+    match = ES_WEF_RE.search(index_html)
+    if not match or match.group(2).upper() not in ES_MONTHS:
+        return ""
+    return f"20{match.group(3)}-{ES_MONTHS[match.group(2).upper()]:02d}-{match.group(1)}"
+
+
+def resolve_es_vac_root(spec: str) -> tuple[str, str]:
+    """Resolve (index_url, cycle_date); ('', '') when disabled or unreachable.
+
+    A source outage must not fail the build — Spanish charts simply do not ship that run."""
+    if not spec or spec.lower() in {"none", "off"}:
+        return "", ""
+    index_url = ES_AIP_INDEX if spec.lower() == "auto" else spec
+    try:
+        html = _fetch_es_vac(index_url).decode("utf-8", "replace")
+    except Exception as error:  # noqa: BLE001
+        print(f"ES VAC: resolve failed ({error}); skipping Spanish charts", file=sys.stderr)
+        return "", ""
+    date = es_cycle_date(html)
+    if not date:
+        print(f"ES VAC: no effective date in {index_url}; skipping Spanish charts", file=sys.stderr)
+        return "", ""
+    return index_url, date
+
+
+def _es_chart_sort_key(entry: tuple[str, str, str]) -> tuple[int, tuple[int, ...]]:
+    """VAC before ADC, then by the numeric suffix — the pilot reads the approach first."""
+    chart_type, suffix, _url = entry
+    numbers = tuple(int(n) for n in re.findall(r"\d+", suffix)) or (0,)
+    return (0 if chart_type.upper() == "VAC" else 1, numbers)
+
+
+def parse_es_chart_index(index_html: str, base_url: str) -> dict[str, list[str]]:
+    """ICAO -> ordered absolute chart URLs from the AIP index.
+
+    Both language editions are published; English wins per chart slot, matching the Italian
+    importer's en-GB preference, because the chart legends are what a visiting pilot reads."""
+    by_code: dict[str, dict[tuple[str, str], tuple[str, str]]] = {}
+    for path, code, chart_type, suffix, lang in ES_CHART_RE.findall(index_html):
+        code = code.upper()
+        slot = (chart_type.upper(), suffix)
+        current = by_code.setdefault(code, {}).get(slot)
+        if current is None or (lang.lower() == "en" and current[0].lower() != "en"):
+            by_code[code][slot] = (lang, path)
+    out: dict[str, list[str]] = {}
+    for code, slots in by_code.items():
+        entries = [(slot[0], slot[1], path) for slot, (_lang, path) in slots.items()]
+        out[code] = [urllib.parse.urljoin(base_url, path)
+                     for _t, _s, path in sorted(entries, key=_es_chart_sort_key)]
+    return out
+
+
+def parse_es_guia_index(index_html: str, base_url: str) -> dict[str, str]:
+    """ICAO -> absolute Guía VFR chart URL. One flat PDF per aerodrome, no selection needed.
+
+    Paths come from the published hrefs for the same reason as the AIP ones: ENAIRE files the
+    Canary aerodromes under the LE_guiaVFR_ prefix too, so rebuilding the name from the code 404s.
+    """
+    return {code.upper(): urllib.parse.urljoin(base_url, path)
+            for path, code in ES_GUIA_RE.findall(index_html)}
+
+
+def resolve_es_guia_root(spec: str) -> tuple[str, str]:
+    """Resolve (index_url, fingerprint) for the Guía VFR; ('', '') when disabled or unreachable.
+
+    The Guía publishes no cycle date, so the fingerprint is the hash of the aerodrome list: an
+    added, withdrawn or renamed airfield changes it and triggers a rebuild, which is the only
+    change to the Guía that alters our output."""
+    if not spec or spec.lower() in {"none", "off"}:
+        return "", ""
+    index_url = ES_GUIA_INDEX if spec.lower() == "auto" else spec
+    try:
+        html = _fetch_es_vac(index_url).decode("utf-8", "replace")
+    except Exception as error:  # noqa: BLE001 - source outage must not fail the build
+        print(f"ES Guía VFR: resolve failed ({error}); skipping Guía charts", file=sys.stderr)
+        return "", ""
+    codes = sorted(parse_es_guia_index(html, index_url))
+    if not codes:
+        print(f"ES Guía VFR: no aerodrome charts found at {index_url}; skipping", file=sys.stderr)
+        return "", ""
+    digest = hashlib.sha256(",".join(codes).encode("utf-8")).hexdigest()[:16]
+    return index_url, f"{len(codes)}:{digest}"
+
+
+def import_es_chart_pdfs(
+    *,
+    fields: list[dict[str, Any]],
+    index_url: str,
+    docs_dir: Path,
+    es_vac_date: str,
+    max_vac: int,
+    guia_url: str = "",
+    restrict_codes: set[str] | None = None,
+    raw_dir: Path | None = None,
+) -> int:
+    """Attach one merged ENAIRE chart PDF per existing (non-major) Spanish aerodrome.
+
+    Both halves of ENAIRE's grant are used: the AIP AD 2 visual charts where an aerodrome is
+    published there, otherwise the Guía VFR sheet. AD 2 wins on the rare overlap because it is
+    the official aerodrome publication, and each chart is labelled with the publication it came
+    from so the ENAIRE attribution stays accurate per document.
+
+    Idempotent like the other chart importers: fields already carrying a VAC doc are skipped and
+    PDFs already on disk are reused. Returns the number of NEW chart PDFs written."""
+    cache_dir = (raw_dir / "vac-es" / (re.sub(r"[^0-9]", "", es_vac_date) or "nodate")) if raw_dir else None
+    charts: dict[str, list[str]] = {}
+    sources: dict[str, str] = {}
+    if index_url:
+        try:
+            index_html = _fetch_es_vac(index_url, cache_dir).decode("utf-8", "replace")
+            charts = parse_es_chart_index(index_html, index_url)
+            sources = {code: ES_CHART_SOURCE for code in charts}
+        except Exception as error:  # noqa: BLE001 - source outage must not fail the build
+            print(f"ES VAC: index fetch failed ({error}); skipping AIP charts", file=sys.stderr)
+    if guia_url:
+        try:
+            guia_html = _fetch_es_vac(guia_url, cache_dir).decode("utf-8", "replace")
+            for code, url in parse_es_guia_index(guia_html, guia_url).items():
+                if code not in charts:  # AD 2 wins the overlap
+                    charts[code] = [url]
+                    sources[code] = ES_GUIA_SOURCE
+        except Exception as error:  # noqa: BLE001
+            print(f"ES Guía VFR: index fetch failed ({error}); skipping Guía charts", file=sys.stderr)
+    if not charts:
+        return 0
+
+    by_code = index_fields_by_code(fields)
+    wanted = {code for code in by_code if ICAO_ES_RE.match(code)
+              and (restrict_codes is None or code in restrict_codes)
+              and not any(is_major_airport(f) for f in by_code[code])
+              and any(not has_vac_doc(f) for f in by_code[code])}
+    candidates = sorted(code for code in wanted if charts.get(code))
+    progress = Progress(len(candidates), "ES VAC PDFs")
+    attached = 0
+    errors = 0
+    for index, code in enumerate(candidates, start=1):
+        if max_vac and attached >= max_vac:
+            progress.update(index - 1, extra=f"attached {attached}, skipped limit", force=True)
+            break
+        target = docs_dir / f"{code}.pdf"
+        newly_written = not target.is_file()
+        if newly_written:
+            try:
+                chunks = [_fetch_es_vac(url, cache_dir) for url in charts[code]]
+                target.write_bytes(optimize_pdf_bytes(merge_pdf_bytes(chunks), label=f"ES {code}"))
+            except Exception as error:  # noqa: BLE001 - one aerodrome must not fail the build
+                errors += 1
+                progress.update(index, extra=f"{code}: {error} | ok {attached}, err {errors}", force=True)
+                continue
+        media = {
+            "type": "pdf",
+            "url": f"docs/vac/{code}.pdf",
+            "caption": f"VAC {code}",
+            "source": sources.get(code, ES_CHART_SOURCE),
+        }
+        # Only the AIP publishes an effective date; the Guía VFR sheets carry none, and stamping
+        # them with the AIP's cycle would assert a currency they do not claim.
+        if es_vac_date and sources.get(code) == ES_CHART_SOURCE:
+            media["updatedAt"] = es_vac_date
         for field in by_code[code]:
             if has_vac_doc(field):
                 continue
