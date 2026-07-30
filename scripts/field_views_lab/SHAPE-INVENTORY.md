@@ -74,19 +74,27 @@ in it applies to that style.
 
 ## Open questions
 
-- **White arrows (17).** 515 Lus draws two of its four runs in white. A white band is easy;
-  telling a drawn white arrow from a white road is not, since both are long, thin and
-  bright. The taper test (a head) is the likely discriminator and is already implemented —
-  but it needs measuring against the roads before it can be trusted, because a false run
-  points a pilot at ground nobody surveyed.
+- **White arrows (17): measured, and not solvable this way.** Locating them is done — a
+  directional opening finds both of 515 Lus' white runs and measures them at 68.7° and
+  73.3° against a lettered 68.0° and 73.0°. Deciding whether a located bar is a drawn arrow
+  or a road is what fails, and structurally: the ink families work because ink is a colour
+  the ground is not, and white has no such argument — it is the colour of roads, bare
+  limestone, rooftops and glare. Ten separations were measured and every one is either
+  inverted or overlapping; each is recorded with its killing number in `white_arrows.py`,
+  which also carries the working locator. The family stays missing rather than guessed,
+  because a false run points a pilot at ground nobody surveyed.
 - **Centrelines (13) fire on nothing.** The family is implemented and returns zero across
   the corpus. Either 211 Artignosc's yellow lines fail the thinness test, or the style gate
   puts them on the wrong side. Worth one measurement before either changing or removing it.
-- **Is a model needed yet?** Not for geometry — everything above was recovered by measuring
-  the pixels. Where a model would genuinely help is reading the labels: `330 m / 19.0°`
-  beside an arrow states the run's length and bearing exactly, which is better than any
-  inference from stroke pixels, and would let the transfer be checked against the drawing
-  rather than trusted.
+- **Is a model needed yet? For one thing, yes, and the measurement now says which.** Not
+  for geometry: every family above was recovered from pixels, and the white-arrow locator
+  is accurate to a degree. What cannot be recovered from pixels is which pale bars are runs
+  — see `white_arrows.py`. The labels settle it and state more besides: `240 m / 73.0°`
+  beside an arrow gives the run's length and bearing exactly, where every geometric test
+  only infers them. A model reading that text, paired with the locator, finishes the family
+  and makes every other transferred run checkable against the drawing rather than trusted.
+  That is a narrow, well-defined job — read the lettering, return length and bearing — not
+  "let a model find the fields".
 
 ## What this implies
 
