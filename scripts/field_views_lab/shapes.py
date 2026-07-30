@@ -178,12 +178,13 @@ def _drop_pale_components(mask, sat_channel, min_area=60):
 
 
 # --------------------------------------------------------------------------- families
-def hazard_lines(img, win, min_frac=0.30):
+def hazard_lines(img, win, min_frac=0.30, with_ink=False):
     """A line ruled right across the frame: a power line or cable. Safety information —
     length relative to the frame is the signature, since no outline or arrow spans a
     third of the image dead straight at constant width."""
     span = min(img.shape[:2])
     out = []
+    ink = np.zeros(win.shape, np.uint8)
     for band in ("red", "yellow"):
         mask = _ink_bands(img, win)[band]
         dashes = []
@@ -191,6 +192,23 @@ def hazard_lines(img, win, min_frac=0.30):
             pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
             (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
             long_, short = max(dw, dh), min(dw, dh)
+            # A cable that BENDS has a fat bounding box however thin the stroke is: 723
+            # Aiton's kinks partway down and measures 807x156, failing both a width and an
+            # aspect test. What still gives it away is how little of that box it fills — a
+            # curve of ink fills a twentieth, where any solid mark fills most of it.
+            if long_ >= min_frac * span and area / max(dw * dh, 1) < 0.15:
+                # Claim the ink either way: a bent cable is not covered by a straight band
+                # down its axis, and what sticks out is a 196 px red stroke that reads as a
+                # run — 723 Aiton was drawing one.
+                ink[lab == i] = 255
+                # Only DRAW it if it is straight enough for a straight line to be honest.
+                # A cable that kinks has no single axis, and the principal one cuts the
+                # corner: Aiton's ran diagonally across ground its cable never crosses.
+                # Losing the annotation is a miss; drawing it in the wrong place is worse,
+                # and suppressing the false run is the part that matters most anyway.
+                if short <= 25:
+                    out.append(np.asarray(_pca_axis(pts), np.float32))
+                continue
             if short > 14:
                 continue
             if long_ >= min_frac * span and long_ / max(short, 1) >= 15:
@@ -198,7 +216,7 @@ def hazard_lines(img, win, min_frac=0.30):
             elif long_ >= 16 and long_ / max(short, 1) >= 2.5:
                 dashes.append((pts, _axis(pts)))
         out += _join_dashes(dashes, min_frac * span)
-    return out
+    return (out, cv2.dilate(ink, np.ones((9, 9), np.uint8))) if with_ink else out
 
 
 def _join_dashes(dashes, floor):
@@ -367,7 +385,7 @@ def _near_axis(centre, axis, off_tol=40, gap_tol=90):
     return off <= off_tol and max(-along, along - span, 0) <= gap_tol
 
 
-def measured_arrows(img, win, min_len_frac=0.16, exclude=None):
+def measured_arrows(img, win, min_len_frac=0.16, exclude=None, with_band=False):
     """Direction arrows, each usually labelled with a length and a bearing.
 
     One bridged component, one arrow. There is deliberately no regrouping of separate
@@ -404,9 +422,23 @@ def measured_arrows(img, win, min_len_frac=0.16, exclude=None):
             # "avoid" on the very ground the guide is pointing at.
             if short > 30 and _taper(pts) < HEAD_TAPER:
                 continue
+            # On a loose band a stroke must show a head. Those predicates admit ground no
+            # saturation floor can exclude — 610 Bernex offers seven patches of tan stubble
+            # at S=59-79, straddling the S=75 of the genuine pale arrow 320 Bayons draws.
+            # Red is not held to this: 318 Montgardin's real arrow tapers 1.48 and 331
+            # Marcoux's 1.29, below anything that stops the stubble.
+            if band in LOOSE_BANDS and _taper(pts) < HEAD_TAPER:
+                continue
+            # A stroke assembled from four or more separate pieces of ink is a dashed line,
+            # not an arrow. 610 Bernex's power line bridges into a clean 150 px red stroke
+            # of five dashes and was rendering as a landing direction; every drawn arrow in
+            # the corpus is one to three pieces, its own label being what splits it.
+            if _fragments(lab == i, mask) >= 4:
+                continue
             axis = _pca_axis(pts)
             if _axis_coverage(pts, axis) >= 0.6:
-                out.append(np.asarray(_point_at_head(pts, axis), np.float32))
+                oriented = np.asarray(_point_at_head(pts, axis), np.float32)
+                out.append((oriented, band) if with_band else oriented)
     return out
 
 
@@ -430,6 +462,30 @@ def _stroke_mask(shape, axes, width=17):
         cv2.line(m, (round(float(a[0])), round(float(a[1]))),
                  (round(float(b[0])), round(float(b[1]))), 255, width)
     return m
+
+
+def _as_candidate(axis):
+    """An axis in the (axis, length, bearing_mod180) shape the run matcher takes."""
+    bearing = math.degrees(math.atan2(axis[1][0] - axis[0][0],
+                                      -(axis[1][1] - axis[0][1]))) % 180
+    return (tuple(axis), float(math.dist(axis[0], axis[1])), bearing)
+
+
+def _same_run(one, two, centre_tol=45.0, angle_tol=12.0):
+    """Two axes describing the same drawn run, ink and pale bar alike."""
+    c1 = ((one[0][0] + one[1][0]) / 2, (one[0][1] + one[1][1]) / 2)
+    c2 = ((two[0][0] + two[1][0]) / 2, (two[0][1] + two[1][1]) / 2)
+    b1 = math.degrees(math.atan2(one[1][0] - one[0][0], -(one[1][1] - one[0][1]))) % 180
+    b2 = math.degrees(math.atan2(two[1][0] - two[0][0], -(two[1][1] - two[0][1]))) % 180
+    return (math.dist(c1, c2) <= centre_tol
+            and abs((b1 - b2 + 90) % 180 - 90) <= angle_tol)
+
+
+def _fragments(component, mask, min_area=25):
+    """How many separate pieces of ink the bridge joined to make this stroke."""
+    piece = ((component & (mask > 0)).astype(np.uint8)) * 255
+    n, _, stats, _ = cv2.connectedComponentsWithStats(piece)
+    return sum(1 for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= min_area)
 
 
 def _pca_axis(pts):
@@ -541,7 +597,7 @@ def outlined_boxes(img, win, min_area=400):
     return quads, cv2.dilate(ink, np.ones((15, 15), np.uint8))
 
 
-def danger_boxes(img, win, arrows=()):
+def danger_boxes(img, win, arrows=(), exclude=None):
     """A red rectangle over ground to avoid, outlined or translucently filled.
 
     Arrowheads are excluded by the arrows they belong to. A head is a wide red blob and
@@ -551,6 +607,11 @@ def danger_boxes(img, win, arrows=()):
     on exactly the ground the guide is pointing at.
     """
     mask = _ink_bands(img, win)["red"]
+    if exclude is not None:
+        # Ink already claimed by a cable is not a danger zone. 723 Aiton's power line was
+        # falling through to here and painting two translucent "avoid" rectangles across
+        # a third of the view — over good ground, and over its own landing runs.
+        mask = cv2.bitwise_and(mask, cv2.bitwise_not(exclude))
     out = []
     for i, lab, area in _components(mask, 60):
         pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
@@ -731,21 +792,46 @@ def extract(img, style=None, apvv=False, labels=None):
         # arrows must exist before a filled box can be told from an arrowhead.
         outlined, box_ink = (outlined_boxes(img, win) if style == SCREENSHOT
                              else ([], None))
-        hazards = hazard_lines(img, win)
-        claimed = _stroke_mask(win.shape, hazards)
+        hazards, hazard_ink = hazard_lines(img, win, with_ink=True)
+        # Two different exclusions. Cables are not runs and not danger zones, so their ink
+        # is kept from both. An outlined box's ink must be kept from the arrow family only
+        # — subtract it from the danger family too and 320 Bayons' own rectangle comes back
+        # as a fragment of itself.
+        cable_ink = cv2.bitwise_or(_stroke_mask(win.shape, hazards), hazard_ink)
+        claimed = cable_ink
         if box_ink is not None:
             claimed = cv2.bitwise_or(claimed, box_ink)
-        arrows = measured_arrows(img, win, exclude=claimed)
+        found = measured_arrows(img, win, exclude=claimed, with_band=True)
+        arrows = [a for a, _band in found]
         if labels and style == SCREENSHOT:
             import white_arrows                       # local: keeps the import optional
-            arrows = arrows + white_arrows.arrows_from_labels(img, labels)
+            # The lettering vouches for the marks that cannot vouch for themselves. A red
+            # stroke is held by its own predicate and ships on its own; a pale bar or a
+            # loose-band stroke ships only where the guide lettered a run at that bearing,
+            # which is what stops 610 Bernex's stubble and 723 Aiton's cable edge and stops
+            # one run being drawn twice, once from ink and once from the bar beneath it.
+            #
+            # Not applied to red, because then a misread label deletes a correct arrow:
+            # 515 Lus' "15.2" came back transcribed as "152" and took its 275 m run with it.
+            arrows = [a for a, band in found if band not in LOOSE_BANDS]
+            # A red arrow ships on its own, but it still spends its label. Otherwise the
+            # label stays free and a pale bar in the same field claims it, drawing 613
+            # Taninges a fifth run beside one of its four.
+            _, spent = white_arrows.match_runs([_as_candidate(a) for a in arrows], labels,
+                                               report_used=True)
+            candidates = [_as_candidate(a) for a, band in found if band in LOOSE_BANDS]
+            candidates += white_arrows.white_bars(img)
+            for axis in white_arrows.match_runs(candidates, labels, skip=spent):
+                if not any(_same_run(axis, kept) for kept in arrows):
+                    arrows.append(axis)
         marks = point_markers(img, win)
         circles = circled_points(img, win)
         polys = outlined_polygons(img, win)
         # Suppress against the cables too, not just the arrows: a guide labels a line at
         # its end, and 515 Lus' "Ligne BT" caption sits 27 px past the cable on its own
         # axis, where it was becoming a red "avoid" rectangle over good ground.
-        danger = (_dedupe_quads(outlined + danger_boxes(img, win, arrows + hazards))
+        danger = (_dedupe_quads(outlined + danger_boxes(img, win, arrows + hazards,
+                                                        exclude=cable_ink))
                   if style == SCREENSHOT else [])
     if style == FRAMED:
         danger = []

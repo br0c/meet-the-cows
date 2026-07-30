@@ -139,6 +139,49 @@ def _dedupe_bars(bars, centre_tol=40.0, angle_tol=8.0):
     return kept
 
 
+def match_runs(candidates, labels, tol_deg=12.0, skip=(), report_used=False):
+    """Pair drawn strokes with the runs the guide lettered, one each.
+
+    The guides letter every measured run, so where a photo has labels they are the
+    authority on how many runs it has and which way each points. That settles three things
+    at once that no pixel test settled cleanly:
+
+    * a stroke with no label is not a run — 610 Bernex's stubble and 723 Aiton's cable edge
+      both survive every shape test there is, and neither is lettered;
+    * one label cannot yield two runs, which is what was drawing Bernex's eastern arrow
+      twice, once from the ink and once from the pale bar under it;
+    * the direction comes from the lettering rather than from guessing which end is the
+      head, and 331 Marcoux's blue run is a stroke this library would otherwise reject as
+      headless (taper 1.06) while the guide plainly writes "250 m / 190.0" beside it.
+
+    `candidates` is (axis, length_px, bearing_mod180); pairing is best-first on bearing so
+    two runs a few degrees apart cannot take each other's label.
+    """
+    pairs = []
+    for li, label in enumerate(labels or []):
+        if li in skip:
+            continue
+        target = float(label["bearing_deg"]) % 180
+        for ci, (_axis, _length, bearing) in enumerate(candidates):
+            err = abs((bearing - target + 90) % 180 - 90)
+            if err <= tol_deg:
+                pairs.append((err, li, ci))
+    pairs.sort()
+
+    used_c, used_l, out = set(), set(), []
+    for _err, li, ci in pairs:
+        if li in used_l or ci in used_c:
+            continue
+        used_l.add(li)
+        used_c.add(ci)
+        (a, b), _length, _bearing = candidates[ci]
+        drawn = float(labels[li]["bearing_deg"])
+        ab = math.degrees(math.atan2(b[0] - a[0], -(b[1] - a[1]))) % 360
+        axis = (a, b) if abs((ab - drawn + 180) % 360 - 180) <= 90 else (b, a)
+        out.append(np.asarray(axis, np.float32))
+    return (out, used_l) if report_used else out
+
+
 def arrows_from_labels(img, labels, tol_deg=12.0):
     """White runs the guide LETTERED, as oriented axes.
 
