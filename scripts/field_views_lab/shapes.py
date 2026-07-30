@@ -44,6 +44,28 @@ def detect_style(img, apvv=False):
     return FRAMED if border_spread(img) < 12 else SCREENSHOT
 
 
+def caption_band(img, pale_frac=0.55, search_frac=0.15):
+    """Rows of a white caption banner across the top, or 0 when there is none.
+
+    The guides letter their captions in the same red ink they draw with, so a banner left
+    in the window turns "Après la buse: 200m en montée 5%" into arrows, danger boxes and
+    circled obstacles — 318 Montgardin was producing six of each out of its caption alone.
+    The banner is what a fixed inset cannot be: its depth varies per photo, so it is
+    measured. Only a band that starts at the very top counts, so a snowfield further down
+    is never mistaken for one.
+    """
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    pale = ((hsv[:, :, 1] < 60) & (hsv[:, :, 2] > 205)).mean(axis=1)
+    limit = int(h * search_frac)
+    rows = [y for y in range(limit) if pale[y] > pale_frac]
+    # Ink covering the banner drops those rows below the threshold, so take the last pale
+    # row in the search band rather than the first break in a run.
+    if not rows or rows[0] > max(6, int(h * 0.03)):
+        return 0
+    return rows[-1] + 2
+
+
 def window(img, style):
     """Keepout for the guide's own chrome — frame, badges, scale bar, UI pill, N arrow."""
     h, w = img.shape[:2]
@@ -55,6 +77,7 @@ def window(img, style):
         m[: int(h * 0.40), : int(w * 0.16)] = 0      # N arrow and its label
     else:
         m[6:-70, 6:-6] = 255
+        m[: caption_band(img)] = 0
     return m
 
 
@@ -99,9 +122,31 @@ def _axis(points):
     return (box[0] + box[1]) / 2, (box[2] + box[3]) / 2
 
 
+INK_S_MIN = 70
+"""Ink is saturated; ground is not.
+
+The floor sits where the corpus puts it, which is tighter than it looks. 613 Taninges'
+pink predicate picks up bare soil and gravel at S=51-62 — one such patch is 494x388 px and
+survives every length, straightness and coverage test here, because a field really is long
+and really is the right hue. 320 Bayons draws its arrow in a pale salmon at S=74. So the
+floor has to pass 74 and stop 62.
+
+Judged per COMPONENT, on its median, not per pixel. The two distributions overlap pixel by
+pixel — a threshold between them keeps a scatter of the brightest soil pixels, which then
+re-forms into strokes — while the marks themselves separate cleanly: a stroke is ink or it
+is ground, and its median says which.
+
+Applied only to the bands that need it. The red and orange predicates already pin their
+own channel gaps tightly enough; forcing a floor on them instead ate the anti-aliased edge
+of every thin stroke and broke Bayons' arrow into pieces too small to rebuild.
+"""
+LOOSE_BANDS = ("pink", "blue", "yellow")
+
+
 def _ink_bands(img, win):
     """The saturated inks the guides draw in, as separate masks."""
     b, g, r = [c.astype(np.int16) for c in cv2.split(img)]
+    sat = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[:, :, 1]
     bands = {
         "red": (r > 150) & (g < 110) & (b < 110) & (r - g > 55),
         "pink": (r > 205) & (g > 120) & (g < 210) & (b > 110) & (b < 215) & (r - b > 35),
@@ -112,8 +157,24 @@ def _ink_bands(img, win):
     out = {}
     for name, pred in bands.items():
         m = (pred.astype(np.uint8) * 255) & win
-        out[name] = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+        if name in LOOSE_BANDS:
+            m = _drop_pale_components(m, sat)
+        out[name] = m
     return out
+
+
+def _drop_pale_components(mask, sat_channel, min_area=60):
+    """Keep only the marks whose own median saturation says they are ink."""
+    keep = np.zeros_like(mask)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(mask)
+    for i in range(1, n):
+        sel = lab == i
+        if stats[i, cv2.CC_STAT_AREA] < min_area:
+            continue
+        if np.median(sat_channel[sel]) >= INK_S_MIN:
+            keep[sel] = 255
+    return keep
 
 
 # --------------------------------------------------------------------------- families
@@ -125,13 +186,51 @@ def hazard_lines(img, win, min_frac=0.30):
     out = []
     for band in ("red", "yellow"):
         mask = _ink_bands(img, win)[band]
+        dashes = []
         for i, lab, area in _components(mask, 90):
             pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
             (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
             long_, short = max(dw, dh), min(dw, dh)
-            if long_ < min_frac * span or short > 14 or long_ / max(short, 1) < 15:
+            if short > 14:
                 continue
-            out.append(np.asarray(_axis(pts), np.float32))
+            if long_ >= min_frac * span and long_ / max(short, 1) >= 15:
+                out.append(np.asarray(_axis(pts), np.float32))
+            elif long_ >= 16 and long_ / max(short, 1) >= 2.5:
+                dashes.append((pts, _axis(pts)))
+        out += _join_dashes(dashes, min_frac * span)
+    return out
+
+
+def _join_dashes(dashes, floor):
+    """Chain collinear dashes into the single line they represent.
+
+    A power line is as often drawn dashed as solid — 515 Lus rules its "Ligne El" right
+    across the approach in six separate strokes — and a per-component length test drops
+    every one of them as too short. Dropping a cable is the most consequential thing this
+    library can do, so the dashes are chained and measured as the line they are.
+    """
+    out, used = [], set()
+    for i, (pts_i, axis_i) in enumerate(dashes):
+        if i in used:
+            continue
+        group, axis = [pts_i], axis_i
+        used.add(i)
+        grew = True
+        while grew:
+            grew = False
+            for j, (pts_j, _) in enumerate(dashes):
+                if j in used:
+                    continue
+                c = pts_j.mean(axis=0)
+                # Tight offset, generous gap: dashes of one line sit dead on it with real
+                # space between, where a nearby unrelated stroke sits off the line.
+                if _near_axis(c, axis, off_tol=12, gap_tol=90):
+                    group.append(pts_j)
+                    used.add(j)
+                    axis = _axis(np.vstack(group))
+                    grew = True
+        if len(group) >= 3 and math.dist(*axis) >= floor:
+            out.append(np.asarray(axis, np.float32))
     return out
 
 
@@ -173,7 +272,95 @@ def circled_points(img, win):
     return out
 
 
-def measured_arrows(img, win, min_len_frac=0.16):
+def _taper(pts, slices=5):
+    """How much wider the widest slice of a stroke is than its typical width.
+
+    An arrow carries a head: sliced along its length it runs thin, thin, WIDE. A danger
+    rectangle is the same width end to end. Measured, that is the whole separation —
+    drawn arrows come in at 2.0-3.2 and 320 Bayons' genuine danger strip at 1.06 — and it
+    is the only one there is, because a fat arrow (515 Lus draws a 59 px one) is wider
+    than some danger boxes and no width threshold can tell those two apart.
+    """
+    a, b = _axis(pts)
+    ux, uy = b[0] - a[0], b[1] - a[1]
+    norm = math.hypot(ux, uy) or 1
+    ux, uy = ux / norm, uy / norm
+    along = (pts[:, 0] - a[0]) * ux + (pts[:, 1] - a[1]) * uy
+    perp = (pts[:, 0] - a[0]) * uy - (pts[:, 1] - a[1]) * ux
+    lo, hi = float(along.min()), float(along.max())
+    if hi - lo < 1:
+        return 1.0
+    spans = []
+    for k in range(slices):
+        sel = (along >= lo + (hi - lo) * k / slices) & (along <= lo + (hi - lo) * (k + 1) / slices)
+        if sel.sum() > 10:
+            spans.append(float(perp[sel].max() - perp[sel].min()))
+    if not spans:
+        return 1.0
+    return max(spans) / max(float(np.median(spans)), 1.0)
+
+
+HEAD_TAPER = 1.6     # midway between the drawn arrows (2.0+) and the danger boxes (1.1)
+
+
+def _axis_coverage(pts, axis, bins=10):
+    """What fraction of a stroke's length actually carries ink.
+
+    A drawn arrow is inked end to end, give or take the label across its middle. A stroke
+    chained to something far away — 613 Taninges' bridge reaching from a run down into the
+    red roofs of the village below — leaves most of its span empty, and no length or
+    straightness test notices, because the two ends really are collinear.
+    """
+    a, b = axis
+    ux, uy = b[0] - a[0], b[1] - a[1]
+    norm = math.hypot(ux, uy) or 1
+    ux, uy = ux / norm, uy / norm
+    along = (pts[:, 0] - a[0]) * ux + (pts[:, 1] - a[1]) * uy
+    lo, hi = float(along.min()), float(along.max())
+    if hi - lo < 1:
+        return 0.0
+    idx = np.clip(((along - lo) / (hi - lo) * bins).astype(int), 0, bins - 1)
+    return len(np.unique(idx)) / bins
+
+
+def _bridge_labels(img, win, mask, reach=31):
+    """Reconnect a stroke that its own label is drawn across.
+
+    The guides letter each run "330 m / 19.0°" in white with a dark outline, straight over
+    the arrow. That splits one stroke into two components, and rebuilding arrows from the
+    pieces afterwards by collinearity is guesswork that mis-pairs neighbouring runs. Here
+    the glyphs are simply not treated as breaks: label pixels flanked by this band's own
+    ink are filled in, which turned 613 Taninges' eight fragments back into its four drawn
+    runs and 615 Bonneville's eleven into four.
+
+    Only glyph pixels close to existing ink qualify, so a caption elsewhere in the frame
+    never grows a stroke of its own.
+    """
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    glyph = ((((hsv[:, :, 1] < 70) & (hsv[:, :, 2] > 190))
+              | (hsv[:, :, 2] < 80)).astype(np.uint8) * 255) & win
+    glyph = cv2.dilate(glyph, np.ones((5, 5), np.uint8))
+    near = cv2.dilate(mask, np.ones((reach, reach), np.uint8))
+    joined = cv2.bitwise_or(mask, cv2.bitwise_and(glyph, near))
+    return cv2.morphologyEx(joined, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+
+
+def _near_axis(centre, axis, off_tol=40, gap_tol=90):
+    """Is this point both collinear with the segment and close to its extent?
+
+    Both halves matter: collinearity alone merges two parallel runs in neighbouring fields,
+    while distance alone merges an arrow with any ink beside it.
+    """
+    a, b = axis
+    ux, uy = b[0] - a[0], b[1] - a[1]
+    span = math.hypot(ux, uy) or 1
+    ux, uy = ux / span, uy / span
+    off = abs((centre[0] - a[0]) * uy - (centre[1] - a[1]) * ux)
+    along = (centre[0] - a[0]) * ux + (centre[1] - a[1]) * uy
+    return off <= off_tol and max(-along, along - span, 0) <= gap_tol
+
+
+def measured_arrows(img, win, min_len_frac=0.16, exclude=None):
     """Direction arrows, each usually labelled with a length and a bearing.
 
     Grouped by collinearity so a label drawn across the shaft does not split one arrow
@@ -188,38 +375,139 @@ def measured_arrows(img, win, min_len_frac=0.16):
     for band, mask in _ink_bands(img, win).items():
         if band in ("orange", "yellow"):
             continue                      # APVV pointer ink, handled as its own family
+        if exclude is not None:
+            mask = cv2.bitwise_and(mask, cv2.bitwise_not(exclude))
         groups = []
-        comps = sorted(_components(mask, 60), key=lambda t: -t[2])
+        # Connectivity from the bridged mask, geometry from the ink itself: the glyphs
+        # only say which pieces belong to one stroke, and must not fatten or lengthen it.
+        bridged = _bridge_labels(img, win, mask)
+        comps = sorted(_components(bridged, 60), key=lambda t: -t[2])
         for i, lab, _ in comps:
-            pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
+            pts = np.column_stack(np.nonzero((lab == i) & (mask > 0)))[:, ::-1]
+            pts = pts.astype(np.float32)
+            if len(pts) < 60:
+                continue
             (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
-            if min(dw, dh) > 30:          # a chunky block is a danger zone, not a line
+            # Thin, or fat but headed. 515 Lus draws a 59 px wide arrow over a 300 m run
+            # that a width test alone hands to the danger family — that is, it stamps
+            # "avoid" on the very ground the guide is pointing at.
+            if min(dw, dh) > 30 and _taper(pts) < HEAD_TAPER:
                 continue
             placed = False
             for gp in groups:
-                a, b = gp["axis"]
-                ux, uy = b[0] - a[0], b[1] - a[1]
-                norm = math.hypot(ux, uy) or 1
-                ux, uy = ux / norm, uy / norm
-                c = pts.mean(axis=0)
-                off = abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux)
-                along = abs((c[0] - a[0]) * ux + (c[1] - a[1]) * uy)
-                if off <= 40 and along <= math.hypot(*(b - a)) + 90:
+                # Gap to the SEGMENT, not to its start: measuring from one endpoint made
+                # pairing depend on which end minAreaRect happened to report first, and
+                # 613 Taninges' four labelled runs came back as seven arrows.
+                if _near_axis(pts.mean(axis=0), gp["axis"]):
                     gp["pts"] = np.vstack([gp["pts"], pts])
                     gp["axis"] = _axis(gp["pts"])
+                    gp["longest"] = max(gp["longest"], max(dw, dh))
                     placed = True
                     break
             if not placed:
-                groups.append({"pts": pts, "axis": _axis(pts)})
+                groups.append({"pts": pts, "axis": _axis(pts),
+                               "longest": max(dw, dh)})
+        # Second pass. The first component seen fixes a group's axis, so two halves of one
+        # arrow can each start their own group and only look collinear once both axes
+        # exist — Marcoux's 250 m arrow and Taninges' four runs split exactly that way.
+        merged = True
+        while merged and len(groups) > 1:
+            merged = False
+            for i in range(len(groups)):
+                for j in range(i + 1, len(groups)):
+                    if _near_axis(groups[j]["pts"].mean(axis=0), groups[i]["axis"]) or \
+                       _near_axis(groups[i]["pts"].mean(axis=0), groups[j]["axis"]):
+                        pts = np.vstack([groups[i]["pts"], groups[j]["pts"]])
+                        groups[i] = {"pts": pts, "axis": _axis(pts),
+                                     "longest": max(groups[i]["longest"],
+                                                    groups[j]["longest"])}
+                        groups.pop(j)
+                        merged = True
+                        break
+                if merged:
+                    break
         for gp in groups:
             a, b = gp["axis"]
-            if math.dist(a, b) >= floor:
+            length = math.dist(a, b)
+            # An arrow must be anchored by a real stroke, not assembled from crumbs. The
+            # halves of a split arrow are each about half its length, while the flecks of
+            # a caption are tiny beside the span they happen to line up along — which is
+            # how a merge pass otherwise turns a line of label text into a long "run".
+            if (length >= floor and gp["longest"] >= 0.45 * length
+                    and _axis_coverage(gp["pts"], gp["axis"]) >= 0.6):
                 out.append(np.asarray(gp["axis"], np.float32))
     return out
 
 
-def danger_boxes(img, win):
-    """A red rectangle over ground to avoid, outlined or translucently filled."""
+def _on_axis(centre, axes, tol=30):
+    """Does this point sit on one of the given line segments?"""
+    for a, b in axes:
+        ux, uy = b[0] - a[0], b[1] - a[1]
+        norm = math.hypot(ux, uy) or 1
+        ux, uy = ux / norm, uy / norm
+        off = abs((centre[0] - a[0]) * uy - (centre[1] - a[1]) * ux)
+        along = (centre[0] - a[0]) * ux + (centre[1] - a[1]) * uy
+        if off <= tol and -tol <= along <= norm + tol:
+            return True
+    return False
+
+
+def _dedupe_quads(quads):
+    """One drawn rectangle, one quad.
+
+    An outlined box is found twice — once as the stroke and once as the hole inside it —
+    so the nested pair is collapsed, keeping the outer, since the hole under-states the
+    drawn rectangle by a stroke width.
+    """
+    ordered = sorted(quads, key=lambda q: -cv2.contourArea(np.asarray(q, np.float32)))
+    kept = []
+    for q in ordered:
+        centre = tuple(np.asarray(q, np.float32).mean(axis=0))
+        if any(cv2.pointPolygonTest(np.asarray(k, np.float32), centre, False) >= 0
+               for k in kept):
+            continue
+        kept.append(q)
+    return kept
+
+
+def outlined_boxes(img, win, min_area=400):
+    """A danger zone the guide OUTLINES instead of filling.
+
+    Hollow, so its two long sides are thin strokes and the arrow family reads them as a
+    run: 320 Bayons' danger rectangle was coming back as an arrow straight down its own
+    middle. Traced as the hole it encloses, the way rings and field outlines already are,
+    and held to being rectangular so a drawn ring never lands here.
+
+    Returns the quads and the ink that drew them, so the arrow family can skip it.
+    """
+    mask = _ink_bands(img, win)["red"]
+    sealed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    quads, ink = [], np.zeros(mask.shape, np.uint8)
+    cnts, hier = cv2.findContours(sealed, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    if hier is None:
+        return quads, ink
+    for i, c in enumerate(cnts):
+        area = cv2.contourArea(c)
+        if hier[0][i][3] == -1 or area < min_area:
+            continue
+        rect = cv2.minAreaRect(c.astype(np.float32))
+        (_, _), (dw, dh), _ = rect
+        if max(dw, dh) < 25 or area < 0.7 * dw * dh:
+            continue                       # not a rectangle: a ring or an ink blob
+        quads.append(cv2.boxPoints(rect))
+        cv2.drawContours(ink, [c], -1, 255, thickness=cv2.FILLED)
+    return quads, cv2.dilate(ink, np.ones((15, 15), np.uint8))
+
+
+def danger_boxes(img, win, arrows=()):
+    """A red rectangle over ground to avoid, outlined or translucently filled.
+
+    Arrowheads are excluded by the arrows they belong to. A head is a wide red blob and
+    reads as a box on every shape test there is, so the only thing that tells them apart
+    is that a head sits on an arrow's own axis. Without this, 613 Taninges came back with
+    a red "avoid" rectangle stamped on each of its four landing runs — an invented hazard
+    on exactly the ground the guide is pointing at.
+    """
     mask = _ink_bands(img, win)["red"]
     out = []
     for i, lab, area in _components(mask, 60):
@@ -230,7 +518,12 @@ def danger_boxes(img, win):
             continue
         if long_ / max(short, 1) >= 15:      # that is a hazard line, not a box
             continue
-        out.append(cv2.boxPoints(cv2.minAreaRect(pts)))
+        if _taper(pts) >= HEAD_TAPER:        # it has a head: an arrow, not a box
+            continue
+        quad = cv2.boxPoints(cv2.minAreaRect(pts))
+        if _on_axis(np.asarray(quad, np.float32).mean(axis=0), arrows):
+            continue
+        out.append(quad)
     return out
 
 
@@ -372,15 +665,18 @@ def extract(img, style=None, apvv=False):
         lines = centrelines(img, win)
         rings = drawn_rings(img, win)
     else:
-        arrows = measured_arrows(img, win)
+        # Order matters, and each step is why the next one is right: an outlined danger
+        # box must be claimed before the arrow family reads its sides as a run, and the
+        # arrows must exist before a filled box can be told from an arrowhead.
+        outlined, box_ink = (outlined_boxes(img, win) if style == SCREENSHOT
+                             else ([], None))
+        arrows = measured_arrows(img, win, exclude=box_ink)
         hazards = hazard_lines(img, win)
         marks = point_markers(img, win)
         circles = circled_points(img, win)
         polys = outlined_polygons(img, win)
-        if style == SCREENSHOT:
-            danger = danger_boxes(img, win)
-        else:
-            danger = []
+        danger = (_dedupe_quads(outlined + danger_boxes(img, win, arrows))
+                  if style == SCREENSHOT else [])
     if style == FRAMED:
         danger = []
 
