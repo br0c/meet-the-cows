@@ -358,12 +358,21 @@ def main():
             else:
                 raise RuntimeError("no transferable annotation")
         except Exception as err:  # noqa: BLE001 - a field always gets some view
+            # The plain fallback fetches imagery too, so it can fail for the same reason
+            # the transfer did — no provider covers the point, or every one is down. That
+            # must not end the run: one uncovered field is a row in the index, not a
+            # reason to lose the other seventy-seven.
             path = OUT / f"final_{fid}.jpg"
-            fv.plain_view(f.get("lat") or f["latitude"], f.get("lon") or f["longitude"],
-                          f["name"], path, f.get("country") or "FR", 1500)
-            index[fid] = {"name": f["name"], "mode": "plain", "reason": str(err)[:160],
-                          "file": path.name}
-            print(f"{fid} {f['name']}: PLAIN ({str(err)[:70]})", flush=True)
+            try:
+                fv.plain_view(f.get("lat") or f["latitude"], f.get("lon") or f["longitude"],
+                              f["name"], path, f.get("country") or "FR", 1500)
+                index[fid] = {"name": f["name"], "mode": "plain", "reason": str(err)[:160],
+                              "file": path.name}
+                print(f"{fid} {f['name']}: PLAIN ({str(err)[:70]})", flush=True)
+            except Exception as err2:  # noqa: BLE001
+                index[fid] = {"name": f["name"], "mode": "failed",
+                              "reason": str(err)[:120], "imagery_error": str(err2)[:160]}
+                print(f"{fid} {f['name']}: NO VIEW ({str(err2)[:90]})", flush=True)
         index_path.write_text(json.dumps(index, indent=1))
     from collections import Counter
     print(Counter(v["mode"] for v in index.values()))

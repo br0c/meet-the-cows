@@ -89,7 +89,11 @@ jobs:
             --out "$FIELD_VIEWS_WORK/matches.json"
 
       - name: Render the OSM tier
+        id: osm
         if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'osm' }}
+        # One tier failing must not cost the others, the review sheets, or the publish of
+        # what did render — the job's conclusion is set by the final gate below.
+        continue-on-error: true
         run: |
           python scripts/field_views_lab/osm_render_all.py \
             --matches "$FIELD_VIEWS_WORK/matches.json" \
@@ -97,12 +101,16 @@ jobs:
 
       # -------------------------------------------------------------- Aires tier
       - name: Render the Guide des Aires de Sécurité fields
-        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'aires' }}
+        id: aires
+        if: ${{ always() && (github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'aires') }}
+        continue-on-error: true
         run: python scripts/field_views_lab/aires_render.py
 
       # ---------------------------------------------------------------- Pyrenees
       - name: Render the APVV Pyrenees champs
-        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'pyr' }}
+        id: pyr
+        if: ${{ always() && (github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'pyr') }}
+        continue-on-error: true
         run: python scripts/field_views_lab/pyr_transfer.py
 
       # ------------------------------------------------------------------ review
@@ -155,7 +163,7 @@ jobs:
       # Renders are large and derived, so they live in R2 rather than git or artifacts —
       # the same split the source archive uses: git keeps what cannot be recreated.
       - name: Publish renders to R2
-        if: ${{ github.event.inputs.publish == 'true' }}
+        if: ${{ always() && github.event.inputs.publish == 'true' }}
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -174,3 +182,15 @@ jobs:
           done
           python scripts/publish_packs_r2.py \
             --dir "$FIELD_VIEWS_WORK/publish" --prefix "$prefix" --bucket "$BUCKET"
+
+      # Everything above tolerates failure so partial results still reach R2 and the
+      # artifacts; this is where the run is actually marked bad, after they have.
+      - name: Fail the run if a tier did not finish
+        if: always()
+        run: |
+          bad=""
+          [ "${{ steps.aires.outcome }}" = "failure" ] && bad="$bad aires"
+          [ "${{ steps.pyr.outcome }}" = "failure" ] && bad="$bad pyr"
+          [ "${{ steps.osm.outcome }}" = "failure" ] && bad="$bad osm"
+          if [ -n "$bad" ]; then echo "tier(s) failed:$bad"; exit 1; fi
+          echo "all requested tiers finished"
