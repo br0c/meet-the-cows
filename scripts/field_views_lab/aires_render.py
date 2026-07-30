@@ -161,6 +161,82 @@ FILL_S_MIN = 120
 MAX_FILL_QUADS = 3
 
 
+def hazard_lines(img, win, min_frac=0.30):
+    """Long straight lines drawn across the frame — power lines and cables.
+
+    The guides mark a cable by ruling a line right across the photo, so length relative
+    to the frame is the signature: no field outline or arrow spans a third of the image
+    in a dead straight, constant-width stroke. This is safety information and was being
+    dropped entirely.
+    """
+    b, g, r = [c.astype(np.int16) for c in cv2.split(img)]
+    red = (((r > 140) & (g < 110) & (b < 110) & (r - g > 55)).astype(np.uint8) * 255) & win
+    red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+    span = min(img.shape[:2])
+    out = []
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(red)
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] < 90:
+            continue
+        pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
+        (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
+        long_, short = max(dw, dh), min(dw, dh)
+        if long_ < min_frac * span or short > 14 or long_ / max(short, 1) < 15:
+            continue
+        out.append(np.asarray(tc.axis_of(cv2.boxPoints(cv2.minAreaRect(pts))), np.float32))
+    return out
+
+
+def point_markers(img, win):
+    """Small filled dots marking a point — an obstacle, a hazard, a reference.
+
+    Drawn in amber/orange and compact: a dot is round and small where every other
+    annotation is long or encloses ground.
+    """
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    amber = (((h > 8) & (h < 32) & (s > 130) & (v > 150)).astype(np.uint8) * 255) & win
+    amber = cv2.morphologyEx(amber, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    out = []
+    cnts, _ = cv2.findContours(amber, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    for c in cnts:
+        area = cv2.contourArea(c)
+        if not 40 <= area <= 900:
+            continue
+        (cx, cy), radius = cv2.minEnclosingCircle(c)
+        if radius < 3 or radius > 22:
+            continue
+        # round, not a fleck of orange field: a disc fills most of its circle
+        if area < 0.55 * math.pi * radius * radius:
+            continue
+        out.append((float(cx), float(cy), float(radius)))
+    return out
+
+
+def circled_points(img, win):
+    """Small drawn circles ringing a feature — the guides circle a dam, a mast, a pylon."""
+    b, g, r = [c.astype(np.int16) for c in cv2.split(img)]
+    ink = ((((r > 150) & (g < 120) & (b < 120)) |
+            ((r > 170) & (g > 150) & (b < 110))).astype(np.uint8) * 255) & win
+    out = []
+    cnts, hier = cv2.findContours(ink, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    if hier is None:
+        return out
+    for i, c in enumerate(cnts):
+        if hier[0][i][3] == -1 or len(c) < 5:      # want the hole, i.e. a ring
+            continue
+        area = cv2.contourArea(c)
+        if not 60 <= area <= 3000:
+            continue
+        (cx, cy), radius = cv2.minEnclosingCircle(c)
+        if radius < 5 or radius > 34:
+            continue
+        if area < 0.6 * math.pi * radius * radius:  # roughly circular
+            continue
+        out.append((float(cx), float(cy), float(radius)))
+    return out
+
+
 def fill_quads(img, win, min_area=350):
     """Outer boundary of each painted strip the Guide drew, or nothing when the mask is
     plainly picking up ground rather than ink."""
@@ -181,10 +257,22 @@ def fill_quads(img, win, min_area=350):
 
 
 def annotations(img, framed):
-    """Every drawn element in one photo, plus the masks to keep out of registration."""
+    """Every drawn element in one photo, plus the masks to keep out of registration.
+
+    Gated by drawing style, because the two are disjoint: a framed photo draws filled
+    strips and black rings and never a measured arrow; a screenshot draws arrows, hazard
+    lines and markers and never a filled strip. Running each extractor only where its
+    shape can occur removes a class of false positive outright — Megevette's meadows and
+    Banon's phantom arrows were both families firing on a style that cannot contain them.
+    """
     win = inner_window(img, framed)
     fam, masks = detect_families(img, framed)
     quads, fill_mask = fill_quads(img, win)
+    if not framed:
+        quads, fill_mask = [], np.zeros(win.shape, np.uint8)
+    hazards = [] if framed else hazard_lines(img, win)
+    markers = [] if framed else point_markers(img, win)
+    circles = [] if framed else circled_points(img, win)
     bands = _bands(img, win)
     arrows, danger = [], []
     for name, mask in bands.items():
@@ -210,7 +298,10 @@ def annotations(img, framed):
         # detect_families already fitted them; re-fit here to get the parameters back.
         # The speculative arc path stays off when a definite annotation was found.
         rings = _rings(img, framed, allow_arc=not (quads or arrows or danger))
+    if framed:
+        arrows = []          # framed photos carry no measured arrows
     return dict(quads=quads, arrows=arrows, danger=danger, rings=rings,
+                hazards=hazards, markers=markers, circles=circles,
                 families=fam), masks + [fill_mask] + list(bands.values())
 
 
@@ -271,7 +362,8 @@ def transfer_field(f, photos):
         fv.ortho_crop(lat, lon, 1800, cur_path, country)
     cur = cv2.imread(str(cur_path))
 
-    geom = {"quads": [], "rings": [], "danger": [], "runs": []}
+    geom = {"quads": [], "rings": [], "danger": [], "runs": [],
+            "hazards": [], "markers": [], "circles": []}
     regs = []
     for name in photos:
         img = cv2.imread(str(PHOTOS / name))
@@ -279,7 +371,8 @@ def transfer_field(f, photos):
             continue
         framed = is_framed(img)
         ann, masks = annotations(img, framed)
-        if not any((ann["quads"], ann["rings"], ann["danger"], ann["arrows"])):
+        if not any((ann["quads"], ann["rings"], ann["danger"], ann["arrows"],
+                    ann["hazards"], ann["markers"], ann["circles"])):
             continue
         # A measured arrow is a scale bar: the field's own lengthM over the arrow's pixel
         # length gives the old photo's ground resolution, which pins the transform's scale.
@@ -336,6 +429,15 @@ def transfer_field(f, photos):
             pm = [px2m(p) for p in tc.apply_m(M, np.array(axis, np.float32))]
             if math.dist(*pm) >= 40:
                 geom["runs"].append(pm)
+        for axis in ann["hazards"]:
+            geom["hazards"].append([px2m(p) for p in tc.apply_m(M, np.array(axis, np.float32))])
+        # A marker is a point plus a radius; project the centre and scale the radius by
+        # the transform, so a circled dam stays the size the guide drew it.
+        scale = float(np.hypot(M[0, 0], M[0, 1]))
+        for key in ("markers", "circles"):
+            for cx, cy, radius in ann[key]:
+                c = px2m(tc.apply_m(M, [[cx, cy]])[0])
+                geom[key].append([c[0], c[1], round(radius * scale * MPP, 1)])
     return geom, regs
 
 
@@ -345,8 +447,9 @@ def render(f, geom, regs):
     lat = f.get("lat") or f["latitude"]
     lon = f.get("lon") or f["longitude"]
     country = f.get("country") or "FR"
-    pts = [p for key in ("quads", "rings", "danger", "runs") for shape in geom[key]
-           for p in shape]
+    pts = [p for key in ("quads", "rings", "danger", "runs", "hazards")
+           for shape in geom[key] for p in shape]
+    pts += [(c[0], c[1]) for key in ("markers", "circles") for c in geom[key]]
     ce = (min(p[0] for p in pts) + max(p[0] for p in pts)) / 2
     cn = (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2
     span = max(max(p[0] for p in pts) - min(p[0] for p in pts),
@@ -370,6 +473,25 @@ def render(f, geom, regs):
         d.polygon([to_px(p) for p in shape], outline=RED + (255,), width=4)
     for tail, head in geom["runs"]:
         draw_arrow(d, to_px, tail, head)
+
+    # Hazard lines: a cable is drawn the way the guide drew it, right across the view, so
+    # a pilot sees what it crosses rather than a symbol beside it.
+    for tail, head in geom["hazards"]:
+        d.line([to_px(tail), to_px(head)], fill=RED + (255,), width=5)
+        d.line([to_px(tail), to_px(head)], fill=(255, 235, 120, 255), width=2)
+
+    # Obstacle marks keep the size the guide drew: a circled dam stays a circle round the
+    # dam, and a dot stays a dot. No numbering and no legend — those were tried and are
+    # unreadable in the air.
+    for cx, cn_, radius in geom["circles"]:
+        rpx = max(radius / mpp, 6)
+        x, y = to_px((cx, cn_))
+        d.ellipse([x - rpx, y - rpx, x + rpx, y + rpx], outline=RED + (255,), width=4)
+    for cx, cn_, radius in geom["markers"]:
+        rpx = max(radius / mpp, 5)
+        x, y = to_px((cx, cn_))
+        d.ellipse([x - rpx, y - rpx, x + rpx, y + rpx], fill=(255, 176, 32, 235),
+                  outline=(60, 40, 10, 255), width=2)
     fv.draw_chrome(d, f["name"], crop["attribution"],
                    " · Annotations: Guide des Aires de Sécurité")
     Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB").save(
@@ -404,6 +526,7 @@ def main():
                 path = render(f, geom, regs)
                 index[fid] = {"name": f["name"], "mode": "annotated",
                               "shapes": {k: len(v) for k, v in geom.items()},
+                              "hazard_count": len(geom["hazards"]),
                               "run_lengths_m": [round(math.dist(*r)) for r in geom["runs"]],
                               # Largest drawn STRIP, in metres. QA uses it to spot terrain
                               # that passed for an annotation. Rings are excluded on

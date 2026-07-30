@@ -31,12 +31,21 @@ AIRES = WORK / "aires"
 MPP = 1800 / 975
 
 
-def is_framed(img):
-    """Guide-framed photos have a saturated uniform border; screenshots do not."""
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    border = np.concatenate([hsv[2:6, :, 1].ravel(), hsv[-6:-2, :, 1].ravel(),
-                             hsv[:, 2:6, 1].ravel(), hsv[:, -6:-2, 1].ravel()])
-    return float(np.median(border)) > 60
+def is_framed(img, thickness=6):
+    """Framed Guide photos carry a border of one flat colour; screenshots run terrain to
+    the edge.
+
+    Uniformity, not saturation: the old test asked whether the border was colourful and
+    got Banon backwards, because its frame is grey — which then disabled the extractors
+    for its style and enabled the wrong ones. Measured across the corpus the border's
+    colour spread is 1.2-1.9 for framed photos and 33-52 for screenshots, with nothing
+    in between.
+    """
+    b = np.concatenate([img[:thickness, :].reshape(-1, 3),
+                        img[-thickness:, :].reshape(-1, 3),
+                        img[:, :thickness].reshape(-1, 3),
+                        img[:, -thickness:].reshape(-1, 3)]).astype(np.float32)
+    return float(np.median(np.std(b, axis=0))) < 12
 
 
 def inner_window(img, framed):
