@@ -33,7 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import field_views as fv  # noqa: E402
 import transfer_cv as tc  # noqa: E402
 from aires_render import MPP, annotations  # noqa: E402
-from aires_sweep import PHOTOS, is_framed  # noqa: E402
+import shapes as sh  # noqa: E402
+from aires_sweep import PHOTOS  # noqa: E402
 
 WORK = Path(os.environ.get("FIELD_VIEWS_WORK", "field-views-work"))
 OUT = WORK / "aires" / "diag"
@@ -69,8 +70,8 @@ def diagnose(field, photos):
         img = cv2.imread(str(PHOTOS / name))
         if img is None:
             continue
-        framed = is_framed(img)
-        ann, masks = annotations(img, framed)
+        ann, masks = annotations(img)
+        framed = ann["style"] == sh.FRAMED
         counts = {k: len(ann[k]) for k in ("quads", "rings", "danger", "arrows")}
         arrow_px = [round(math.dist(*a)) for a in ann["arrows"]]
         trace(img, ann, OUT / f"diag_{fid}_{n}_trace.jpg")

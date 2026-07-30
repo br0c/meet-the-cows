@@ -32,7 +32,6 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aires_render import PHOTOS, annotations  # noqa: E402
-from aires_sweep import is_framed  # noqa: E402
 
 WORK = Path(os.environ.get("FIELD_VIEWS_WORK", "field-views-work"))
 SEVERITY = {"regression": 0, "golden": 0, "oversized": 1, "imagery": 1, "short-run": 2,
@@ -69,7 +68,7 @@ def photo_has_annotation(field_id, inventory):
         img = cv2.imread(str(path))
         if img is None:
             continue
-        ann, _ = annotations(img, is_framed(img))
+        ann, _ = annotations(img)
         if any((ann["quads"], ann["rings"], ann["danger"], ann["arrows"])):
             return True
     return False if names else None
