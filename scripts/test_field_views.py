@@ -129,10 +129,16 @@ class TestRouting(unittest.TestCase):
         self.assertIn("2012.33", cands[0]["layer"])
         self.assertEqual(cands[0].get("version"), "1.1.1")
 
-    def test_france_unaffected(self):
+    def test_france_still_leads_with_ign(self):
+        # 44.5N 6.4E is French Alps, close enough to the border that the cross-border
+        # fall-through offers an Italian service behind IGN. That is the point of it —
+        # a field whose IGN tiles come back blank still gets imagery. What must not
+        # change is the order: IGN is what France is served from.
         cands = fv.providers_for("FR", 44.5, 6.4)
-        self.assertEqual(len(cands), 1)
         self.assertIn("geopf", cands[0]["url"])
+        # and the fall-through really is border-specific: inland France gets IGN alone
+        inland = fv.providers_for("FR", 47.0, 2.5)
+        self.assertEqual([p["url"] for p in inland if "geopf" not in p["url"]], [])
 
 
 class TestBlankDetection(unittest.TestCase):
@@ -184,6 +190,30 @@ class TestOrthoCropFallback(unittest.TestCase):
                 # Sicily's west coast: outside every Italian bbox except PCN 33? Marsala
                 # is lon 12.44 -> zone 33 covers it; use a point west of zone 32's bbox.
                 fv.ortho_crop(41.9, 5.0, 600, Path(tmp) / "c.jpg", "IT")
+
+
+class TestOsmPreference(unittest.TestCase):
+    """Airfields are served from OSM, whatever a guide drew for them.
+
+    The pack's own classifier only recognises French ICAO codes, so LIMW Aoste came
+    through as an ordinary outlanding field and its guide page — a topographic map
+    screenshot of the protected zone — was scanned for landing strips.
+    """
+
+    def test_foreign_icao_codes_prefer_osm(self):
+        for code in ("LIMW", "LSGS", "LOWI", "LEZL", "EDDM", "LFLG"):
+            self.assertTrue(fv.prefers_osm_view({"code": code}), code)
+
+    def test_kind_airfield_prefers_osm(self):
+        self.assertTrue(fv.prefers_osm_view({"kind": "airfield", "code": "331"}))
+
+    def test_outlanding_fields_keep_their_drawings(self):
+        for code in ("320", "331", "Ste-Jalle_2", "", None):
+            self.assertFalse(fv.prefers_osm_view({"code": code}), repr(code))
+
+    def test_synthetic_codes_are_not_icao(self):
+        # build_pack mints codes like IT_ANDREA_BOZZO_...; they must not read as ICAO.
+        self.assertFalse(fv.prefers_osm_view({"code": "LIXX", "syntheticCode": True}))
 
 
 if __name__ == "__main__":

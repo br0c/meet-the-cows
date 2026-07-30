@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import field_views as fv  # noqa: E402
 import transfer_cv as tc  # noqa: E402
-from aires_sweep import PHOTOS, detect_families, inner_window, is_framed  # noqa: E402
+import shapes as sh  # noqa: E402
+from aires_sweep import PHOTOS  # noqa: E402
 from transfer_render import draw_arrow  # noqa: E402
 
 WORK = Path(os.environ.get("FIELD_VIEWS_WORK", "field-views-work"))
@@ -40,311 +41,25 @@ MPP = 1800 / 975
 DATUM = (487.5, 650.0)
 RED = (226, 40, 25)
 
-ARROW_BANDS = {
-    "red": lambda r, g, b: (r > 150) & (g < 100) & (b < 100),
-    "pink": lambda r, g, b: ((r > 205) & (g > 120) & (g < 210) & (b > 110) & (b < 215)
-                             & (r - b > 35)),
-    "blue": lambda r, g, b: (b > 140) & (b - r > 60) & (b - g > 60),
-}
 
+def annotations(img):
+    """Every drawn element in one photo, in this renderer's vocabulary.
 
-def _bands(img, win):
-    b, g, r = [c.astype(np.int16) for c in cv2.split(img)]
-    out = {}
-    for name, fn in ARROW_BANDS.items():
-        m = (fn(r, g, b).astype(np.uint8) * 255) & win
-        out[name] = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-    return out
-
-
-def split_thin_and_boxes(mask, min_area=60, band="red"):
-    """Separate thin drawn lines (arrows) from hollow drawn rectangles (danger zones)."""
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(mask)
-    thin, boxes = [], []
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] < min_area:
-            continue
-        pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
-        (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
-        long_, short = max(dw, dh), min(dw, dh)
-        if long_ < 25:
-            continue
-        # Width alone separates them: an arrow is a pen line a few pixels across, while a
-        # danger zone is a rectangle tens of pixels wide. Elongation cannot decide it —
-        # Bayons' danger strip is 40 px wide and 6x as long, which an aspect test calls an
-        # arrow.
-        # Pen strokes vary: Bayons' arrow has a 6 px half and a 16 px half, so a flat
-        # width cut split one arrow into "an arrow" and "a box" and measured it at a third
-        # of its length. Elongation carries the distinction — but a filled danger strip is
-        # elongated too, so its solidity breaks the tie (Bayons' danger fills 0.55 of its
-        # rectangle; an arrow shaft is a line in a much larger box).
-        aspect = long_ / max(short, 1)
-        fill = stats[i, cv2.CC_STAT_AREA] / max(long_ * short, 1)
-        # The solidity tie-break only applies to red, the one band that carries danger
-        # zones. Applied everywhere it also swallowed Bayons' own arrow, whose fatter half
-        # has almost the same shape as that field's danger strip — the thing separating
-        # them is the colour the Guide drew them in.
-        boxish = band == "red" and fill < 0.7 and aspect < 8 and short > 14
-        if short <= 30 and aspect >= 3 and not boxish:
-            thin.append(i)
-        else:
-            # Anything red and chunky is a drawn danger zone, whether the Guide outlined
-            # it or filled it translucently (Bayons fills its one, which an outline-only
-            # test misses). Arrows never reach here — they are caught as thin above.
-            boxes.append(cv2.boxPoints(cv2.minAreaRect(pts)))
-    return thin, boxes, lab
-
-
-def arrow_axes(mask, min_area=60, line_tol=40, gap_tol=90, band="red"):
-    """Axes of each drawn arrow. Components collinear with one another belong to the same
-    arrow — a label drawn across it splits the stroke in two — while a separate arrow
-    elsewhere in the frame sits off that line."""
-    thin, _, lab = split_thin_and_boxes(mask, min_area, band)
-    groups = []
-    for i in sorted(thin, key=lambda j: -int((lab == j).sum())):
-        pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
-        placed = False
-        for gp in groups:
-            a, b = gp["axis"]
-            ux, uy = b[0] - a[0], b[1] - a[1]
-            norm = math.hypot(ux, uy) or 1
-            ux, uy = ux / norm, uy / norm
-            c = pts.mean(axis=0)
-            # Collinear AND near: a label splitting an arrow leaves halves on the same
-            # line a short gap apart, while a different arrow parallel to it elsewhere in
-            # the frame is far along that line. Distance-only or offset-only both mis-group.
-            along = abs((c[0] - a[0]) * ux + (c[1] - a[1]) * uy)
-            span = math.hypot(b[0] - a[0], b[1] - a[1])
-            if (abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux) <= line_tol
-                    and along <= span + gap_tol):
-                gp["pts"] = np.vstack([gp["pts"], pts])
-                gp["axis"] = tc.axis_of(cv2.boxPoints(cv2.minAreaRect(gp["pts"])))
-                placed = True
-                break
-        if not placed:
-            groups.append({"pts": pts,
-                           "axis": tc.axis_of(cv2.boxPoints(cv2.minAreaRect(pts)))})
-    # A second pass merges groups that turned out collinear: the first segment seen sets a
-    # group's axis, and a label splitting an arrow can leave its halves too far apart to
-    # join until both axes exist (Marcoux's 250 m arrow splits exactly that way).
-    merged = True
-    while merged and len(groups) > 1:
-        merged = False
-        for i in range(len(groups)):
-            for j in range(i + 1, len(groups)):
-                a, b = groups[i]["axis"]
-                ux, uy = b[0] - a[0], b[1] - a[1]
-                norm = math.hypot(ux, uy) or 1
-                ux, uy = ux / norm, uy / norm
-                c = groups[j]["pts"].mean(axis=0)
-                if abs((c[0] - a[0]) * uy - (c[1] - a[1]) * ux) <= line_tol:
-                    pts = np.vstack([groups[i]["pts"], groups[j]["pts"]])
-                    groups[i] = {"pts": pts,
-                                 "axis": tc.axis_of(cv2.boxPoints(cv2.minAreaRect(pts)))}
-                    groups.pop(j)
-                    merged = True
-                    break
-            if merged:
-                break
-    return [g["axis"] for g in groups]
-
-
-# Saturation floor for a painted strip. Measured on the corpus: St Blaise's drawn fill
-# sits at S=148, while Megevette's sunlit meadows — eleven of which were being traced as
-# strips — sit at S=86. The old floor of 80 could not tell ink from grass. This costs the
-# faintest genuine washes (Megevette's own strip measures S=98, inseparable from the
-# meadows around it by any threshold), which is the right trade: an unmarked overview is
-# honest, eleven invented strips are not.
-FILL_S_MIN = 120
-# The Guide paints one strip, occasionally two. A photo yielding a crowd of them is
-# showing us terrain, so the whole set is discarded rather than a wrong one picked.
-MAX_FILL_QUADS = 3
-
-
-def hazard_lines(img, win, min_frac=0.30):
-    """Long straight lines drawn across the frame — power lines and cables.
-
-    The guides mark a cable by ruling a line right across the photo, so length relative
-    to the frame is the signature: no field outline or arrow spans a third of the image
-    in a dead straight, constant-width stroke. This is safety information and was being
-    dropped entirely.
+    A thin adapter over shapes.py, which is the single implementation for both packs —
+    the Aires guides and the APVV Pyrenees captures — so a fix reaches both instead of
+    only the corpus it was found on. The extractors that used to live here were a second
+    copy that had already drifted.
     """
-    b, g, r = [c.astype(np.int16) for c in cv2.split(img)]
-    red = (((r > 140) & (g < 110) & (b < 110) & (r - g > 55)).astype(np.uint8) * 255) & win
-    red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
-    span = min(img.shape[:2])
-    out = []
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(red)
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] < 90:
-            continue
-        pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
-        (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
-        long_, short = max(dw, dh), min(dw, dh)
-        if long_ < min_frac * span or short > 14 or long_ / max(short, 1) < 15:
-            continue
-        out.append(np.asarray(tc.axis_of(cv2.boxPoints(cv2.minAreaRect(pts))), np.float32))
-    return out
+    drawn, masks, style = sh.extract(img)
+    return dict(quads=drawn["strips"] + drawn["polygons"],
+                rings=drawn["rings"],
+                danger=drawn["danger"],
+                arrows=drawn["arrows"],
+                hazards=drawn["hazards"] + drawn["centrelines"],
+                markers=drawn["markers"],
+                circles=drawn["circles"],
+                style=style), masks
 
-
-def point_markers(img, win):
-    """Small filled dots marking a point — an obstacle, a hazard, a reference.
-
-    Drawn in amber/orange and compact: a dot is round and small where every other
-    annotation is long or encloses ground.
-    """
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    amber = (((h > 8) & (h < 32) & (s > 130) & (v > 150)).astype(np.uint8) * 255) & win
-    amber = cv2.morphologyEx(amber, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    out = []
-    cnts, _ = cv2.findContours(amber, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    for c in cnts:
-        area = cv2.contourArea(c)
-        if not 40 <= area <= 900:
-            continue
-        (cx, cy), radius = cv2.minEnclosingCircle(c)
-        if radius < 3 or radius > 22:
-            continue
-        # round, not a fleck of orange field: a disc fills most of its circle
-        if area < 0.55 * math.pi * radius * radius:
-            continue
-        out.append((float(cx), float(cy), float(radius)))
-    return out
-
-
-def circled_points(img, win):
-    """Small drawn circles ringing a feature — the guides circle a dam, a mast, a pylon."""
-    b, g, r = [c.astype(np.int16) for c in cv2.split(img)]
-    ink = ((((r > 150) & (g < 120) & (b < 120)) |
-            ((r > 170) & (g > 150) & (b < 110))).astype(np.uint8) * 255) & win
-    out = []
-    cnts, hier = cv2.findContours(ink, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-    if hier is None:
-        return out
-    for i, c in enumerate(cnts):
-        if hier[0][i][3] == -1 or len(c) < 5:      # want the hole, i.e. a ring
-            continue
-        area = cv2.contourArea(c)
-        if not 60 <= area <= 3000:
-            continue
-        (cx, cy), radius = cv2.minEnclosingCircle(c)
-        if radius < 5 or radius > 34:
-            continue
-        if area < 0.6 * math.pi * radius * radius:  # roughly circular
-            continue
-        out.append((float(cx), float(cy), float(radius)))
-    return out
-
-
-def fill_quads(img, win, min_area=350):
-    """Outer boundary of each painted strip the Guide drew, or nothing when the mask is
-    plainly picking up ground rather than ink."""
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    fill = (((h > 20) & (h < 70) & (s > FILL_S_MIN) & (v > 110)).astype(np.uint8) * 255) & win
-    fill = cv2.morphologyEx(fill, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-    cnts, _ = cv2.findContours(fill, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    out = []
-    for c in cnts:
-        if cv2.contourArea(c) < min_area:
-            continue
-        poly = cv2.approxPolyDP(c, 0.02 * cv2.arcLength(c, True), True)
-        out.append(poly.reshape(-1, 2).astype(np.float32))
-    if len(out) > MAX_FILL_QUADS:
-        return [], np.zeros_like(fill)
-    return out, fill
-
-
-def annotations(img, framed):
-    """Every drawn element in one photo, plus the masks to keep out of registration.
-
-    Gated by drawing style, because the two are disjoint: a framed photo draws filled
-    strips and black rings and never a measured arrow; a screenshot draws arrows, hazard
-    lines and markers and never a filled strip. Running each extractor only where its
-    shape can occur removes a class of false positive outright — Megevette's meadows and
-    Banon's phantom arrows were both families firing on a style that cannot contain them.
-    """
-    win = inner_window(img, framed)
-    fam, masks = detect_families(img, framed)
-    quads, fill_mask = fill_quads(img, win)
-    if not framed:
-        quads, fill_mask = [], np.zeros(win.shape, np.uint8)
-    hazards = [] if framed else hazard_lines(img, win)
-    markers = [] if framed else point_markers(img, win)
-    circles = [] if framed else circled_points(img, win)
-    bands = _bands(img, win)
-    arrows, danger = [], []
-    for name, mask in bands.items():
-        axes = arrow_axes(mask, band=name)
-        arrows += axes
-        if name == "red":
-            _, boxes, _ = split_thin_and_boxes(mask, band=name)
-            # An arrowhead is a wide blob and would otherwise read as a danger zone, so
-            # drop any box sitting on one of this band's own arrow axes.
-            for quad in boxes:
-                c = np.asarray(quad, np.float32).mean(axis=0)
-                on_arrow = False
-                for a, b in axes:
-                    ux, uy = b[0] - a[0], b[1] - a[1]
-                    norm = math.hypot(ux, uy) or 1
-                    if abs((c[0] - a[0]) * uy / norm - (c[1] - a[1]) * ux / norm) <= 30:
-                        on_arrow = True
-                        break
-                if not on_arrow:
-                    danger.append(quad)
-    rings = []
-    if fam.get("ellipse"):
-        # detect_families already fitted them; re-fit here to get the parameters back.
-        # The speculative arc path stays off when a definite annotation was found.
-        rings = _rings(img, framed, allow_arc=not (quads or arrows or danger))
-    if framed:
-        arrows = []          # framed photos carry no measured arrows
-    return dict(quads=quads, arrows=arrows, danger=danger, rings=rings,
-                hazards=hazards, markers=markers, circles=circles,
-                families=fam), masks + [fill_mask] + list(bands.values())
-
-
-def _rings(img, framed, allow_arc=True):
-    """Drawn ellipse rings, as polygons (same detection as the sweep's ellipse family)."""
-    win = inner_window(img, framed)
-    v = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[:, :, 2]
-    bh = cv2.morphologyEx(v, cv2.MORPH_BLACKHAT,
-                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
-    dark = ((((bh > 25) & (v < 60)) | (v < 42)).astype(np.uint8) * 255) & win
-    out = []
-    cnts, hier = cv2.findContours(dark, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-    if hier is not None:
-        for i, c in enumerate(cnts):
-            if hier[0][i][3] == -1 or len(c) < 5 or cv2.contourArea(c) < 1500:
-                continue
-            (cx, cy), (d1, d2), ang = cv2.fitEllipse(c)
-            fitted = math.pi * d1 * d2 / 4
-            if fitted and min(d1, d2) >= 40 and 0.93 <= cv2.contourArea(c) / fitted <= 1.07:
-                out.append(cv2.ellipse2Poly((round(cx), round(cy)),
-                                            (round(d1 / 2), round(d2 / 2)),
-                                            round(ang), 0, 360, 5).astype(np.float32))
-    if out or not allow_arc:
-        return out
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(dark)
-    probe = cv2.dilate(dark, np.ones((7, 7), np.uint8))
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] < 80:
-            continue
-        pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
-        if len(pts) < 60:
-            continue
-        (cx, cy), (d1, d2), ang = cv2.fitEllipse(pts)
-        if min(d1, d2) < 40 or max(d1, d2) > 0.9 * min(dark.shape):
-            continue
-        poly = cv2.ellipse2Poly((round(cx), round(cy)), (round(d1 / 2), round(d2 / 2)),
-                                round(ang), 0, 360, 5)
-        ok = [(0 <= x < probe.shape[1] and 0 <= y < probe.shape[0]) for x, y in poly]
-        if (any(ok)
-                and sum(1 for (x, y), k in zip(poly, ok) if k and probe[y, x]) / len(poly) >= 0.80
-                and tc.stroke_width(stats[i, cv2.CC_STAT_AREA], d1, d2) <= 4.5):
-            return [poly.astype(np.float32)]
-    return []
 
 
 def px2m(p):
@@ -369,10 +84,12 @@ def transfer_field(f, photos):
         img = cv2.imread(str(PHOTOS / name))
         if img is None:
             continue
-        framed = is_framed(img)
-        ann, masks = annotations(img, framed)
-        if not any((ann["quads"], ann["rings"], ann["danger"], ann["arrows"],
-                    ann["hazards"], ann["markers"], ann["circles"])):
+        if not sh.is_aerial(img):
+            continue                       # a ground-level photo has nothing to register
+        ann, masks = annotations(img)
+        framed = ann["style"] == sh.FRAMED
+        if not any(ann[k] for k in ("quads", "rings", "danger", "arrows",
+                                    "hazards", "markers", "circles")):
             continue
         # A measured arrow is a scale bar: the field's own lengthM over the arrow's pixel
         # length gives the old photo's ground resolution, which pins the transform's scale.
@@ -508,8 +225,8 @@ def main():
     index = json.loads(index_path.read_text()) if index_path.exists() else {}
     todo = []
     for f in inventory:
-        if f.get("kind") == "airfield":
-            continue
+        if fv.prefers_osm_view(f):
+            continue      # OSM has surveyed runways; a drawing cannot beat that
         photos = [Path(m.get("url", "")).name for m in (f.get("media") or [])
                   if "Aires" in (m.get("source") or "")
                   and (PHOTOS / Path(m.get("url", "")).name).exists()]

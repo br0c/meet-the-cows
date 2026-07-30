@@ -191,7 +191,7 @@ def main():
         fid = f["id"]
         if fid in verdicts:
             continue
-        if f.get("kind") == "airfield":
+        if fv.prefers_osm_view(f):
             verdicts[fid] = {"name": f["name"], "verdict": "skip-airfield-osm-tier",
                              "photos": photos}
             continue

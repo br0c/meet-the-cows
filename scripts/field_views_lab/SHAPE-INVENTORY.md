@@ -38,15 +38,55 @@ orange outlined polygons, thick red arrows and yellow hazard annotations.
 | 10 | **danger rectangle** | Aires screenshot | red rectangle, outlined or translucently filled | working (Bayons) |
 | 11 | **hazard line + text** | APVV | yellow line with a caption (`Partie à éviter`, `Talus`, `Caniveau`) | **missing** — line is drawable, the caption is not transferable |
 | 12 | **range arc** | APVV | white curved line with a distance label (`1300m`) | **missing**, and probably should stay so — see below |
-| 13 | **thin centreline** | Aires framed | single or crossed yellow lines marking usable runs (211 Artignosc) | **missing** |
+| 13 | **thin centreline** | Aires framed | single or crossed yellow lines marking usable runs (211 Artignosc) | implemented, but fires on nothing across the corpus — see open questions |
+| 14 | **dashed hazard line** | Aires screenshot | a power line ruled as separate strokes, labelled `Ligne El` (515 Lus) | working — collinear dashes are chained and measured as one line |
+| 15 | **outlined danger box** | Aires screenshot | red rectangle drawn hollow rather than filled (320 Bayons) | working — traced as the hole it encloses |
+| 16 | **fat arrow** | Aires screenshot | a measured arrow 59 px wide, as wide as some danger boxes (515 Lus) | working — separated from a box by its head, not its width |
+| 17 | **white arrow** | Aires screenshot | a measured run drawn in white rather than ink (515 Lus draws two) | **missing** — see open questions |
+| 18 | **caption banner** | Aires screenshot | red lettering on a white band across the top (318 Montgardin) | must NOT transfer — the band is measured and excluded |
+| 19 | **cartographic screenshot** | Aires | an OSM/topo map, not imagery at all (`LIMW_Aoste_zpa`) | not a field photo; airfields take the OSM tier instead |
 
 ## Not aerial at all
 
 `529_chauffayer_3` is a ground-level photograph of a field with a text caption, filed
 among the aerial views. Transferring it is meaningless, and the pipeline must recognise
-that a photo is not a vertical aerial view and skip it rather than register it. There may
-be more; a check on the photo itself (horizon, sky, aspect) is cheaper than finding them
-by eye.
+that a photo is not a vertical aerial view and skip it rather than register it.
+
+Now measured rather than listed: a ground shot has a bright, washed-out, low-texture sky
+above a busy foreground (top V=238, S=18, bottom 11x more textured) where every aerial
+view sits within 20% of a texture ratio of 1. Sweeping the corpus with that test found a
+second one nobody had spotted, `422_crots_2.jpg`, confirmed by eye as a ground-level shot
+of the Crots landing area.
+
+## Where the counts stand
+
+Measured over all 162 photos, before and after the 2026-07-30 pass:
+
+| family | before | after | note |
+|---|---|---|---|
+| arrows | 149 | 60 | no photo now reports more than the 4 runs the two 4-run fields carry |
+| danger boxes | 55 | 12 | most of the 55 were arrowheads — invented hazards on the landing ground |
+| circled points | 20 | 17 | the rest were caption lettering |
+| hazard lines | 9 | 11 | dashed cables now chained |
+
+The framed families (strips 38, rings 29) are untouched by the pass, as intended: nothing
+in it applies to that style.
+
+## Open questions
+
+- **White arrows (17).** 515 Lus draws two of its four runs in white. A white band is easy;
+  telling a drawn white arrow from a white road is not, since both are long, thin and
+  bright. The taper test (a head) is the likely discriminator and is already implemented —
+  but it needs measuring against the roads before it can be trusted, because a false run
+  points a pilot at ground nobody surveyed.
+- **Centrelines (13) fire on nothing.** The family is implemented and returns zero across
+  the corpus. Either 211 Artignosc's yellow lines fail the thinness test, or the style gate
+  puts them on the wrong side. Worth one measurement before either changing or removing it.
+- **Is a model needed yet?** Not for geometry — everything above was recovered by measuring
+  the pixels. Where a model would genuinely help is reading the labels: `330 m / 19.0°`
+  beside an arrow states the run's length and bearing exactly, which is better than any
+  inference from stroke pixels, and would let the transfer be checked against the drawing
+  rather than trusted.
 
 ## What this implies
 
@@ -68,12 +108,14 @@ by eye.
 
 Highest value first, judged by how much a pilot loses if it stays missing:
 
-1. hazard line (7) and APVV hazard line (11) — safety
-2. point marker (8) and circled obstacle (9) — safety
-3. outlined polygon for the Aires screenshot style (6) — coverage
-4. thin centreline (13) — coverage
-5. non-aerial photo detection — correctness
-6. arrow fragmentation where a label crosses the shaft — quality
+1. ~~hazard line (7) and APVV hazard line (11)~~ — done, plus dashed cables (14)
+2. ~~point marker (8) and circled obstacle (9)~~ — done
+3. ~~outlined polygon for the Aires screenshot style (6)~~ — done
+4. ~~non-aerial photo detection~~ — done, and it found a second one
+5. ~~arrow fragmentation where a label crosses the shaft~~ — done: the glyphs are no
+   longer treated as breaks, so the stroke survives its own label
+6. white arrows (17) — coverage, and the last family a pilot actually loses
+7. thin centreline (13) — coverage, pending the measurement above
 
 Each one gets a golden-set entry as it lands, so the next pass can be measured rather
 than eyeballed.

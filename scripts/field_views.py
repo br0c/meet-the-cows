@@ -23,6 +23,7 @@ fetch_cols.py. Runways mapped as closed areas get a centreline via principal axi
 import argparse
 import json
 import math
+import re
 import sys
 import time
 import urllib.parse
@@ -226,6 +227,28 @@ def overpass(query, rounds=3, backoff_s=20):
                 last_error = e
         time.sleep(backoff_s * (attempt + 1))
     raise RuntimeError(f"every Overpass endpoint failed: {last_error}")
+
+
+# European ICAO prefixes for the countries this pack covers. The pack's own airfield
+# classifier only recognises the French one (^LF..$), so an Italian or Swiss aerodrome
+# reads as an outlanding field and its guide page goes through annotation transfer —
+# which is how a topographic map screenshot of the Aosta protected zone (LIMW) ended up
+# being scanned for landing strips.
+ICAO_RE = re.compile(r"^(LF|LI|LS|LO|LE|ED|ET)[A-Z0-9]{2}$")
+
+
+def prefers_osm_view(field):
+    """Should this field's view come from OSM rather than from a drawn guide page?
+
+    Airfields should: OSM carries surveyed runway geometry for them, which is strictly
+    better than anything recoverable from a scanned drawing, and it is kept current by
+    people who fly there.
+    """
+    if (field.get("kind") or "") == "airfield":
+        return True
+    if field.get("syntheticCode"):
+        return False
+    return bool(ICAO_RE.match((field.get("code") or "").strip().upper()))
 
 
 def load_fields(path):
