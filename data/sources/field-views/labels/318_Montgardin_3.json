@@ -1,8 +1,0 @@
-{
- "photo": "318_Montgardin_3.jpg",
- "sha256": "b999e36ca1f9b1185fc15ac6a8a6aaf8913115cf3693215b64c851651e484bdb",
- "model": "claude-sonnet-4-5-20250929",
- "prompt_version": 3,
- "seen": [],
- "labels": []
-}

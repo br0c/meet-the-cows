@@ -1,10 +1,19 @@
-# Field views — validated state of the feature (2026-07-29)
+# Field views — validated state of the feature (2026-07-30)
 
 Working notes for the generated-satellite-view feature. Everything below was
 established interactively against pilot memory (Fabien) and blind model evals;
 it is the ground truth the production pipeline is built and measured against.
 
-## Architecture (settled)
+**What the feature is today:** OSM runway geometry drawn on current orthophoto imagery,
+for airfields. A field with no OSM runway gets no generated view. The photo-transfer
+pass that aimed to cover the rest was abandoned on 2026-07-30 and its code deleted —
+see below for why, and read that before restarting it.
+
+## Architecture
+
+**Built and running:** step 1 only. Steps 2 and 3 were designed and measured but never
+shipped, and the code for them is gone — the sections below are kept as evidence for
+whoever restarts the problem, not as a description of what exists.
 
 Per field, in order:
 
@@ -15,7 +24,8 @@ Per field, in order:
    **2,439 (87.4%)** — AT 100%, DE 97%, CH 96%, IT 92%, FR 81%, ES 78%.
    Radius is insensitive (2 km adds only 12 fields). Only 12/130 outlanding
    fields are OSM-mapped; the tier is overwhelmingly the airfield-kind records.
-2. **Vision tier** (the other 351 fields, of which 234 have no media at all):
+2. **Vision tier — NEVER BUILT** (the other 351 fields, of which 234 have no media at
+   all). Designed and benchmarked as below; no code for it remains:
    k=3 independent LOCATE samples (Opus) on a clean 1800 m portrait crop →
    agreement gate (max pairwise centre distance ≤ 100 m):
    - **agree** → one REFINE pass (Opus) on a crop centred on the consensus,
@@ -29,7 +39,7 @@ Per field, in order:
 3. Generate **once**, cache in R2, only regenerate deliberately. Users must
    never see run-to-run variance.
 
-## Why k=3 (variance evidence, Prunières)
+## Why k=3 (variance evidence, Prunières) — historical, vision tier never built
 
 Three byte-identical Opus locate runs (same prompt, same crop) spread up to
 **230 m** pairwise; individual errors vs the validated centre were 147/106/30 m,
@@ -190,131 +200,55 @@ vision work sits on proven providers. WMS quirk: different zooms can serve
 different imagery vintages (a parcel may flip grass↔ploughed between crops);
 pin the fetch scale, and expect the judge to occasionally veto on appearance.
 
-## Model + cost decisions
+## Model + cost decisions — historical, vision tier never built
 
 - LOCATE/REFINE: **Opus** (Sonnet failed 2 of 3 hard benchmarks, 211–664 m).
 - JUDGE: **Sonnet** (Haiku invents obstacles on close calls).
-- Batches API, temperature 0 pinned, prompts version-locked (PROMPTS.md).
+- Batches API, temperature 0 pinned, prompts version-locked (PROMPTS.md, deleted).
 - One-off cost for the 351-field vision tier at k=3: roughly $60–80.
 - Observed pipeline integrity: agents refuse to fabricate geometry when the
   input image is missing — keep prompts that make refusal easy.
 
-## Transfer pass — old Guide photos as the placement prior (2026-07-29)
+## Photo transfer — abandoned, 2026-07-30
 
-Guide des Aires de Sécurité fields carry an OLD annotated satellite photo: the field drawn as a
-highlighted shape on dated imagery, usually with a north indicator and a scale bar, sometimes
-arrows with length/bearing text, numbered strips and hazard marks. That photo is a
-georeferenceable annotation layer, and transferring it beats locating from scratch: the agent
-reads the annotation, co-registers old landmarks (roads, rivers, buildings, tree lines) onto the
-fresh crop, and re-projects the shape plus obstacles and warnings.
+For two days the feature tried to cover the fields OSM does not know by lifting the
+drawings off the guides' own photos — colour-masking the ink, registering the old photo
+onto current imagery with SIFT, and re-projecting the shapes. It was deterministic and the
+registration was genuinely good (100-400 inliers, 2.5-4 m RMS). It was still scrapped, and
+the code is deleted rather than parked, because the approach did not converge.
 
-Blind Opus results vs the pilot-validated placements (transfer = one pass, no consensus):
+The failure mode was consistent and is the reason not to restart from that code: every fix
+aimed at one photo broke another. A saturation floor that removed one field's false strips
+deleted another's real arrow. Requiring an arrowhead fixed a power line being drawn as a
+landing direction and cost two fields their genuine runs. Claiming a bent cable so it could
+not become a run turned it into two "avoid" rectangles over good ground. Each round was
+measured, each fix was justified by numbers, and the total never improved for long — the
+guides simply draw too many things too many ways for a rule set to cover, and each rule
+interacts with the others.
 
-| field | transfer | previous best (notes-only vision) |
-|---|---|---|
-| Prunières | **20 m / 1°** | 82 m lucky single run; k=3 spread 230 m → union oval |
-| Bayons | 56 m / 2° | 15–57 m across runs; consensus 31 m / 0° |
-| St Blaise | 73 m / 3° | 34–117 m variance; consensus 57 m / 6° |
-| Marcoux (2 photos fused) | centre 27 m off datum, axis 13° vs stated 010/190 | — |
+Worth keeping from it, if anyone tries again with fresh eyes:
 
-Prunières is the headline: the field that defeated pure vision twice is solved outright,
-because the ambiguity ("which 450 m window on this corridor") is exactly what the drawn oval
-answers. Beyond placement, the transfer extracts what no other pass can: Bayons' photo carries
-a literal "261 m / 60.0°" arrow (the drawn bearing matches the validated 62°, against the
-source's stated 215°); St Blaise's pits and high-voltage line and Marcoux's "do not use #1"
-became placed obstacle markers and warnings on the render. Marcoux fused two photos and
-self-verified its registration against a barn landmark.
+- The drawn styles really are disjoint, and telling them apart is easy (a framed photo's
+  border sits at 1.2-1.9 colour spread, a screenshot's at 33-52).
+- Ink is separable from ground by colour ONLY where the ink is saturated. White drawn
+  arrows are not separable from white roads by any pixel statistic — ten were measured and
+  every one came back inverted or overlapping.
+- Reading the lettering beside each run ("240 m / 73.0°") is the one thing that worked
+  where pixels could not, because it states the answer instead of inferring it. It also
+  hallucinated freely when the prompt showed example values, which is worth knowing.
+- A model reading text is cheap and effective; a rule set reading shapes is neither.
 
-Pipeline consequence: for fields WITH a Guide photo the transfer pass becomes the primary
-vision path (one pass + judge; the photo anchors it, so k=3 consensus is likely unnecessary —
-to be confirmed with a variance run). Fields without a photo keep the k=3 consensus path. The
-render gains annotation elements: numbered amber obstacle triangles with a legend, warning
-lines, and "Annotations: Guide des Aires de Sécurité" added to the credit line.
+None of that is a plan. The honest summary is that a field with no OSM runway currently
+gets no generated view, and that is better than a wrong one.
 
-## Transfer pass v2 — annotations ARE the truth, no model call (2026-07-29)
-
-Fabien's correction of v1: the drawings on the old photo are authoritative and must be
-reproduced exactly; AI judgment has no business "improving" them. That turned the transfer
-into a pure CV problem, and v2 (`transfer_cv.py` + `transfer_render.py`) contains **zero
-model calls**:
-
-1. **Extraction** — the drawn overlays are saturated colours, so colour masks recover them
-   deterministically: red danger rectangle and pink measured arrow (Bayons), yellow-green
-   strip fill (St Blaise), pale-green strip sliver (Marcoux photo 0), blue measured arrow
-   (Marcoux photo 1). Prunières' thin black ring needs blackhat morphology (catches a thin
-   dark stroke over bright terrain, ignores broad dark forest) plus absolute-darkness OR,
-   then a 3000-iteration RANSAC ellipse fit (least squares alone is wrecked by the arc that
-   hides behind forest and the drawn arrow). Label text drawn across an arrow splits its
-   mask in two; the union of components collinear with the largest one restores the full
-   line while keeping same-coloured village roofs out.
-2. **Registration** — SIFT (CLAHE + RootSIFT, ratio 0.82) + RANSAC `estimateAffinePartial2D`
-   similarity old photo → fresh 1800 m IGN crop. Pre-scale hypothesis search (1–5×) bridges
-   the resolution gap between photo styles; when the standard crop starves the matcher
-   (Prunières: half the frame is lake), a 4500 m crop of the same datum registers instead
-   and the wide→standard scaling composes analytically. Guide chrome (frame, badges, scale
-   box) and the annotation overlays themselves are masked out of keypoint detection.
-3. **Projection + render** — extracted geometry maps through the fitted transform into
-   metres-of-datum and re-renders on a fresh 900 m portrait crop in the OSM-tier style.
-
-Registration quality (inliers / RMS on the ground):
-
-| photo | inliers | RMS | note |
-|---|---|---|---|
-| Bayons | 26 | 3.4 m | screenshot style, old mpp 1.24 |
-| St Blaise | 326 | 2.1 m | best case: same-scale framed photo |
-| Prunières | 41 | 8.3 m | via 4500 m fallback crop |
-| Marcoux photo 0 | 58 | 3.3 m | framed, 3.9 km scene |
-| Marcoux photo 1 | 25 | 1.7 m | screenshot itself sits 3.6° off north — absorbed |
-
-Extraction fidelity against the literal drawn labels: Bayons axis 247 m @ 61.6° vs drawn
-"261 m / 60.0°" (pilot-validated 62°); Marcoux arrow 245 m @ 189.1° vs "250 m / 190.0°";
-St Blaise quad 424 × 82 m as drawn. Measured axes get stretched to the labelled length at
-render time (the colour mask stops at the white endpoint dots).
-
-Render rules (the product spec, per Fabien):
-
-- Reproduce exactly what is drawn: strip quad, oval ring, red danger rectangle (translucent
-  red fill, as the Guide draws it). Rectangle only when the Guide drew one or a measured run
-  line; otherwise oval only (Prunières). Never both.
-- Direction arrow only where the photo draws one or the notes state a single preferred
-  direction. St Blaise has neither — v1's arrow came from the "050/230" axis label, which is
-  not a preference — so it gets none. A measured drawn arrow keeps its own position and
-  length (Marcoux: photo 0 outlines the full ~520 m marked track, photo 1's arrow the 250 m
-  usable segment — both reproduced where drawn, which is the real two-photo fusion). A
-  chunky pointer (Prunières) keeps its drawn position with the bearing from the notes.
-- No obstacle markers, no legend, no warnings bar, no distance labels: unusable in flight,
-  and the numbers already live in the detail view's parameters.
-
-Deps: `opencv-python-headless` + `numpy` (SIFT is in main OpenCV since 4.4). v1's
-model-driven transfer (PROMPTS.md template) is superseded; it remains the fallback shape
-for photos where colour masks or SIFT fail.
-
-Storage & lifecycle (decided 2026-07-29): the generated views will REPLACE the old Guide
-photos in the packs, so this repo becomes their source of record. `data/sources/field-views/`
-archives the irreplaceable inputs in git — the full Guide photo snapshot (162 pictures,
-16.8 MB, byte-identical from the cupx) and the extracted per-field geometry. Renders are
-derived: published to R2 like pack media, never stored in git, never rebuilt by the nightly
-pack build. Generation is one-time; refresh is manual and deliberate, roughly yearly when
-imagery campaigns update.
 
 ## Still to do
 
-- Vision API module in `field_views.py` (client behind ANTHROPIC_API_KEY,
-  consensus/union math from `consensus_run.py`, prompts from PROMPTS.md) — for
-  fields with NO Guide photo only; photo fields use the deterministic transfer.
-  Note a first, much narrower model call already exists and is separate from this:
-  `read_labels.py` transcribes the length/bearing a guide letters beside each run,
-  because that text is the only thing distinguishing a drawn white arrow from a
-  white road (ten geometric tests measured and failed — see `white_arrows.py`).
-  It reads text only, never geometry; answers are cached per photo in git so the
-  renderers stay deterministic and re-runs cost nothing.
-- Productize the transfer: `field_views.py transfer` subcommand from
-  `transfer_cv.py`/`transfer_render.py`, per-photo-style mask presets, scale the
-  colour-mask extraction across the full Guide inventory, and fall back to the
-  vision path when masks or registration come up empty.
-- Judge-feedback retry before falling back (rescues near-misses).
 - Border-clip detection (blank-margin check on crops).
-- AT WMTS stitch; DE per-Land and IT per-region provider tables.
-- Pack/app integration decision: bundle generated views as media vs serve
-  on-demand like charts (~500 MB across packs if bundled).
+- DE: Hessen, Berlin, Hamburg, Bremen and Saarland still have no endpoint, so fields only
+  they cover get no crop.
+- Pack/app integration decision: bundle generated views as media vs serve on-demand like
+  charts.
 - Terrain-tile slope check over proposed areas (data already shipped in-app).
+- Fields with no OSM runway have no generated view. Whether to cover them at all, and how,
+  is an open question — see the abandoned transfer pass above before proposing an answer.

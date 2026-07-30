@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Generated field views: OSM runway geometry + orthophoto imagery.
 
-Fields are routed to one of two tiers:
-  - OSM tier: an OSM runway lies within --radius of the field's coordinate. Its
-    geometry (centre, heading, length, width) is used as-is — validated against
-    pilot memory on Alps strips, it beat vision placement on worst-case error and
-    is deterministic and free.
-  - Vision tier: everything else. Those fields need the model locate/refine/judge
-    pipeline (separate tooling); this script only inventories them and can fetch
-    the clean orthophoto crops that pipeline consumes.
+A field gets a view when OSM has a runway within --radius of its coordinate: the geometry
+(centre, heading, length, width) is used as-is. Validated against pilot memory on Alps
+strips, it is deterministic, free, and kept current by the people who fly there.
+
+Fields with no OSM runway get no view. An earlier attempt to recover one by lifting the
+drawings off the guides' own photos and re-projecting them onto current imagery was
+abandoned in 2026-07 — see field_views_lab/NOTES.md — so nothing here reads a photo.
 
 Subcommands:
   runways --fields F.json --out runways.json   fetch aeroway=runway near all fields
   match   --fields F.json --runways R.json --out M.json [--radius 1000]
   crop    --lat .. --lon .. --out C.jpg [--width-m 1800]   clean portrait crop
-  render  --match-entry M.json:ID --out V.jpg   OSM-tier view (validated style)
+  plain   --lat .. --lon .. --out V.jpg        unmarked overview, no geometry drawn
+  render  --match-entry M.json:ID --out V.jpg   OSM-tier view
 
 The runway fetch batches 1-degree tiles (only tiles containing fields) into
 Overpass union queries, with the same mirror rotation and backoff discipline as
@@ -231,18 +231,16 @@ def overpass(query, rounds=3, backoff_s=20):
 
 # European ICAO prefixes for the countries this pack covers. The pack's own airfield
 # classifier only recognises the French one (^LF..$), so an Italian or Swiss aerodrome
-# reads as an outlanding field and its guide page goes through annotation transfer —
-# which is how a topographic map screenshot of the Aosta protected zone (LIMW) ended up
-# being scanned for landing strips.
+# reads as an ordinary outlanding field — LIMW Aosta among them.
 ICAO_RE = re.compile(r"^(LF|LI|LS|LO|LE|ED|ET)[A-Z0-9]{2}$")
 
 
 def prefers_osm_view(field):
-    """Should this field's view come from OSM rather than from a drawn guide page?
+    """Is this field an airfield, and so a candidate for an OSM-drawn view?
 
-    Airfields should: OSM carries surveyed runway geometry for them, which is strictly
-    better than anything recoverable from a scanned drawing, and it is kept current by
-    people who fly there.
+    OSM carries surveyed runway geometry for airfields and is kept current by the people
+    who fly there. Recognising them by ICAO code as well as by `kind` catches the foreign
+    aerodromes the pack's own classifier misses.
     """
     if (field.get("kind") or "") == "airfield":
         return True
@@ -566,10 +564,8 @@ def draw_chrome(d, name, attribution, extra_credit=""):
 def plain_view(lat, lon, name, out_path, country="FR", width_m=1200.0):
     """Current imagery with no marking at all: north rose, name, credit, nothing else.
 
-    For fields whose source photo shows a whole area of landable ground rather than one
-    strip, and for fields whose annotation cannot be transferred. An unmarked, current
-    overview is honest and still useful — the pilot picks — where a wrong or absent
-    marking is neither.
+    For a field with no runway geometry to draw. An unmarked, current overview is honest
+    and still useful — the pilot picks — where a wrong marking is worse than none.
     """
     from PIL import Image, ImageDraw
     tmp = Path(out_path).with_suffix(".crop.jpg")

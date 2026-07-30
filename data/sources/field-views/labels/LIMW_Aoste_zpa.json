@@ -1,8 +1,0 @@
-{
- "photo": "LIMW_Aoste_zpa.jpg",
- "sha256": "532f365de2956d3624e0e02f09b77f39dcfe967c3af5445a03086275d4c0dfa5",
- "model": "claude-sonnet-4-5-20250929",
- "prompt_version": 3,
- "seen": [],
- "labels": []
-}

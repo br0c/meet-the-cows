@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Fold per-shard indexes into one index per tier.
+"""Fold the per-shard indexes into one.
 
-The OSM tier renders as one job per country so an outage costs only its own shard, and
-each shard writes index-<shard>.json to avoid parallel jobs clobbering a shared file.
-QA and the contact sheets want the whole tier, so this merges them — and reports the
-per-shard counts, which is the first thing to look at when a tier comes back short.
+Rendering runs as one job per country so an outage costs only its own shard, and each
+shard writes index-<shard>.json to avoid parallel jobs clobbering a shared file. QA and
+the contact sheets want the whole set, so this merges them — and reports the per-shard
+counts, which is the first thing to look at when a run comes back short.
 
     FIELD_VIEWS_WORK=work python3 merge_indexes.py
 """
@@ -18,7 +18,7 @@ WORK = Path(os.environ.get("FIELD_VIEWS_WORK", "field-views-work"))
 
 def main():
     total = 0
-    for tier in ("osm", "aires", "pyr"):
+    for tier in ("osm",):
         out = WORK / tier / "out"
         if not out.is_dir():
             continue
@@ -44,7 +44,7 @@ def main():
             print(f"  note: {abs(views - len(merged))} mismatch between views and rows",
                   file=sys.stderr)
         total += len(merged)
-    print(f"{total} index rows across all tiers")
+    print(f"{total} index rows")
     return 0
 
 
