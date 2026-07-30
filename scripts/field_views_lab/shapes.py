@@ -363,13 +363,16 @@ def _near_axis(centre, axis, off_tol=40, gap_tol=90):
 def measured_arrows(img, win, min_len_frac=0.16, exclude=None):
     """Direction arrows, each usually labelled with a length and a bearing.
 
-    Grouped by collinearity so a label drawn across the shaft does not split one arrow
-    into two, then held to a minimum length: without that floor, every fleck of ink in a
-    label became its own arrow and a field came back with eleven runs where it has two.
+    One bridged component, one arrow. There is deliberately no regrouping of separate
+    strokes here: rejoining an arrow split by its own label is what _bridge_labels does,
+    and it does it from evidence — the glyphs that caused the split — where collinear
+    regrouping only guesses. The guess was actively wrong. On 515 Lus it walked from the
+    300 m run along a dash of the power line and on to the 275 m run, returning two
+    meaningless 320 px axes in a V where the drawing has two arrows at 0° and 15°, each
+    of which the bridged components already had exactly right.
     """
-    # Raised from 0.09: at that floor the flecks of a label each became an arrow and a
-    # field came back with eleven runs where it has two. A measured run the guide bothered
-    # to draw and label spans a real part of the frame.
+    # A measured run the guide bothered to draw and label spans a real part of the frame.
+    # Below this floor every fleck of ink in a label became its own arrow.
     floor = max(min_len_frac * min(img.shape[:2]), 80)
     out = []
     for band, mask in _ink_bands(img, win).items():
@@ -377,66 +380,98 @@ def measured_arrows(img, win, min_len_frac=0.16, exclude=None):
             continue                      # APVV pointer ink, handled as its own family
         if exclude is not None:
             mask = cv2.bitwise_and(mask, cv2.bitwise_not(exclude))
-        groups = []
         # Connectivity from the bridged mask, geometry from the ink itself: the glyphs
         # only say which pieces belong to one stroke, and must not fatten or lengthen it.
         bridged = _bridge_labels(img, win, mask)
-        comps = sorted(_components(bridged, 60), key=lambda t: -t[2])
-        for i, lab, _ in comps:
+        for i, lab, _ in _components(bridged, 60):
             pts = np.column_stack(np.nonzero((lab == i) & (mask > 0)))[:, ::-1]
             pts = pts.astype(np.float32)
             if len(pts) < 60:
                 continue
             (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
+            long_, short = max(dw, dh), min(dw, dh)
+            if long_ < floor or short > ARROW_W_MAX:
+                continue
             # Thin, or fat but headed. 515 Lus draws a 59 px wide arrow over a 300 m run
             # that a width test alone hands to the danger family — that is, it stamps
             # "avoid" on the very ground the guide is pointing at.
-            if min(dw, dh) > 30 and _taper(pts) < HEAD_TAPER:
+            if short > 30 and _taper(pts) < HEAD_TAPER:
                 continue
-            placed = False
-            for gp in groups:
-                # Gap to the SEGMENT, not to its start: measuring from one endpoint made
-                # pairing depend on which end minAreaRect happened to report first, and
-                # 613 Taninges' four labelled runs came back as seven arrows.
-                if _near_axis(pts.mean(axis=0), gp["axis"]):
-                    gp["pts"] = np.vstack([gp["pts"], pts])
-                    gp["axis"] = _axis(gp["pts"])
-                    gp["longest"] = max(gp["longest"], max(dw, dh))
-                    placed = True
-                    break
-            if not placed:
-                groups.append({"pts": pts, "axis": _axis(pts),
-                               "longest": max(dw, dh)})
-        # Second pass. The first component seen fixes a group's axis, so two halves of one
-        # arrow can each start their own group and only look collinear once both axes
-        # exist — Marcoux's 250 m arrow and Taninges' four runs split exactly that way.
-        merged = True
-        while merged and len(groups) > 1:
-            merged = False
-            for i in range(len(groups)):
-                for j in range(i + 1, len(groups)):
-                    if _near_axis(groups[j]["pts"].mean(axis=0), groups[i]["axis"]) or \
-                       _near_axis(groups[i]["pts"].mean(axis=0), groups[j]["axis"]):
-                        pts = np.vstack([groups[i]["pts"], groups[j]["pts"]])
-                        groups[i] = {"pts": pts, "axis": _axis(pts),
-                                     "longest": max(groups[i]["longest"],
-                                                    groups[j]["longest"])}
-                        groups.pop(j)
-                        merged = True
-                        break
-                if merged:
-                    break
-        for gp in groups:
-            a, b = gp["axis"]
-            length = math.dist(a, b)
-            # An arrow must be anchored by a real stroke, not assembled from crumbs. The
-            # halves of a split arrow are each about half its length, while the flecks of
-            # a caption are tiny beside the span they happen to line up along — which is
-            # how a merge pass otherwise turns a line of label text into a long "run".
-            if (length >= floor and gp["longest"] >= 0.45 * length
-                    and _axis_coverage(gp["pts"], gp["axis"]) >= 0.6):
-                out.append(np.asarray(gp["axis"], np.float32))
+            axis = _pca_axis(pts)
+            if _axis_coverage(pts, axis) >= 0.6:
+                out.append(np.asarray(_point_at_head(pts, axis), np.float32))
     return out
+
+
+ARROW_W_MAX = 70
+"""No drawn arrow is this wide. The widest genuine one in the corpus is 515 Lus' 59 px
+run; the pale blobs that reach this family through the pink band are 125 px across and
+would otherwise pass on taper alone."""
+
+
+def _stroke_mask(shape, axes, width=17):
+    """The ink a set of line annotations occupies, so later families skip it.
+
+    A cable is ruled straight across the photo and crosses whatever is under it. Where it
+    crosses an arrow the two become one component, and the arrow inherits the crossing's
+    width: 515 Lus' 300 m run measured 59 px wide with a 61 px bulge at 70% of its length,
+    which is the power line, not an arrowhead — enough to tilt its axis by 15° and point it
+    backwards. Claiming the cable first leaves the arrow to be measured on its own.
+    """
+    m = np.zeros(shape, np.uint8)
+    for a, b in axes:
+        cv2.line(m, (round(float(a[0])), round(float(a[1]))),
+                 (round(float(b[0])), round(float(b[1]))), 255, width)
+    return m
+
+
+def _pca_axis(pts):
+    """The stroke's own direction, from its point cloud rather than its bounding box.
+
+    minAreaRect is fitted to the extremes, so a wide arrowhead tilts it: on 515 Lus' fat
+    300 m run it reports 344.7° where the guide drew 0.0°, a 15° error on a landing
+    direction. The principal axis is fitted to every pixel and gets both of that photo's
+    runs right (0.0° and 14.9° against a drawn 0.0° and 15.2°).
+    """
+    centre = pts.mean(axis=0)
+    centred = pts - centre
+    _, _, vt = np.linalg.svd(centred, full_matrices=False)
+    u = vt[0]
+    t = centred @ u
+    return centre + u * float(t.min()), centre + u * float(t.max())
+
+
+def _point_at_head(pts, axis):
+    """Order the axis tail->head, so the rendered arrow points where the guide pointed.
+
+    The head is the widest slice, which is the same measurement that tells an arrow from a
+    danger box. Without this the endpoint order is whatever minAreaRect happened to report
+    and half the arrows render backwards — on a landing aid, a reciprocal heading.
+    """
+    a, b = axis
+    ux, uy = b[0] - a[0], b[1] - a[1]
+    norm = math.hypot(ux, uy) or 1
+    ux, uy = ux / norm, uy / norm
+    along = (pts[:, 0] - a[0]) * ux + (pts[:, 1] - a[1]) * uy
+    perp = (pts[:, 0] - a[0]) * uy - (pts[:, 1] - a[1]) * ux
+    lo, hi = float(along.min()), float(along.max())
+    if hi - lo < 1:
+        return a, b
+    # Which END the head is nearer, not which end it sits on. The guides mark a run's
+    # extent with a dot beyond the arrowhead, so the widest slice of 515 Lus' 300 m run
+    # is the second of five, not the last — comparing the two end thirds calls that arrow
+    # backwards, and a reversed run is a reciprocal landing direction.
+    slices = 7
+    widths = []
+    for k in range(slices):
+        sel = ((along >= lo + (hi - lo) * k / slices)
+               & (along <= lo + (hi - lo) * (k + 1) / slices))
+        widths.append(float(perp[sel].max() - perp[sel].min()) if sel.sum() > 5 else 0.0)
+    if not any(widths):
+        return a, b
+    head_pos = (widths.index(max(widths)) + 0.5) / slices
+    return (a, b) if head_pos >= 0.5 else (b, a)
+
 
 
 def _on_axis(centre, axes, tol=30):
@@ -666,16 +701,23 @@ def extract(img, style=None, apvv=False):
         rings = drawn_rings(img, win)
     else:
         # Order matters, and each step is why the next one is right: an outlined danger
-        # box must be claimed before the arrow family reads its sides as a run, and the
+        # box must be claimed before the arrow family reads its sides as a run; a cable
+        # must be claimed before it can weld itself to an arrow it crosses; and the
         # arrows must exist before a filled box can be told from an arrowhead.
         outlined, box_ink = (outlined_boxes(img, win) if style == SCREENSHOT
                              else ([], None))
-        arrows = measured_arrows(img, win, exclude=box_ink)
         hazards = hazard_lines(img, win)
+        claimed = _stroke_mask(win.shape, hazards)
+        if box_ink is not None:
+            claimed = cv2.bitwise_or(claimed, box_ink)
+        arrows = measured_arrows(img, win, exclude=claimed)
         marks = point_markers(img, win)
         circles = circled_points(img, win)
         polys = outlined_polygons(img, win)
-        danger = (_dedupe_quads(outlined + danger_boxes(img, win, arrows))
+        # Suppress against the cables too, not just the arrows: a guide labels a line at
+        # its end, and 515 Lus' "Ligne BT" caption sits 27 px past the cable on its own
+        # axis, where it was becoming a red "avoid" rectangle over good ground.
+        danger = (_dedupe_quads(outlined + danger_boxes(img, win, arrows + hazards))
                   if style == SCREENSHOT else [])
     if style == FRAMED:
         danger = []
