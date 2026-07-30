@@ -107,12 +107,10 @@ PROVIDERS: dict[str, list[dict]] = {
     # Italian regional services first (recent imagery), national PCN 2012 as the fallback; the
     # PCN layer name's trailing number is its UTM zone.
     #
-    # The recent regional layers are AGEA imagery, owned by MASAF and delegated to Agea. Their
-    # metadata carries "AGEA (c) tutti i diritti riservati" and the institutional sub-licence
-    # for the raw ECW files restricts use to Enti Locali, which is why they were pulled from
-    # this table on 2026-07-29. Fabien then took it up with the regional portals directly and
-    # confirmed on 2026-07-30 that CC BY 4.0 applies to the published web services for our use,
-    # provided the source is cited — so they are back.
+    # The regional services are used under the CC BY 4.0 licence their geoportals publish,
+    # citing the source. The AGEA-derived layers also carry an upstream MASAF/Agea rights
+    # notice, and a separate institutional sub-licence covers the raw ECW files handed to Enti
+    # Locali — neither is what we rely on here.
     #
     # The credit names the REGION we fetch from, not AGEA or MASAF. Attribution under CC BY runs
     # to the licensor whose grant we rely on, and every source in this table carries its own

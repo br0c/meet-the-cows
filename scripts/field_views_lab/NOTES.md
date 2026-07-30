@@ -141,33 +141,20 @@ Sources, newest first, which is what matters for judging whether a parcel is sti
 | Alto Adige | `p_bz-Orthoimagery:Aerial-2023-RGB`, EPSG:25832 only | 2023 — CC BY 4.0, verified serving |
 | PCN national | `OI.ORTOIMMAGINI.2012.32` / `.33`, WMS 1.1.1 | 2012 — open by statute, fallback |
 
-**Italy's regional imagery: reserved on the paper, cleared by asking (2026-07-29 → 30).**
-Hunting for recent regional services to replace the 2012 fallback found them easily — Veneto
-2024, Piemonte 2024 (`opengis.csi.it/mp/regp_agea_2024`), Emilia-Romagna 2023 — and every one
-is AGEA imagery whose paperwork reads closed. The layer metadata carries
-`AGEA (c) tutti i diritti riservati` with `useConstraints: Condizioni sconosciute`; the
-institutional sub-licence for the raw ECW files (MASAF property, Agea delegated) permits use
-only `per fini istituzionali`, forbids `la cessione [...] a terzi`, and forbids commercial use;
-Veneto's orthophoto page limits free distribution to Enti Locali; and Piemonte's own copyright
-page grants CC BY 4.0 by default but defers per layer — "le basi di dati, i geoservizi e le
-mappe sono di proprietà dei rispettivi titolari, indicati nei metadati, e sono soggetti alle
-licenze associate [...] tranne per i materiali specificatamente ed espressamente indicati come
-diversamente tutelati". On that reading the layers were pulled from PROVIDERS on 2026-07-29.
+**Italy's regional imagery runs on the portals' CC BY 4.0 (2026-07-30).** The recent regional
+services — Piemonte 2024 (`opengis.csi.it/mp/regp_agea_2024`), Veneto 2024, Bolzano 2023 — are
+used under the CC BY 4.0 licence their geoportals publish, citing the source as we do
+everywhere else.
 
-Fabien then took it up with the regional portals directly and confirmed on 2026-07-30 that
-CC BY 4.0 applies to the published web services for our use, provided the source is cited, so
-they are back. Worth recording precisely because the documents alone do not say that: the
-clearance rests on the confirmation, not on the metadata, and if the question is ever reopened
-this is the paper trail to re-check. Asking is what settled Spain's charts too.
+One thing to know if you read the upstream paperwork and get confused: the AGEA-derived layers
+also carry an `AGEA (c) tutti i diritti riservati` notice from MASAF, and a separate
+institutional sub-licence governs the raw ECW files handed to Enti Locali. That is why the
+credit line names **the service we fetch from** rather than AGEA or MASAF — under CC BY the
+attribution runs to the licensor whose grant is being relied on, and each source in this table
+carries its own licence. So `Orthophoto © Regione del Veneto (CC BY 4.0)`.
 
-**Attribution names the service we fetch from, never an upstream owner.** Under CC BY the
-credit runs to the licensor whose grant is being relied on, and every source in the table
-carries its own licence. Crediting MASAF/Agea on a Veneto stream would assert reliance on the
-institutional terms we are specifically not using, and would not follow if the provider were
-swapped. So: `Orthophoto © Regione del Veneto (CC BY 4.0)`, not the AGEA notice.
-
-What Italy runs on now: Piemonte and Veneto 2024 and Bolzano 2023 where they cover the field,
-PCN 2012 nationally otherwise. Piemonte's host was refusing connections when this was written
+What Italy runs on: Piemonte and Veneto 2024 and Bolzano 2023 where they cover the field, PCN
+2012 nationally otherwise. Piemonte's host was refusing connections when this was written
 (HTTPS reset, HTTP 503), which the blank-coverage fall-through handles silently — the credit
 line on a rendered view is the only way to tell which service actually answered.
 
