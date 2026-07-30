@@ -323,7 +323,7 @@ def _axis_coverage(pts, axis, bins=10):
     return len(np.unique(idx)) / bins
 
 
-def _bridge_labels(img, win, mask, reach=31):
+def _bridge_labels(img, win, mask, reach=31, glyphs="both"):
     """Reconnect a stroke that its own label is drawn across.
 
     The guides letter each run "330 m / 19.0°" in white with a dark outline, straight over
@@ -335,10 +335,17 @@ def _bridge_labels(img, win, mask, reach=31):
 
     Only glyph pixels close to existing ink qualify, so a caption elsewhere in the frame
     never grows a stroke of its own.
+
+    `glyphs` says which lettering breaks THIS mask. Ink is lettered in white with a dark
+    outline, so "both" is right for a colour band. A white bar is lettered in dark text and
+    must use "dark": filling pale pixels beside a pale mask does not bridge a break, it
+    welds the bar to the next road along.
     """
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    glyph = ((((hsv[:, :, 1] < 70) & (hsv[:, :, 2] > 190))
-              | (hsv[:, :, 2] < 80)).astype(np.uint8) * 255) & win
+    dark = hsv[:, :, 2] < 80
+    pale = (hsv[:, :, 1] < 70) & (hsv[:, :, 2] > 190)
+    sel = dark if glyphs == "dark" else (pale if glyphs == "pale" else (pale | dark))
+    glyph = (sel.astype(np.uint8) * 255) & win
     glyph = cv2.dilate(glyph, np.ones((5, 5), np.uint8))
     near = cv2.dilate(mask, np.ones((reach, reach), np.uint8))
     joined = cv2.bitwise_or(mask, cv2.bitwise_and(glyph, near))

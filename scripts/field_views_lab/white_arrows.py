@@ -52,6 +52,11 @@ The label's bearing also resolves the direction, which the locator cannot: a bar
 one at 253° are the same pixels.
 
 The locator on its own is still not a detector, and is left exported only for diagnosis.
+
+Because the gate does the deciding, the locator is free to be generous, and is: it runs
+two opening lengths and pools the candidates, since the guides rule white runs at very
+different weights (Lus a 20 px bar, 229 La Palud a 3 px line) and no single length finds
+both. On a photo with no white lettering that pools 4-7 pale bars and ships none of them.
 """
 import math
 import sys
@@ -74,7 +79,19 @@ def line_kernel(length, ang_deg):
     return k
 
 
-def white_bars(img, seg=41, v_min=235, s_max=45, min_len=90, max_width=40):
+SCALES = ((41, 90), (31, 70))
+"""Opening lengths to try, as (segment, minimum bar length).
+
+The guides draw white runs at two very different weights — 515 Lus rules a 20 px bar,
+229 La Palud a 3 px line — and no single opening length finds both: 41 px measures Lus'
+exactly and misses La Palud, 31 px finds La Palud and blurs Lus'. Both are run and the
+candidates pooled, which is safe here in a way it would not be in a detector: nothing
+ships on being a candidate, and the label gate below picks whichever one matches the
+lettered bearing most closely.
+"""
+
+
+def white_bars(img, scales=SCALES, v_min=235, s_max=45, max_width=40):
     """Straight pale bars, as (axis, length_px, bearing_mod180).
 
     The locator only. It does not claim these are arrows — see FINDINGS.
@@ -83,24 +100,43 @@ def white_bars(img, seg=41, v_min=235, s_max=45, min_len=90, max_width=40):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     pale = (((hsv[:, :, 1] < s_max) & (hsv[:, :, 2] > v_min)).astype(np.uint8) * 255) & win
     pale = cv2.morphologyEx(pale, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    keep = np.zeros_like(pale)
-    for ang in range(0, 180, 10):
-        keep = cv2.max(keep, cv2.morphologyEx(pale, cv2.MORPH_OPEN, line_kernel(seg, ang)))
-    keep = cv2.morphologyEx(keep, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
 
     out = []
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(keep)
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] < 150:
-            continue
-        pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
-        (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
-        if max(dw, dh) < min_len or min(dw, dh) > max_width:
-            continue
-        a, b = sh._pca_axis(pts)
-        bearing = math.degrees(math.atan2(b[0] - a[0], -(b[1] - a[1]))) % 180
-        out.append(((a, b), float(max(dw, dh)), round(bearing, 1)))
-    return out
+    for seg, min_len in scales:
+        keep = np.zeros_like(pale)
+        for ang in range(0, 180, 10):
+            keep = cv2.max(keep,
+                           cv2.morphologyEx(pale, cv2.MORPH_OPEN, line_kernel(seg, ang)))
+        keep = cv2.morphologyEx(keep, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(keep)
+        for i in range(1, n):
+            if stats[i, cv2.CC_STAT_AREA] < 150:
+                continue
+            pts = np.column_stack(np.nonzero(lab == i))[:, ::-1].astype(np.float32)
+            (_, _), (dw, dh), _ = cv2.minAreaRect(pts)
+            if max(dw, dh) < min_len or min(dw, dh) > max_width:
+                continue
+            a, b = sh._pca_axis(pts)
+            bearing = math.degrees(math.atan2(b[0] - a[0], -(b[1] - a[1]))) % 180
+            out.append(((a, b), float(max(dw, dh)), round(bearing, 1)))
+    return _dedupe_bars(out)
+
+
+def _dedupe_bars(bars, centre_tol=40.0, angle_tol=8.0):
+    """One bar per drawn line: the scales mostly rediscover each other's findings."""
+    kept = []
+    for axis, length, bearing in sorted(bars, key=lambda t: -t[1]):
+        centre = ((axis[0][0] + axis[1][0]) / 2, (axis[0][1] + axis[1][1]) / 2)
+        dup = False
+        for kaxis, _klen, kbearing in kept:
+            kc = ((kaxis[0][0] + kaxis[1][0]) / 2, (kaxis[0][1] + kaxis[1][1]) / 2)
+            if (math.dist(centre, kc) <= centre_tol
+                    and abs((bearing - kbearing + 90) % 180 - 90) <= angle_tol):
+                dup = True
+                break
+        if not dup:
+            kept.append((axis, length, bearing))
+    return kept
 
 
 def arrows_from_labels(img, labels, tol_deg=12.0):

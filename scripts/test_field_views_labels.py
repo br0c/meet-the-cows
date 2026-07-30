@@ -135,6 +135,29 @@ class TestWhiteArrows(unittest.TestCase):
                                180.0, delta=6.0)
 
 
+@unittest.skipUnless((PHOTOS / "229_la_ palud_2.jpg").exists(), "corpus not present")
+class TestThinWhiteArrow(unittest.TestCase):
+    """229 La Palud rules a 3 px line where 515 Lus rules a 20 px bar.
+
+    One opening length cannot find both, which is why the locator runs two and pools the
+    candidates. Reading the label is what makes pooling safe: nothing ships for being a
+    candidate.
+    """
+
+    def setUp(self):
+        self.img = cv2.imread(str(PHOTOS / "229_la_ palud_2.jpg"))
+
+    def test_the_thin_run_is_found_and_matched(self):
+        got = wa.arrows_from_labels(
+            self.img, [{"length_m": 240, "bearing_deg": 100.0, "arrow": "white"}])
+        self.assertEqual(len(got), 1)
+        self.assertAlmostEqual(bearing(got[0]), 100.0, delta=5.0)
+
+    def test_its_many_roads_ship_nothing_unlettered(self):
+        self.assertGreaterEqual(len(wa.white_bars(self.img)), 2)
+        self.assertEqual(wa.arrows_from_labels(self.img, []), [])
+
+
 class TestCacheContract(unittest.TestCase):
     def test_missing_cache_returns_none_not_empty(self):
         """None means 'never read'; [] would mean 'read, and there are no runs'."""
