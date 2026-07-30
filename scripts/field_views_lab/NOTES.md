@@ -302,6 +302,12 @@ imagery campaigns update.
 - Vision API module in `field_views.py` (client behind ANTHROPIC_API_KEY,
   consensus/union math from `consensus_run.py`, prompts from PROMPTS.md) — for
   fields with NO Guide photo only; photo fields use the deterministic transfer.
+  Note a first, much narrower model call already exists and is separate from this:
+  `read_labels.py` transcribes the length/bearing a guide letters beside each run,
+  because that text is the only thing distinguishing a drawn white arrow from a
+  white road (ten geometric tests measured and failed — see `white_arrows.py`).
+  It reads text only, never geometry; answers are cached per photo in git so the
+  renderers stay deterministic and re-runs cost nothing.
 - Productize the transfer: `field_views.py transfer` subcommand from
   `transfer_cv.py`/`transfer_render.py`, per-photo-style mask presets, scale the
   colour-mask extraction across the full Guide inventory, and fall back to the

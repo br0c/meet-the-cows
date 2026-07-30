@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""White measured arrows: a working locator, and a detector that does not exist.
+"""White measured arrows: a locator that works, plus the labels that make it safe to use.
 
-DELIBERATELY NOT WIRED IN. Read FINDINGS before using any of this.
+The locator alone must NOT be used to emit arrows — read FINDINGS. Use
+`arrows_from_labels`, which only accepts a bar the guide lettered.
 
 Some guides draw a measured run in white with a dark outline instead of in ink —
 515 Lus draws two of its four that way (240 m/73.0° and 300 m/68.0°). The coloured
@@ -42,8 +43,15 @@ already accurate to a degree, and the family is done: the text says which bars a
 and what they measure, and the geometry says where they are. That is also the one place a
 model earns its keep in this pipeline, since nothing about it is recoverable from pixels.
 
-Until then the family stays missing rather than guessed. A false run points a pilot at
-ground nobody surveyed, which is worse than a view with two runs instead of four.
+RESOLUTION
+----------
+That is what `arrows_from_labels` does, with `read_labels.py` supplying the text. A bar is
+emitted only when a label vouches for it, so a road — long, straight, bright and unlettered
+— is rejected by construction rather than by a threshold that a different photo will break.
+The label's bearing also resolves the direction, which the locator cannot: a bar at 73° and
+one at 253° are the same pixels.
+
+The locator on its own is still not a detector, and is left exported only for diagnosis.
 """
 import math
 import sys
@@ -92,6 +100,51 @@ def white_bars(img, seg=41, v_min=235, s_max=45, min_len=90, max_width=40):
         a, b = sh._pca_axis(pts)
         bearing = math.degrees(math.atan2(b[0] - a[0], -(b[1] - a[1]))) % 180
         out.append(((a, b), float(max(dw, dh)), round(bearing, 1)))
+    return out
+
+
+def arrows_from_labels(img, labels, tol_deg=12.0):
+    """White runs the guide LETTERED, as oriented axes.
+
+    This is the whole point of reading the labels. A pale bar is accepted only when a label
+    vouches for it, which supplies exactly the decision that ten geometric tests could not
+    (see FINDINGS): a road is long, straight and bright, but nobody wrote "240 m / 73.0°"
+    beside it, so it is never a run here.
+
+    The label also settles the direction. The locator measures an undirected line — a bar at
+    73° and one at 253° are the same pixels — while the label states 73.0°, so the arrow
+    points where the guide pointed instead of being a coin flip.
+
+    Unmatched on either side is dropped, never bridged: a label with no bar means the run is
+    drawn somewhere this locator did not find, and a bar with no label is a road.
+    """
+    bars = white_bars(img)
+    wanted = [d for d in (labels or []) if d.get("arrow") == "white"]
+
+    # Best-first, not label-first. Two runs a few degrees apart are each within tolerance
+    # of the other's label, so assigning in label order can hand a label the wrong bar
+    # while the right one is still free; taking the closest pair each time cannot.
+    pairs = []
+    for li, label in enumerate(wanted):
+        target = float(label["bearing_deg"]) % 180
+        for bi, (_axis, _length, bearing) in enumerate(bars):
+            err = abs((bearing - target + 90) % 180 - 90)
+            if err <= tol_deg:
+                pairs.append((err, li, bi))
+    pairs.sort()
+
+    used_bars, used_labels, out = set(), set(), []
+    for _err, li, bi in pairs:
+        if li in used_labels or bi in used_bars:
+            continue
+        used_labels.add(li)
+        used_bars.add(bi)
+        (a, b), _length, _bearing = bars[bi]
+        # Point it the way the lettering says, not the way the pixels happened to order.
+        drawn = float(wanted[li]["bearing_deg"])
+        ab = math.degrees(math.atan2(b[0] - a[0], -(b[1] - a[1]))) % 360
+        axis = (a, b) if abs((ab - drawn + 180) % 360 - 180) <= 90 else (b, a)
+        out.append(np.asarray(axis, np.float32))
     return out
 
 

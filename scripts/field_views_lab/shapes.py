@@ -681,11 +681,16 @@ def drawn_rings(img, win, min_area=1500):
 
 
 # ------------------------------------------------------------------------------ all
-def extract(img, style=None, apvv=False):
+def extract(img, style=None, apvv=False, labels=None):
     """Every drawn mark on the photo, by family, gated to the styles that can carry it.
 
     Returns (shapes, masks): shapes keyed by family, masks to keep out of registration
     so the drawing never registers itself.
+
+    `labels` is the run lettering already read off this photo (read_labels.py), passed in
+    as plain data. It unlocks the white-arrow family, which pixels alone cannot judge. This
+    module never calls a model: the reading is archived per photo and committed, so the
+    extraction stays deterministic and a re-run costs nothing.
     """
     if style is None:
         style = detect_style(img, apvv)
@@ -711,6 +716,9 @@ def extract(img, style=None, apvv=False):
         if box_ink is not None:
             claimed = cv2.bitwise_or(claimed, box_ink)
         arrows = measured_arrows(img, win, exclude=claimed)
+        if labels and style == SCREENSHOT:
+            import white_arrows                       # local: keeps the import optional
+            arrows = arrows + white_arrows.arrows_from_labels(img, labels)
         marks = point_markers(img, win)
         circles = circled_points(img, win)
         polys = outlined_polygons(img, win)

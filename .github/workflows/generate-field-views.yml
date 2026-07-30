@@ -43,6 +43,10 @@ on:
         description: "Upload renders to R2 (off = artifacts only)"
         type: boolean
         default: true
+      label_limit:
+        description: "Cap photos sent to the label reader (0 = every uncached one)"
+        type: string
+        default: "0"
 
 concurrency:
   group: field-views
@@ -52,6 +56,57 @@ env:
   PY_DEPS: opencv-python-headless numpy Pillow boto3
 
 jobs:
+  # ------------------------------------------------------------------ read labels
+  # The guides letter each measured run with its own length and bearing, and that text is
+  # the only thing that tells a drawn white arrow from a white road — ten geometric tests
+  # were measured and every one fails (scripts/field_views_lab/white_arrows.py). Reading it
+  # is the one model call in this pipeline, and it reads TEXT only; all geometry stays
+  # deterministic CV.
+  #
+  # Answers are cached per photo in git, so this is normally a no-op that confirms coverage
+  # and costs nothing. It is a separate job that is allowed to fail: with no new labels the
+  # renderers simply keep the runs they can see in ink, which is exactly today's output.
+  labels:
+    if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'aires' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install dependencies
+        run: python -m pip install --quiet --upgrade pip $PY_DEPS
+
+      - name: Verify the reader without spending anything
+        run: python scripts/test_field_views_labels.py
+
+      - name: Report cache coverage
+        run: python scripts/field_views_lab/read_labels.py --check
+
+      - name: Read any photo not yet cached
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY not set; white arrows stay missing"
+            exit 0
+          fi
+          python scripts/field_views_lab/read_labels.py --limit "${{ github.event.inputs.label_limit }}"
+
+      # Uploaded rather than committed: a model's reading is reviewed before it becomes the
+      # repo's answer, and the render below runs on whatever is already committed.
+      - name: Upload label readings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: field-views-labels
+          retention-days: 30
+          if-no-files-found: warn
+          path: data/sources/field-views/labels/**
+
   # ---------------------------------------------------------------------- prepare
   prepare:
     runs-on: ubuntu-latest

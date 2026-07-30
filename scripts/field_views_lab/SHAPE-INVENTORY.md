@@ -42,7 +42,7 @@ orange outlined polygons, thick red arrows and yellow hazard annotations.
 | 14 | **dashed hazard line** | Aires screenshot | a power line ruled as separate strokes, labelled `Ligne El` (515 Lus) | working — collinear dashes are chained and measured as one line |
 | 15 | **outlined danger box** | Aires screenshot | red rectangle drawn hollow rather than filled (320 Bayons) | working — traced as the hole it encloses |
 | 16 | **fat arrow** | Aires screenshot | a measured arrow 59 px wide, as wide as some danger boxes (515 Lus) | working — separated from a box by its head, not its width |
-| 17 | **white arrow** | Aires screenshot | a measured run drawn in white rather than ink (515 Lus draws two) | **missing** — see open questions |
+| 17 | **white arrow** | Aires screenshot | a measured run drawn in white rather than ink (515 Lus draws two) | working — located by directional opening, accepted only where its label vouches for it |
 | 18 | **caption banner** | Aires screenshot | red lettering on a white band across the top (318 Montgardin) | must NOT transfer — the band is measured and excluded |
 | 19 | **cartographic screenshot** | Aires | an OSM/topo map, not imagery at all (`LIMW_Aoste_zpa`) | not a field photo; airfields take the OSM tier instead |
 
@@ -64,7 +64,7 @@ Measured over all 162 photos, before and after the 2026-07-30 pass:
 
 | family | before | after | note |
 |---|---|---|---|
-| arrows | 149 | 60 | no photo now reports more than the 4 runs the two 4-run fields carry |
+| arrows | 149 | 48 | no photo now reports more than the 4 runs the two 4-run fields carry |
 | danger boxes | 55 | 12 | most of the 55 were arrowheads — invented hazards on the landing ground |
 | circled points | 20 | 17 | the rest were caption lettering |
 | hazard lines | 9 | 11 | dashed cables now chained |
@@ -74,15 +74,16 @@ in it applies to that style.
 
 ## Open questions
 
-- **White arrows (17): measured, and not solvable this way.** Locating them is done — a
-  directional opening finds both of 515 Lus' white runs and measures them at 68.7° and
-  73.3° against a lettered 68.0° and 73.0°. Deciding whether a located bar is a drawn arrow
-  or a road is what fails, and structurally: the ink families work because ink is a colour
-  the ground is not, and white has no such argument — it is the colour of roads, bare
-  limestone, rooftops and glare. Ten separations were measured and every one is either
-  inverted or overlapping; each is recorded with its killing number in `white_arrows.py`,
-  which also carries the working locator. The family stays missing rather than guessed,
-  because a false run points a pilot at ground nobody surveyed.
+- **White arrows (17): solved by reading the label, not by a better threshold.** Locating
+  a pale bar was never the problem — a directional opening finds both of 515 Lus' white
+  runs at 68.7° and 73.3° against a lettered 68.0° and 73.0°. Deciding a bar is a run is
+  what fails geometrically, and structurally so: the ink families work because ink is a
+  colour the ground is not, and white is the colour of roads, limestone, rooftops and
+  glare. Ten separations were measured and every one is inverted or overlapping; each is
+  recorded with its killing number in `white_arrows.py`. The fix is that a bar now ships
+  only when a label vouches for it, so an unlettered road is rejected by construction
+  rather than by a threshold the next photo breaks. The label also settles direction, which
+  the locator cannot: a bar at 73° and one at 253° are the same pixels.
 - **Centrelines (13) fire on nothing.** The family is implemented and returns zero across
   the corpus. Either 211 Artignosc's yellow lines fail the thinness test, or the style gate
   puts them on the wrong side. Worth one measurement before either changing or removing it.
@@ -122,7 +123,7 @@ Highest value first, judged by how much a pilot loses if it stays missing:
 4. ~~non-aerial photo detection~~ — done, and it found a second one
 5. ~~arrow fragmentation where a label crosses the shaft~~ — done: the glyphs are no
    longer treated as breaks, so the stroke survives its own label
-6. white arrows (17) — coverage, and the last family a pilot actually loses
+6. ~~white arrows (17)~~ — done, by reading the label rather than by a better threshold
 7. thin centreline (13) — coverage, pending the measurement above
 
 Each one gets a golden-set entry as it lands, so the next pass can be measured rather

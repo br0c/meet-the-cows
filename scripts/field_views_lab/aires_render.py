@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import field_views as fv  # noqa: E402
 import transfer_cv as tc  # noqa: E402
+import read_labels  # noqa: E402
 import shapes as sh  # noqa: E402
 from aires_sweep import PHOTOS  # noqa: E402
 from transfer_render import draw_arrow  # noqa: E402
@@ -42,7 +43,7 @@ DATUM = (487.5, 650.0)
 RED = (226, 40, 25)
 
 
-def annotations(img):
+def annotations(img, photo_name=None):
     """Every drawn element in one photo, in this renderer's vocabulary.
 
     A thin adapter over shapes.py, which is the single implementation for both packs —
@@ -50,7 +51,8 @@ def annotations(img):
     only the corpus it was found on. The extractors that used to live here were a second
     copy that had already drifted.
     """
-    drawn, masks, style = sh.extract(img)
+    drawn, masks, style = sh.extract(img, labels=read_labels.load(photo_name)
+                                     if photo_name else None)
     return dict(quads=drawn["strips"] + drawn["polygons"],
                 rings=drawn["rings"],
                 danger=drawn["danger"],
@@ -86,7 +88,7 @@ def transfer_field(f, photos):
             continue
         if not sh.is_aerial(img):
             continue                       # a ground-level photo has nothing to register
-        ann, masks = annotations(img)
+        ann, masks = annotations(img, name)
         framed = ann["style"] == sh.FRAMED
         if not any(ann[k] for k in ("quads", "rings", "danger", "arrows",
                                     "hazards", "markers", "circles")):
