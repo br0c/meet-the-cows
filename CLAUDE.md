@@ -50,6 +50,30 @@ on the first, and the "new version is ready" banner offers it without a relaunch
 **Bump `APP_VERSION` for anything that changes what a pilot's cached app does** — app code,
 `index.html`, `styles.css`, and the deploy headers alike. Scripts, tests and CI are exempt.
 
+## The website is part of the change
+
+`site/public/index.html` and `site/public/fr/index.html` describe what the app does and where
+its data comes from. They do not update themselves, and nothing in CI notices when they go
+stale — Spanish charts shipped in pack v21 and the site still said the charts came from four
+countries, while the coverage line had been missing Spain since v19.
+
+**When a change alters what the site claims, edit both language versions in the same branch as
+the change.** The usual triggers:
+
+- a new country, region or pack
+- a new data source, or one credited differently
+- a feature a pilot would look for on the landing page before installing
+- anything that makes an existing sentence untrue
+
+Three places usually move together, and it reads badly when only one does: the feature card,
+the `Covering …` / `Couvre …` line, and the source credit under "Where the data comes from".
+
+**Fabien checks the English and French wording every time** — so propose the wording and say
+what changed, rather than treating it as landed. The French is not a translation of the English
+by default: `scripts/translate_site.py` exists, and gliding French has its own vocabulary
+(a glide ratio is a *finesse*, an outlanding is a *vache*), so a fluent-sounding sentence can
+still be one no vélivole would write.
+
 ## Release notes
 
 `release-notes.json` is read by pilots in the app, not by maintainers. Every release must have an
