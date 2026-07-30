@@ -149,11 +149,24 @@ def arrow_axes(mask, min_area=60, line_tol=40, gap_tol=90, band="red"):
     return [g["axis"] for g in groups]
 
 
+# Saturation floor for a painted strip. Measured on the corpus: St Blaise's drawn fill
+# sits at S=148, while Megevette's sunlit meadows — eleven of which were being traced as
+# strips — sit at S=86. The old floor of 80 could not tell ink from grass. This costs the
+# faintest genuine washes (Megevette's own strip measures S=98, inseparable from the
+# meadows around it by any threshold), which is the right trade: an unmarked overview is
+# honest, eleven invented strips are not.
+FILL_S_MIN = 120
+# The Guide paints one strip, occasionally two. A photo yielding a crowd of them is
+# showing us terrain, so the whole set is discarded rather than a wrong one picked.
+MAX_FILL_QUADS = 3
+
+
 def fill_quads(img, win, min_area=350):
-    """Outer boundary of each solid colour-filled strip the Guide painted."""
+    """Outer boundary of each painted strip the Guide drew, or nothing when the mask is
+    plainly picking up ground rather than ink."""
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-    fill = (((h > 20) & (h < 70) & (s > 80) & (v > 110)).astype(np.uint8) * 255) & win
+    fill = (((h > 20) & (h < 70) & (s > FILL_S_MIN) & (v > 110)).astype(np.uint8) * 255) & win
     fill = cv2.morphologyEx(fill, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     cnts, _ = cv2.findContours(fill, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     out = []
@@ -162,6 +175,8 @@ def fill_quads(img, win, min_area=350):
             continue
         poly = cv2.approxPolyDP(c, 0.02 * cv2.arcLength(c, True), True)
         out.append(poly.reshape(-1, 2).astype(np.float32))
+    if len(out) > MAX_FILL_QUADS:
+        return [], np.zeros_like(fill)
     return out, fill
 
 
@@ -390,13 +405,14 @@ def main():
                 index[fid] = {"name": f["name"], "mode": "annotated",
                               "shapes": {k: len(v) for k, v in geom.items()},
                               "run_lengths_m": [round(math.dist(*r)) for r in geom["runs"]],
-                              # Largest ground dimension of any drawn shape: QA uses it to
-                              # spot a "drawing" that is really terrain, which no
-                              # missing-annotation check can see.
-                              "max_shape_m": round(max(
+                              # Largest drawn STRIP, in metres. QA uses it to spot terrain
+                              # that passed for an annotation. Rings are excluded on
+                              # purpose: one encircles the whole landable area and is
+                              # meant to dwarf the usable strip.
+                              "max_strip_m": round(max(
                                   [0] + [max(max(p[0] for p in s) - min(p[0] for p in s),
                                              max(p[1] for p in s) - min(p[1] for p in s))
-                                         for k in ("quads", "rings", "danger")
+                                         for k in ("quads", "danger")
                                          for s in geom[k]])),
                               "registration": regs, "file": path.name}
                 print(f"{fid} {f['name']}: annotated "

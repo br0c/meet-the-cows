@@ -111,10 +111,13 @@ def check_aires(index, inventory, findings):
         # terrain that passed for an annotation — a hedge loop read as a ring, a red roof
         # read as a strip. The missing-annotation checks are blind to this: the field
         # looks annotated, just wrongly, which is worse than looking unmarked.
-        biggest = row.get("max_shape_m") or 0
-        if stated and biggest and biggest > 3 * float(stated):
+        # Only STRIPS are suspicious when oversized. A drawn ring encircles the whole
+        # landable area, so Banon's ~600 m circle around a 300 m field is exactly right
+        # and a flat multiple would flag it for being correct.
+        biggest = row.get("max_strip_m") or 0
+        if stated and biggest and biggest > 2 * float(stated):
             findings.append((fid, "oversized", row.get("name", ""),
-                             f"largest drawn shape spans {biggest} m against a stated "
+                             f"drawn strip spans {biggest} m against a stated "
                              f"{float(stated):.0f} m — probably terrain, not a drawing"))
         runs = row.get("run_lengths_m") or []
         if stated and runs and max(runs) < 0.55 * float(stated):
