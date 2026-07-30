@@ -216,5 +216,53 @@ class TestOsmPreference(unittest.TestCase):
         self.assertFalse(fv.prefers_osm_view({"code": "LIXX", "syntheticCode": True}))
 
 
+class TestRunwayChoice(unittest.TestCase):
+    """Which runway gets drawn, from the real candidates at LSGS Sion.
+
+    OSM maps three things there within 70 m of the recorded coordinate: a 98 m displaced
+    threshold, the 1871 m asphalt runway aeroplanes use, and the 560 m grass strip the
+    gliders use. The pack records the field as 600 m. Picking the nearest drew the
+    threshold marking — a small box on the grass beside the runway.
+    """
+
+    THRESHOLD = {"dist": 23.1, "len": 98.5, "surface": "grass"}
+    ASPHALT = {"dist": 27.3, "len": 1871.4, "surface": "asphalt"}
+    GRASS = {"dist": 69.9, "len": 559.6, "surface": "grass"}
+
+    def test_threshold_markings_are_not_runways(self):
+        way = {"id": 1, "pts": [(46.22, 7.32), (46.221, 7.331)],
+               "tags": {"aeroway": "runway", "runway": "displaced_threshold"}}
+        self.assertIsNone(fv.runway_geometry({"lat": 46.22, "lon": 7.3289}, way))
+
+    def test_ordinary_runways_still_parse(self):
+        way = {"id": 2, "pts": [(46.22, 7.32), (46.221, 7.331)],
+               "tags": {"aeroway": "runway", "surface": "grass"}}
+        g = fv.runway_geometry({"lat": 46.22, "lon": 7.3289}, way)
+        self.assertIsNotNone(g)
+        self.assertGreater(g["len"], 0)
+
+    def test_stated_length_picks_the_glider_strip(self):
+        got = fv.pick_runway([self.ASPHALT, self.GRASS], stated_m=600.0)
+        self.assertEqual(got["surface"], "grass")
+
+    def test_without_a_stated_length_the_nearest_wins(self):
+        got = fv.pick_runway([self.ASPHALT, self.GRASS], stated_m=None)
+        self.assertEqual(got["surface"], "asphalt")
+
+    def test_a_roughly_right_stated_length_does_not_move_a_good_match(self):
+        # 1800 m stated against the 1871 m asphalt: the nearest is also the best fit.
+        got = fv.pick_runway([self.ASPHALT, self.GRASS], stated_m=1800.0)
+        self.assertEqual(got["surface"], "asphalt")
+
+    def test_a_vague_stated_length_leaves_the_nearest_alone(self):
+        # 900 m fits neither well; the rival must be markedly better, and it is not.
+        got = fv.pick_runway([self.ASPHALT, self.GRASS], stated_m=900.0)
+        self.assertEqual(got["surface"], "asphalt")
+
+    def test_single_candidate_and_empty(self):
+        self.assertEqual(fv.pick_runway([self.GRASS], stated_m=600.0), self.GRASS)
+        self.assertIsNone(fv.pick_runway([], stated_m=600.0))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

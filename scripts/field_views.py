@@ -324,8 +324,20 @@ def seg_dist(p, a, b):
     return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
+# `aeroway=runway` also carries sub-features that are markings ON a runway rather than a
+# runway: a displaced threshold is the painted/mown start line, mapped as its own short way.
+# LSGS Sion has one 98 m long lying 23 m from the recorded coordinate, nearer than either
+# real strip, and drawing it put a small box on the grass beside the runway. Whether a way
+# is a runway or a mark on one is a tagging question, not a length question, so it is
+# settled here rather than by a threshold.
+NOT_A_RUNWAY = {"displaced_threshold", "threshold", "touchdown_zone", "aiming_point",
+                "centerline", "edge", "designator"}
+
+
 def runway_geometry(field, way):
     """Distance from the field to the runway, plus the runway's axis geometry."""
+    if (way.get("tags") or {}).get("runway") in NOT_A_RUNWAY:
+        return None
     pts = [local_en(field["lat"], field["lon"], la, lo) for la, lo in way["pts"]]
     if len(pts) < 2:
         return None
@@ -351,6 +363,38 @@ def runway_geometry(field, way):
         width_m=width, surface=tags.get("surface"), ref=tags.get("ref"))
 
 
+def pick_runway(cands, stated_m=None):
+    """Which runway to draw for a field, from the candidates inside the search radius.
+
+    Nearest, unless the field states a length and a candidate matches it markedly better.
+
+    Distance alone cannot tell a gliding strip from the aerodrome it shares a site with.
+    LSGS Sion maps a 1871 m asphalt runway 27 m from the recorded coordinate and a 560 m
+    grass one 70 m away; the asphalt is for aeroplanes, the grass is the glider strip, and
+    this pack is for glider pilots — the field is recorded as 600 m, which is the grass
+    one. Taking the nearest draws the wrong strip and nothing about the render looks wrong.
+
+    The pack's figure is used only to CHOOSE between candidates, never as geometry: it
+    settles which runway is meant, and OSM still supplies where it is and which way it
+    points. A stated length has to be about twice as close a fit before it overrides
+    distance, so an approximate figure does not start moving good matches around.
+    """
+    if not cands:
+        return None
+    nearest = min(cands, key=lambda g: g["dist"])
+    if not stated_m or len(cands) == 1:
+        return nearest
+
+    def fit(g):
+        """Relative disagreement with the stated length; 0 is exact."""
+        return abs(math.log((g["len"] or 1) / stated_m))
+
+    best_fit = min(cands, key=fit)
+    if best_fit is nearest:
+        return nearest
+    return best_fit if fit(best_fit) * 2 < fit(nearest) else nearest
+
+
 def cmd_match(args):
     fields = load_fields(args.fields)
     ways = json.loads(Path(args.runways).read_text())
@@ -369,11 +413,9 @@ def cmd_match(args):
             for dlo in (-0.1, 0, 0.1, -0.2, 0.2):
                 near.extend(cells.get((round(base[0] + dla, 1),
                                        round(base[1] + dlo, 1)), []))
-        best = None
-        for w in near:
-            g = runway_geometry(f, w)
-            if g and g["dist"] <= args.radius and (best is None or g["dist"] < best["dist"]):
-                best = g
+        cands = [g for g in (runway_geometry(f, w) for w in near)
+                 if g and g["dist"] <= args.radius]
+        best = pick_runway(cands, f.get("lengthM"))
         entry = dict(id=f["id"], name=f["name"], kind=f["kind"], lat=f["lat"],
                      lon=f["lon"], country=f.get("country"), media=f["media"],
                      osm=best)
