@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.11-beta",
+    "date": "2026-07-30",
+    "en": [
+      "Each field now shows which way it lies — NE, S — beside the distance, and with the bearing on its page"
+    ],
+    "fr": [
+      "Chaque terrain indique désormais sa direction — NE, S — à côté de la distance, et avec l’azimut sur sa fiche"
+    ],
+    "de": [
+      "Jedes Gelände zeigt jetzt seine Richtung — NO, S — neben der Entfernung und mit der Peilung auf seiner Seite"
+    ]
+  },
+  {
     "version": "0.8.10-beta",
     "date": "2026-07-29",
     "en": [
