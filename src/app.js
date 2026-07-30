@@ -1957,17 +1957,29 @@ async function refreshTerrainRoutes() {
 
   const clearanceM = terrainClearanceM();
   const safetyMarginM = Number(state.settings.safetyMarginM) || 0;
+  // Solve the fields the list puts first, which means taking computedRows in its own order —
+  // by required glide, with the fields that have no answer already sunk to the bottom.
+  //
+  // It used to take the nearest by distance, and the two orders are not the same list. The
+  // solver covers TERRAIN_MAX_TARGETS fields while the list shows more, so choosing by distance
+  // scattered the routed ones through a list ordered by glide: a checked row and an unchecked
+  // one sat next to each other looking identical, and the unchecked one shows the straight-line
+  // glide, which is the optimistic of the two. Following the list's own order puts every routed
+  // field at the top and leaves the unchecked ones at the bottom, where they are least likely to
+  // be the field anyone picks.
   const candidates = state.computedRows
     .filter(row => Number.isFinite(row.field.elevationM))
-    .slice()
-    .sort((a, b) => a.distanceM - b.distanceM)
     .slice(0, TERRAIN_MAX_TARGETS);
   if (!candidates.length) return;
 
   // Wide enough that a route can go the long way round: half again the distance to the farthest
   // field worth answering, floored so a solve is never trivially small and capped so a phone is
   // never asked to flood half of Europe.
-  const farthestM = candidates[candidates.length - 1].distanceM;
+  //
+  // The MAXIMUM, not the last one: that shortcut held only while these were sorted by distance,
+  // and reading it off a glide-ordered list would size the search area from whichever field
+  // happened to land 80th.
+  const farthestM = candidates.reduce((far, row) => Math.max(far, row.distanceM || 0), 0);
   const radiusM = Math.min(90000, Math.max(15000, farthestM * 1.5));
 
   terrain.status = 'solving';
