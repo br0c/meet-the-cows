@@ -584,9 +584,23 @@ def filled_strips(img, win, s_min=120, max_count=3, min_area=350):
     for c in cv2.findContours(fill, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[0]:
         if cv2.contourArea(c) < min_area:
             continue
-        poly = cv2.approxPolyDP(c, 0.02 * cv2.arcLength(c, True), True)
-        out.append(poly.reshape(-1, 2).astype(np.float32))
+        out.append(_simplify(c))
     return ([], np.zeros_like(fill)) if len(out) > max_count else (out, fill)
+
+
+def _simplify(contour, frac=0.02):
+    """Reduce a traced contour to its corners without flattening it.
+
+    A tolerance set from the perimeter alone is wider than a landing strip: Canavese's
+    runway is 200 px long and 25 px across, so 2% of its perimeter is 9 px and the short
+    ends simplify away, leaving a two-point polygon of zero area. Ten photos were losing
+    their strip to that — a drawn field arriving as a bare line. The tolerance is now also
+    held under a quarter of the shape's own width, which leaves the golden strips
+    identical to the pixel.
+    """
+    (_, _), (dw, dh), _ = cv2.minAreaRect(contour.astype(np.float32))
+    eps = min(frac * cv2.arcLength(contour, True), 0.25 * max(min(dw, dh), 1))
+    return cv2.approxPolyDP(contour, eps, True).reshape(-1, 2).astype(np.float32)
 
 
 def outlined_polygons(img, win, min_area=900):
@@ -608,8 +622,7 @@ def outlined_polygons(img, win, min_area=900):
         (_, _), (dw, dh), _ = cv2.minAreaRect(c.astype(np.float32))
         if max(dw, dh) < 30:
             continue
-        poly = cv2.approxPolyDP(c, 0.012 * cv2.arcLength(c, True), True)
-        out.append(poly.reshape(-1, 2).astype(np.float32))
+        out.append(_simplify(c, frac=0.012))
     if not out:
         return out
     biggest = max(cv2.contourArea(p.astype(np.int32)) for p in out)
