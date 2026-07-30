@@ -163,7 +163,7 @@ check('the field list computes from the simulated position', row !== null);
 if(row){
   const cells=await page.$eval('.field-row',r=>({
     name:r.querySelector('.field-name').textContent.trim(),
-    dist:r.querySelector('.field-distance').textContent.trim(),
+    dist:r.querySelector('.field-km').textContent.trim(),
     glide:r.querySelector('.field-glide').textContent.trim(),
   }));
   console.log(`    ${cells.name}  ${cells.dist}  glide ${cells.glide}`);

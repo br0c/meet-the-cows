@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
-const APP_VERSION = '0.8.10-beta';
+const APP_VERSION = '0.8.11-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -331,6 +331,7 @@ const STRINGS = {
     gpsError: e => `GPS error: ${e}.`,
     altMissingWarning: 'GPS altitude is missing, so required glide ratio cannot be computed. Settings has a testing mode for checking figures on the ground.',
     close: 'Close', bearing: 'Bearing', distance: 'Distance', reqGlide: 'Req glide',
+    compass: ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'],
     arrivalHeight: 'Arrival', deltaSafe: 'Δsafe', elevation: 'Elevation', runway: 'Runway', frequency: 'Frequency',
     glideNotShown: r => `Glide not shown: ${r}.`,
     notes: 'Notes', noNotes: 'No notes.', mediaHeading: 'Photos / docs / VAC',
@@ -489,7 +490,8 @@ const STRINGS = {
     sampleWarning: "Données d'exemple uniquement — n'utilisez pas ce pack en vol. Lancez l'importateur pour construire le vrai pack Guide des Aires.",
     gpsError: e => `Erreur GPS : ${e}.`,
     altMissingWarning: "L'altitude GPS est absente, la finesse requise ne peut pas être calculée. Ajoutez une altitude manuelle dans les Réglages pour les tests au sol.",
-    close: 'Fermer', bearing: 'Relèvement', distance: 'Distance', reqGlide: 'Finesse req.',
+    close: 'Fermer', bearing: 'Azimut', distance: 'Distance', reqGlide: 'Finesse req.',
+    compass: ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'],
     arrivalHeight: 'Arrivée', deltaSafe: 'Δsécu', elevation: 'Altitude', runway: 'Piste', frequency: 'Fréquence',
     glideNotShown: r => `Finesse non affichée : ${r}.`,
     notes: 'Notes', noNotes: 'Aucune note.', mediaHeading: 'Photos / docs / VAC',
@@ -649,6 +651,7 @@ const STRINGS = {
     gpsError: e => `GPS-Fehler: ${e}.`,
     altMissingWarning: 'GPS-Höhe fehlt, daher kann die erforderliche Gleitzahl nicht berechnet werden. Für Bodentests eine manuelle Höhe in den Einstellungen angeben.',
     close: 'Schließen', bearing: 'Peilung', distance: 'Entfernung', reqGlide: 'Erf. Gleit',
+    compass: ['N','NNO','NO','ONO','O','OSO','SO','SSO','S','SSW','SW','WSW','W','WNW','NW','NNW'],
     arrivalHeight: 'Ankunft', deltaSafe: 'Δsicher', elevation: 'Höhe', runway: 'Bahn', frequency: 'Frequenz',
     glideNotShown: r => `Gleitzahl nicht angezeigt: ${r}.`,
     notes: 'Notizen', noNotes: 'Keine Notizen.', mediaHeading: 'Fotos / Dokumente / VAC',
@@ -2691,7 +2694,9 @@ function renderFieldRow(row) {
         <span class="field-sub">${escapeHtml([displayCode(field), field.kind === 'airfield' ? t('airfield') : t('field')].filter(Boolean).join(' · '))}</span>
         ${chip}
       </span>
-      <span class="field-distance">${Number.isFinite(distanceM) ? fmtKm(distanceM) : '—'}</span>
+      <span class="field-distance"><span class="field-km">${Number.isFinite(distanceM) ? fmtKm(distanceM) : '—'}</span>${
+        Number.isFinite(row.bearingDeg) ? `<span class="field-dir">${escapeHtml(compassPoint(row.bearingDeg))}</span>` : ''
+      }</span>
       <span class="field-glide ${requiredGlideRatio ? '' : 'missing'}${routed}">${requiredGlideRatio ? `${Math.round(requiredGlideRatio)}` : '—'}</span>
       <span class="badge ${difficultyBadgeClass(field)}">${escapeHtml(difficultyLabel(field))}</span>
     </button>
@@ -2752,7 +2757,7 @@ function renderDetail(field) {
         </div>
         <div class="detail-meta">${escapeHtml([displayCode(field), kindLabel, field.rawDifficulty].filter(Boolean).join(' · '))}</div>
         <div class="detail-grid">
-          <div class="detail-card"><span class="status-label">${t('bearing')}</span><strong>${row ? fmtDeg(row.bearingDeg) : '—'}</strong></div>
+          <div class="detail-card"><span class="status-label">${t('bearing')}</span><strong>${row && Number.isFinite(row.bearingDeg) ? `${fmtDeg(row.bearingDeg)} ${escapeHtml(compassPoint(row.bearingDeg))}` : '—'}</strong></div>
           <div class="detail-card"><span class="status-label">${t('distance')}</span><strong>${row ? fmtKm(row.distanceM) : '—'}</strong></div>
           ${routeIsDetour(row) ? `<div class="detail-card"><span class="status-label">${t('routeLength')}</span><strong>${fmtKm(row.route.pathLengthM)}</strong></div>` : ''}
           <div class="detail-card"><span class="status-label">${t('reqGlide')}</span><strong>${row?.requiredGlideRatio ? `${Math.round(row.requiredGlideRatio)}` : '—'}</strong></div>
@@ -4511,4 +4516,20 @@ function fmtKm(m) { return `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`; }
 function fmtM(m) { return `${Math.round(m)} m`; }
 function fmtSignedM(m) { return `${m >= 0 ? '+' : ''}${Math.round(m)} m`; }
 function fmtDeg(d) { return `${Math.round(d).toString().padStart(3, '0')}°`; }
+/**
+ * The compass point a bearing falls in, in the reader's own language.
+ *
+ * Sixteen points rather than eight: at eight, a field 20° off north still reads "N", which is
+ * a wide enough lie to send someone looking over the wrong shoulder. The letters differ by
+ * language — French counts from Ouest (SO, O, NO), German from Ost and West — so they come
+ * from the string table rather than being spelled out here.
+ *
+ * This is a TRUE bearing, not one relative to the aircraft: the app watches position and not
+ * heading, so "NE" means north-east of the pilot, never 45° right of where the nose points.
+ */
+function compassPoint(deg) {
+  if (!Number.isFinite(deg)) return '';
+  const points = t('compass');
+  return points[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+}
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }

@@ -197,6 +197,19 @@ a { color: var(--accent); }
   overflow: hidden; text-overflow: ellipsis; }
 .field-distance,
 .field-glide { text-align: right; font-weight: 800; font-size: 14px; white-space: nowrap; }
+/* The compass point sits under the distance rather than beside it: the row's four columns are
+   already tight enough that the name is what gets truncated, and a fifth would come out of the
+   name's width. Muted and a size down because it qualifies the distance, and a pilot scanning
+   the list is reading the numbers — the direction is what they want once one of them looks
+   worth having. */
+.field-dir {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  line-height: 1.15;
+}
 
 /* The mountain mark, once. Both places that carry it — the "via" chip and the marker beside a
    routed glide figure — mask this same shape, so they can never drift into two different

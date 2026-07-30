@@ -102,7 +102,7 @@ async function open(extra = {}) {
 }
 const rows = page => page.$$eval('.field-row', list => list.map(r => ({
   name: r.querySelector('.field-name')?.textContent?.trim(),
-  dist: r.querySelector('.field-distance')?.textContent?.trim(),
+  dist: r.querySelector('.field-km')?.textContent?.trim(),
   glide: r.querySelector('.field-glide')?.textContent?.trim(),
 })));
 
