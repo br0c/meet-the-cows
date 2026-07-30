@@ -13,6 +13,7 @@ round. These checks run over the tier indexes and the source photos and emit:
 Checks, in rough order of how much they matter:
   regression   the photo has a drawn annotation but the view has none (silent loss)
   golden       a hand-validated field lost an element it is known to carry
+  oversized    a drawn shape is far bigger than the field — terrain read as an annotation
   imagery      no provider served the field, so the view is missing or unmarked
   short-run    a drawn run is far shorter than the field's stated length
   weak-reg     registration passed on few inliers, so placement is soft
@@ -34,8 +35,13 @@ from aires_render import PHOTOS, annotations  # noqa: E402
 from aires_sweep import is_framed  # noqa: E402
 
 WORK = Path(os.environ.get("FIELD_VIEWS_WORK", "field-views-work"))
-SEVERITY = {"regression": 0, "golden": 0, "imagery": 1, "short-run": 2,
+SEVERITY = {"regression": 0, "golden": 0, "oversized": 1, "imagery": 1, "short-run": 2,
             "weak-reg": 3, "geometry": 2}
+
+# Fields where an unmarked overview is the intended result, so "no drawing" is not a
+# regression. Sederon's photo circles a whole area of landable ground rather than one
+# strip, and Fabien chose the plain view for it deliberately.
+PLAIN_BY_DESIGN = {"fr_131_131_sederon_44p2206_5p5747"}
 
 # Fields validated against pilot memory, with the elements their photo is known to carry.
 # A change here is a real regression, not a threshold to relax.
@@ -79,7 +85,9 @@ def check_aires(index, inventory, findings):
             continue
         if mode == "plain":
             drawn = photo_has_annotation(fid, inventory)
-            if drawn:
+            if drawn and fid in PLAIN_BY_DESIGN:
+                pass
+            elif drawn:
                 findings.append((fid, "regression", row.get("name", ""),
                                  "photo carries a drawing but the view has none — "
                                  f"reason: {row.get('reason', '')[:70]}"))
@@ -99,6 +107,15 @@ def check_aires(index, inventory, findings):
                                  f"{inl} inliers on {reg.get('photo', '?')} "
                                  f"({reg.get('rms_m', '?')} m rms)"))
         stated = (inventory.get(fid) or {}).get("lengthM")
+        # A drawn shape several times the field's stated length is almost certainly
+        # terrain that passed for an annotation — a hedge loop read as a ring, a red roof
+        # read as a strip. The missing-annotation checks are blind to this: the field
+        # looks annotated, just wrongly, which is worse than looking unmarked.
+        biggest = row.get("max_shape_m") or 0
+        if stated and biggest and biggest > 3 * float(stated):
+            findings.append((fid, "oversized", row.get("name", ""),
+                             f"largest drawn shape spans {biggest} m against a stated "
+                             f"{float(stated):.0f} m — probably terrain, not a drawing"))
         runs = row.get("run_lengths_m") or []
         if stated and runs and max(runs) < 0.55 * float(stated):
             findings.append((fid, "short-run", row.get("name", ""),

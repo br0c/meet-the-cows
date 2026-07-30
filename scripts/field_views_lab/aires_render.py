@@ -390,6 +390,14 @@ def main():
                 index[fid] = {"name": f["name"], "mode": "annotated",
                               "shapes": {k: len(v) for k, v in geom.items()},
                               "run_lengths_m": [round(math.dist(*r)) for r in geom["runs"]],
+                              # Largest ground dimension of any drawn shape: QA uses it to
+                              # spot a "drawing" that is really terrain, which no
+                              # missing-annotation check can see.
+                              "max_shape_m": round(max(
+                                  [0] + [max(max(p[0] for p in s) - min(p[0] for p in s),
+                                             max(p[1] for p in s) - min(p[1] for p in s))
+                                         for k in ("quads", "rings", "danger")
+                                         for s in geom[k]])),
                               "registration": regs, "file": path.name}
                 print(f"{fid} {f['name']}: annotated "
                       f"{ {k: len(v) for k, v in geom.items() if v} } "
