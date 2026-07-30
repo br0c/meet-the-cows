@@ -107,32 +107,36 @@ PROVIDERS: dict[str, list[dict]] = {
     # Italian regional services first (recent imagery), national PCN 2012 as the fallback; the
     # PCN layer name's trailing number is its UTM zone.
     #
-    # AGEA imagery is NOT available to us, in any region. The regions do publish recent AGEA
-    # orthophotos over WMS (Veneto 2024, Piemonte 2024, Emilia-Romagna 2023), but every one
-    # carries "AGEA (c) TUTTI I DIRITTI RISERVATI" and terms set by the AGEA/CISIS framework
-    # agreement — Veneto states the imagery may be distributed free only to Enti Locali, and
-    # Emilia-Romagna labels it "utilizzo ristretto dei dati". An express reservation is exactly
-    # what removes the CAD art. 52 c.2 route (published WITHOUT a licence => open by statute),
-    # so it would have to be asked for, as ENAIRE's charts were. A Veneto AGEA layer shipped
-    # here until 2026-07-29 on a misreading of the geoportal's general IODL/CC-BY statement,
-    # which the orthophoto pages override; it has been removed.
+    # The recent regional layers are AGEA imagery, owned by MASAF and delegated to Agea. Their
+    # metadata carries "AGEA (c) tutti i diritti riservati" and the institutional sub-licence
+    # for the raw ECW files restricts use to Enti Locali, which is why they were pulled from
+    # this table on 2026-07-29. Fabien then took it up with the regional portals directly and
+    # confirmed on 2026-07-30 that CC BY 4.0 applies to the published web services for our use,
+    # provided the source is cited — so they are back.
     #
-    # That leaves provincial imagery a province licenses itself (Bolzano, CC BY 4.0) plus the
-    # national PCN layer, which MASE published with no express licence and is therefore open
-    # by statute — dated 2012, but ours to use.
+    # The credit names the REGION we fetch from, not AGEA or MASAF. Attribution under CC BY runs
+    # to the licensor whose grant we rely on, and every source in this table carries its own
+    # licence; crediting an upstream owner instead would assert reliance on terms we are not
+    # using, and would not follow if the provider were later swapped. See NOTES.md.
     "IT": [
+        dict(url="https://opengis.csi.it/mp/regp_agea_2024", layer="regp_agea_2024",
+             bbox=(44.0, 6.6, 46.5, 9.3),
+             attribution="Orthophoto © Regione Piemonte (CC BY 4.0)"),
+        dict(url="https://idt2-geoserver.regione.veneto.it/geoserver/wms",
+             layer="rv:ortofoto_agea_2024", bbox=(44.75, 10.6, 46.7, 13.1),
+             attribution="Orthophoto © Regione del Veneto (CC BY 4.0)"),
         # p_bz- (the provincial coverage), not gvcc- (municipal, white outside towns);
         # the mapproxy rejects EPSG:4326 outright, so UTM it is.
         dict(url="https://geoservices.buergernetz.bz.it/mapproxy/ows/service",
              layer="p_bz-Orthoimagery:Aerial-2023-RGB", bbox=(46.2, 10.35, 47.1, 12.5),
              crs="EPSG:25832",
-             attribution="Ortofoto 2023 © Provincia Autonoma di Bolzano (CC BY 4.0)"),
+             attribution="Orthophoto © Provincia Autonoma di Bolzano (CC BY 4.0)"),
         dict(url="http://wms.pcn.minambiente.it/ogc?map=/ms_ogc/WMS_v1.3/raster/ortofoto_colore_12.map",
              layer="OI.ORTOIMMAGINI.2012.32", bbox=(35.0, 6.0, 47.5, 12.0), version="1.1.1",
-             attribution="Ortofoto 2012 © Geoportale Nazionale (MASE)"),
+             attribution="Orthophoto © Geoportale Nazionale, MASE (open data)"),
         dict(url="http://wms.pcn.minambiente.it/ogc?map=/ms_ogc/WMS_v1.3/raster/ortofoto_colore_12.map",
              layer="OI.ORTOIMMAGINI.2012.33", bbox=(35.0, 12.0, 47.5, 19.0), version="1.1.1",
-             attribution="Ortofoto 2012 © Geoportale Nazionale (MASE)"),
+             attribution="Orthophoto © Geoportale Nazionale, MASE (open data)"),
     ],
 }
 
@@ -556,18 +560,26 @@ def cmd_plain(args):
 
 
 def cmd_render(args):
-    from PIL import Image, ImageDraw, ImageFont  # lazy: only render needs Pillow
-
     path, fid = args.match_entry.rsplit(":", 1)
     entry = next(m for m in json.loads(Path(path).read_text()) if str(m["id"]) == fid)
     if not entry.get("osm"):
         sys.exit(f"{fid} has no OSM geometry; it is a vision-tier field")
+    render_osm_view(entry, args.out)
+    print(f"rendered {args.out}")
+
+
+def render_osm_view(entry, out_path):
+    """OSM-tier view for one matched field. The batch driver calls this directly rather
+    than shelling out per field, which would refetch and reparse the match file 2,400
+    times."""
+    from PIL import Image, ImageDraw, ImageFont  # lazy: only render needs Pillow
+
     g = entry["osm"]
     country = (entry.get("country") or "FR")[:2].upper()
     frame_w = max(g["len"] * 1.6, 1000)
     clat = entry["lat"] + (g["dy"] / 2) / 111320
     clon = entry["lon"] + (g["dx"] / 2) / (111320 * math.cos(math.radians(entry["lat"])))
-    tmp = Path(args.out).with_suffix(".crop.jpg")
+    tmp = Path(out_path).with_suffix(".crop.jpg")
     crop = ortho_crop(clat, clon, frame_w, tmp, country)
     mpp = crop["mpp"]
     img = Image.open(tmp).convert("RGB")
@@ -615,9 +627,8 @@ def cmd_render(args):
            crop["attribution"] + " · Runway © OpenStreetMap contributors",
            font=small, fill=(200, 206, 218, 255))
     Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB").save(
-        args.out, quality=90)
+        out_path, quality=90)
     tmp.unlink()
-    print(f"rendered {args.out}")
 
 
 def main():
