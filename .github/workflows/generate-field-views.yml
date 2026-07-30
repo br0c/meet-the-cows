@@ -1,0 +1,176 @@
+name: Generate field views
+
+# Generated satellite views for outlanding fields, in three tiers:
+#   osm    - a field with an OSM runway inside the match radius, geometry drawn as-is
+#   aires  - Guide des Aires de Sécurité fields, drawn annotations transferred onto
+#            current imagery (deterministic CV, no model call)
+#   pyr    - the same for the APVV Guide des champs pyrénéens
+#
+# Dispatch-only and never wired to push: generation is a deliberate act, not something the
+# nightly pack build should redo. Views are stable on purpose — a pilot who has studied one
+# should not find it silently shifted — so a refresh happens when imagery campaigns update,
+# roughly yearly, or when the pipeline itself improves.
+#
+# Renders go to R2 under <channel>/views/, the review artifacts (contact sheets + the
+# per-tier index) to GitHub artifacts, so results can be spot-checked before anything is
+# wired into a pack.
+on:
+  workflow_dispatch:
+    inputs:
+      tiers:
+        description: "Which tiers to run"
+        type: choice
+        default: all
+        options: [all, osm, aires, pyr]
+      channel:
+        description: "Data channel to read the field inventory from"
+        type: choice
+        default: dev
+        options: [dev, prod]
+      limit:
+        description: "Cap fields per tier (0 = no cap; use a small number to smoke-test)"
+        type: string
+        default: "0"
+      publish:
+        description: "Upload renders to R2 (off = artifacts only)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: field-views
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    # The OSM tier is ~2,400 orthophoto fetches against public services at 4 workers.
+    timeout-minutes: 330
+
+    env:
+      FIELD_VIEWS_WORK: ${{ github.workspace }}/views-work
+      LIMIT: ${{ github.event.inputs.limit }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # opencv/numpy are the annotation-transfer pipeline; Pillow renders; boto3 publishes
+          python -m pip install opencv-python-headless numpy Pillow boto3
+
+      - name: Build the field inventory
+        run: |
+          python scripts/field_views_lab/inventory.py \
+            --channel "${{ github.event.inputs.channel }}" \
+            --out "$FIELD_VIEWS_WORK/inventory.json"
+
+      # ---------------------------------------------------------------- OSM tier
+      - name: Fetch OSM runways
+        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'osm' }}
+        run: |
+          python scripts/field_views.py runways \
+            --fields "$FIELD_VIEWS_WORK/inventory.json" \
+            --out "$FIELD_VIEWS_WORK/runways.json"
+
+      - name: Match runways to fields
+        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'osm' }}
+        run: |
+          python scripts/field_views.py match \
+            --fields "$FIELD_VIEWS_WORK/inventory.json" \
+            --runways "$FIELD_VIEWS_WORK/runways.json" \
+            --out "$FIELD_VIEWS_WORK/matches.json"
+
+      - name: Render the OSM tier
+        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'osm' }}
+        run: |
+          python scripts/field_views_lab/osm_render_all.py \
+            --matches "$FIELD_VIEWS_WORK/matches.json" \
+            --workers 4 --limit "$LIMIT"
+
+      # -------------------------------------------------------------- Aires tier
+      - name: Render the Guide des Aires de Sécurité fields
+        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'aires' }}
+        run: python scripts/field_views_lab/aires_render.py
+
+      # ---------------------------------------------------------------- Pyrenees
+      - name: Render the APVV Pyrenees champs
+        if: ${{ github.event.inputs.tiers == 'all' || github.event.inputs.tiers == 'pyr' }}
+        run: python scripts/field_views_lab/pyr_transfer.py
+
+      # ------------------------------------------------------------------ review
+      - name: Build contact sheets
+        if: always()
+        run: |
+          for tier in osm aires pyr; do
+            case "$tier" in
+              osm)   dir="$FIELD_VIEWS_WORK/osm/out";   title="OSM tier" ;;
+              aires) dir="$FIELD_VIEWS_WORK/aires/out"; title="Guide des Aires de Sécurité" ;;
+              pyr)   dir="$FIELD_VIEWS_WORK/pyr/out";   title="APVV Pyrénées" ;;
+            esac
+            [ -d "$dir" ] || continue
+            python scripts/field_views_lab/contact_sheets.py \
+              --dir "$dir" --out "$FIELD_VIEWS_WORK/sheets/$tier" --title "$title"
+          done
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "## Generated field views"
+            echo
+            echo "| tier | views | index |"
+            echo "|---|---:|---|"
+            for tier in osm aires pyr; do
+              dir="$FIELD_VIEWS_WORK/$tier/out"
+              [ -d "$dir" ] || continue
+              n=$(find "$dir" -name 'final_*.jpg' | wc -l)
+              idx=$([ -f "$dir/index.json" ] && echo "yes" || echo "-")
+              echo "| $tier | $n | $idx |"
+            done
+            echo
+            echo "Renders: R2 \`${{ github.event.inputs.channel }}/views/\`. Contact sheets are in this run's artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: field-views-review
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ env.FIELD_VIEWS_WORK }}/sheets/**
+            ${{ env.FIELD_VIEWS_WORK }}/*/out/index.json
+            ${{ env.FIELD_VIEWS_WORK }}/pyr/out/verdicts.json
+            ${{ env.FIELD_VIEWS_WORK }}/matches.json
+
+      # Renders are large and derived, so they live in R2 rather than git or artifacts —
+      # the same split the source archive uses: git keeps what cannot be recreated.
+      - name: Publish renders to R2
+        if: ${{ github.event.inputs.publish == 'true' }}
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          BUCKET: ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }}
+        run: |
+          prefix="views"
+          [ "${{ github.event.inputs.channel }}" = "prod" ] || prefix="${{ github.event.inputs.channel }}/views"
+          mkdir -p "$FIELD_VIEWS_WORK/publish"
+          for tier in osm aires pyr; do
+            dir="$FIELD_VIEWS_WORK/$tier/out"
+            [ -d "$dir" ] || continue
+            mkdir -p "$FIELD_VIEWS_WORK/publish/$tier"
+            find "$dir" -name 'final_*.jpg' -exec cp {} "$FIELD_VIEWS_WORK/publish/$tier/" \;
+            [ -f "$dir/index.json" ] && cp "$dir/index.json" "$FIELD_VIEWS_WORK/publish/$tier/"
+          done
+          python scripts/publish_packs_r2.py \
+            --dir "$FIELD_VIEWS_WORK/publish" --prefix "$prefix" --bucket "$BUCKET"
