@@ -63,6 +63,13 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --quiet --upgrade pip $PY_DEPS
 
+      # Cheap, and it gates two hours of orthophoto fetching. The runway-choice tests
+      # carry the Sion case, where the wrong strip was drawn and the render looked fine.
+      - name: Verify provider routing, runway choice and the review checks
+        run: |
+          python scripts/test_field_views.py
+          python scripts/test_field_views_qa.py
+
       - name: Build the field inventory
         run: |
           python scripts/field_views_lab/inventory.py \

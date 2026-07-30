@@ -363,36 +363,39 @@ def runway_geometry(field, way):
         width_m=width, surface=tags.get("surface"), ref=tags.get("ref"))
 
 
+AT_FIELD_M = 150.0
+"""A runway this close effectively passes through the recorded coordinate.
+
+Two different questions look alike here and only one is answered by distance. WHICH SITE
+this field is needs distance — a runway several hundred metres off is a different
+aerodrome. WHICH STRIP of that site is meant does not: LSGS Sion maps 1871 m of asphalt
+27 m from its coordinate and its 560 m grass strip at 70 m, and both plainly belong to
+Sion. So distance chooses the site and the stated length chooses the strip.
+"""
+
+
 def pick_runway(cands, stated_m=None):
     """Which runway to draw for a field, from the candidates inside the search radius.
 
-    Nearest, unless the field states a length and a candidate matches it markedly better.
+    Among the runways at the field, the one whose length best matches what the pack
+    records; nearest when the field states no length, and nearest overall when nothing is
+    close enough to count as "at the field".
 
-    Distance alone cannot tell a gliding strip from the aerodrome it shares a site with.
-    LSGS Sion maps a 1871 m asphalt runway 27 m from the recorded coordinate and a 560 m
-    grass one 70 m away; the asphalt is for aeroplanes, the grass is the glider strip, and
-    this pack is for glider pilots — the field is recorded as 600 m, which is the grass
-    one. Taking the nearest draws the wrong strip and nothing about the render looks wrong.
+    The stated length is the right discriminator because it is the one piece of data that
+    knows what this field is FOR. Sion's asphalt is for aeroplanes and its grass strip is
+    for gliders; the pack records 600 m, which is the grass. 87% of the airfields carry a
+    length, and the rest fall back to distance.
 
-    The pack's figure is used only to CHOOSE between candidates, never as geometry: it
-    settles which runway is meant, and OSM still supplies where it is and which way it
-    points. A stated length has to be about twice as close a fit before it overrides
-    distance, so an approximate figure does not start moving good matches around.
+    The figure only CHOOSES between candidates and is never used as geometry: OSM still
+    supplies where the runway is, how long it is and which way it points.
     """
     if not cands:
         return None
-    nearest = min(cands, key=lambda g: g["dist"])
-    if not stated_m or len(cands) == 1:
-        return nearest
-
-    def fit(g):
-        """Relative disagreement with the stated length; 0 is exact."""
-        return abs(math.log((g["len"] or 1) / stated_m))
-
-    best_fit = min(cands, key=fit)
-    if best_fit is nearest:
-        return nearest
-    return best_fit if fit(best_fit) * 2 < fit(nearest) else nearest
+    at_field = [g for g in cands if g["dist"] <= AT_FIELD_M]
+    pool = at_field or cands
+    if stated_m:
+        return min(pool, key=lambda g: abs(math.log((g["len"] or 1) / stated_m)))
+    return min(pool, key=lambda g: g["dist"])
 
 
 def cmd_match(args):

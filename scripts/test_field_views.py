@@ -254,10 +254,20 @@ class TestRunwayChoice(unittest.TestCase):
         got = fv.pick_runway([self.ASPHALT, self.GRASS], stated_m=1800.0)
         self.assertEqual(got["surface"], "asphalt")
 
-    def test_a_vague_stated_length_leaves_the_nearest_alone(self):
-        # 900 m fits neither well; the rival must be markedly better, and it is not.
-        got = fv.pick_runway([self.ASPHALT, self.GRASS], stated_m=900.0)
-        self.assertEqual(got["surface"], "asphalt")
+    def test_length_only_chooses_among_runways_at_the_field(self):
+        """Distance picks the site; length picks the strip within it.
+
+        A runway that matches the stated length exactly but sits 800 m away belongs to
+        somewhere else, and must never be preferred over the field's own.
+        """
+        elsewhere = {"dist": 800.0, "len": 600.0, "surface": "asphalt"}
+        got = fv.pick_runway([self.GRASS, elsewhere], stated_m=600.0)
+        self.assertEqual(got["dist"], self.GRASS["dist"])
+
+    def test_nearest_when_nothing_is_at_the_field(self):
+        far_a = {"dist": 400.0, "len": 900.0, "surface": "grass"}
+        far_b = {"dist": 700.0, "len": 600.0, "surface": "asphalt"}
+        self.assertEqual(fv.pick_runway([far_a, far_b], stated_m=None)["dist"], 400.0)
 
     def test_single_candidate_and_empty(self):
         self.assertEqual(fv.pick_runway([self.GRASS], stated_m=600.0), self.GRASS)
