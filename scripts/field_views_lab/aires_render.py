@@ -221,7 +221,11 @@ def render(f, geom, regs):
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    only = set(sys.argv[1:])
+    # A bare number caps the run instead of naming fields, so a smoke test costs minutes
+    # rather than the couple of hours a full tier of orthophoto fetching takes.
+    args = sys.argv[1:]
+    cap = int(args[0]) if len(args) == 1 and args[0].isdigit() else 0
+    only = set() if cap else set(args)
     inventory = json.loads((WORK / "inventory.json").read_text())
     index_path = OUT / "index.json"
     index = json.loads(index_path.read_text()) if index_path.exists() else {}
@@ -234,6 +238,8 @@ def main():
                   and (PHOTOS / Path(m.get("url", "")).name).exists()]
         if photos and (not only or f["id"] in only):
             todo.append((f, photos))
+    if cap:
+        todo = todo[:cap]
     print(f"{len(todo)} fields to render", flush=True)
     for f, photos in todo:
         fid = f["id"]

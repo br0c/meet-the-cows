@@ -269,13 +269,20 @@ def render(doc):
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     index = json.loads((SRC / "index.json").read_text())
-    only = set(sys.argv[1:])
+    # A bare number caps the run; anything else names the champs to transfer.
+    args = sys.argv[1:]
+    cap = int(args[0]) if len(args) == 1 and args[0].isdigit() else 0
+    only = set() if cap else set(args)
+    done = 0
     verdicts = {}
     for entry in index:
         if not entry["type"].startswith("CHAMP"):
             continue
         if only and entry["id"] not in only:
             continue
+        if cap and done >= cap:
+            break
+        done += 1
         try:
             doc = transfer(entry)
             render(doc)

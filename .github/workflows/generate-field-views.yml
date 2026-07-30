@@ -211,8 +211,10 @@ jobs:
                 --limit "${{ github.event.inputs.limit }}" \
                 --countries "${{ matrix.shard.countries }}" \
                 --shard "${{ matrix.shard.name }}" ;;
-            aires) python scripts/field_views_lab/aires_render.py ;;
-            pyr)   python scripts/field_views_lab/pyr_transfer.py ;;
+            aires) python scripts/field_views_lab/aires_render.py \
+                     $([ "${{ github.event.inputs.limit }}" != "0" ] && echo "${{ github.event.inputs.limit }}") ;;
+            pyr)   python scripts/field_views_lab/pyr_transfer.py \
+                     $([ "${{ github.event.inputs.limit }}" != "0" ] && echo "${{ github.event.inputs.limit }}") ;;
           esac
 
       - name: Upload ${{ matrix.shard.name }} renders
