@@ -20,6 +20,7 @@ Reports, per label:
            still an arrow); for a pale bar it is exactly the road that must not ship.
 """
 import argparse
+import collections
 import math
 import sys
 from pathlib import Path
@@ -82,6 +83,27 @@ def check(photo_name, labels):
     return rows, orphans
 
 
+REPEAT_LIMIT = 3
+"""How often one exact (length, bearing) may recur across DIFFERENT photos before it is
+treated as a template rather than a reading.
+
+Two fields having a run of identical length and bearing to a tenth of a degree is a
+coincidence; nine of them is a model filling in an example. That is not hypothetical — the
+v2 prompt illustrated the format with real measurements and got them back on nine unrelated
+photos, 25 of 131 labels in all. Anything the model has been shown can come back as data,
+so this runs over the whole corpus every time rather than trusting the prompt.
+"""
+
+
+def repeated_values(docs):
+    """(length, bearing) pairs recurring across suspiciously many photos."""
+    counts = collections.Counter()
+    for _name, labels in docs:
+        for d in {(x["length_m"], x["bearing_deg"]) for x in labels}:
+            counts[d] += 1
+    return {k: n for k, n in counts.items() if n > REPEAT_LIMIT}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--all", action="store_true", help="show matches, not just problems")
@@ -91,11 +113,13 @@ def main():
     totals = {"MATCH": 0, "NO-GEOM": 0, "ERROR": 0}
     pale_orphans = 0
     read = 0
+    corpus = []
     for name in photos:
         labels = read_labels.load(name)
         if labels is None:
             continue
         read += 1
+        corpus.append((name, labels))
         rows, orphans = check(name, labels)
         for kind, _ in rows:
             totals[kind] = totals.get(kind, 0) + 1
@@ -113,6 +137,19 @@ def main():
     print(f"   MATCH   {totals['MATCH']}")
     print(f"   NO-GEOM {totals['NO-GEOM']}  (safe: the run is simply not drawn)")
     print(f"   pale bars with no label: {pale_orphans}  (each one a road that did not ship)")
+
+    repeats = repeated_values(corpus)
+    if repeats:
+        print(f"\nSUSPECT: {len(repeats)} measurement(s) recur across unrelated photos.")
+        print("A model repeats what it has been shown; a guide does not.")
+        for (length, bearing), n in sorted(repeats.items(), key=lambda kv: -kv[1]):
+            print(f"   {length:6.0f} m / {bearing:6.1f}°  on {n} photos")
+        return 1
+
+    matched = totals["MATCH"]
+    if sum(totals.values()) and matched / sum(totals.values()) < 0.5:
+        print("\nSUSPECT: fewer than half the readings have any stroke near them.")
+        return 1
     return 0
 
 

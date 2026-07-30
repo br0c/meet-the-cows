@@ -96,6 +96,12 @@ jobs:
           fi
           python scripts/field_views_lab/read_labels.py --limit "${{ github.event.inputs.label_limit }}"
 
+      # A model repeats what it has been shown. The v2 prompt illustrated the format with
+      # real measurements and got them back as data on nine unrelated photos, so every
+      # batch is now cross-checked against the drawing before anyone looks at it.
+      - name: Cross-check the readings against the drawings
+        run: python scripts/field_views_lab/check_labels.py
+
       # Uploaded rather than committed: a model's reading is reviewed before it becomes the
       # repo's answer, and the render below runs on whatever is already committed.
       - name: Upload label readings

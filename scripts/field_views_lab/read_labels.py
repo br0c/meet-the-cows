@@ -42,33 +42,52 @@ API_URL = "https://api.anthropic.com/v1/messages"
 MODEL = os.environ.get("FIELD_VIEWS_LABEL_MODEL", "claude-sonnet-4-5-20250929")
 
 # Bump when the prompt changes meaning, so stale answers are refetched rather than trusted.
-PROMPT_VERSION = 2
+#
+# v3: the v2 prompt illustrated the format with real measurements copied off one photo, and
+# the model filled that template in when it could not read a photo — those exact values came
+# back on nine unrelated photos, 25 of 131 labels in all, plus more recombining them. The
+# geometric cross-check caught it (75 of 131 readings had no stroke anywhere near them),
+# which is why the readings are reviewed before they are committed. No example carries a
+# plausible number now, and the model is told to transcribe before it parses.
+PROMPT_VERSION = 3
 
 PROMPT = """This is an aerial photo from a glider outlanding guide. Someone has drawn on it
 by hand: arrows showing usable landing runs, and beside each arrow they have written that
 run's length and its magnetic bearing.
 
-A label looks like "240 m" above "73.0°", or "300m / 0.0°", or "275 m 15.2°". The length is
-in metres. The bearing is in degrees, 0-360, and is the direction the arrow points.
+A label sits next to its arrow and reads as a distance in metres and a bearing in degrees,
+usually on two lines. The length is in metres. The bearing is 0-360 and is the direction the
+arrow points.
 
-Report ONLY text that is actually written on the image. Transcribe it; do not estimate,
-infer, or compute anything from the picture. If you cannot read a value, omit that label
-entirely rather than guessing.
+TRANSCRIBE, DO NOT INFER. Copy the characters you can actually see. Never estimate a length
+from how long the arrow looks, never compute a bearing from its direction on the image, and
+never fill in a plausible-looking value. If a label is blurred, cropped or absent, leave it
+out. Most photos in this collection carry either no run labels or one; several carry none at
+all, and returning an empty list is a correct and expected answer.
+
+The numbers in the schema below are placeholders showing the JSON shape. They are not data
+and must never appear in your answer.
 
 Do NOT report:
 - captions or notes that are not a run measurement (e.g. "Ligne BT", "Talus",
-  "Partie a eviter", "Apres la buse: 200m en montee 5%")
+  "Partie a eviter", or a sentence describing the approach)
 - place names, field numbers, scale bars, or any text belonging to the mapping tool
 - distances on curved range arcs
 
 For each run label, give the colour of the arrow it belongs to: "white" for a pale arrow
 with a dark outline, otherwise "red", "pink", "blue" or "other".
 
-Return ONLY a JSON object, no prose, in exactly this form:
+Work in two steps. First, in "seen", list every run label you can literally read, as the
+raw characters. Second, parse each one into numbers. If "seen" is empty, "labels" must be
+empty too.
 
-{"labels": [{"text": "240 m 73.0", "length_m": 240, "bearing_deg": 73.0, "arrow": "white"}]}
+Return ONLY a JSON object, no prose, with this shape:
 
-If the photo carries no run labels at all, return {"labels": []}."""
+{"seen": ["<the raw characters of each label you can read>"],
+ "labels": [{"text": "<raw characters>", "length_m": <number>, "bearing_deg": <number>,
+             "arrow": "<white|red|pink|blue|other>"}]}
+
+If the photo carries no run labels at all, return {"seen": [], "labels": []}."""
 
 
 def _post(payload, key, tries=4):
@@ -149,13 +168,17 @@ def read_photo(path, key):
     }
     reply = _post(payload, key)
     text = "".join(b.get("text", "") for b in reply.get("content", []))
-    labels = _clean(_extract_json(text).get("labels"))
+    doc = _extract_json(text)
+    seen = doc.get("seen")
     return {
         "photo": path.name,
         "sha256": hashlib.sha256(data).hexdigest(),
         "model": MODEL,
         "prompt_version": PROMPT_VERSION,
-        "labels": labels,
+        # Kept for audit: the raw characters claimed, beside the parse of them. A reading
+        # that cannot show its own transcription is not a reading.
+        "seen": [str(s)[:60] for s in seen] if isinstance(seen, list) else [],
+        "labels": _clean(doc.get("labels")),
     }
 
 
