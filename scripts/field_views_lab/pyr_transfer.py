@@ -23,7 +23,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import field_views as fv  # noqa: E402
+import shapes as sh  # noqa: E402
 import transfer_cv as tc  # noqa: E402
+from transfer_render import draw_arrow  # noqa: E402
 
 SRC = Path(__file__).resolve().parents[2] / "data/sources/field-views/pyr-google"
 WORK = Path(os.environ.get("FIELD_VIEWS_WORK", "field-views-work")) / "pyr"
@@ -139,7 +141,14 @@ def transfer(entry):
     cur = cv2.imread(str(cur_path))
 
     ge1 = cv2.imread(str(SRC / entry["files"][0]))
-    shapes, mask = extract_shapes(ge1)
+    if not sh.is_aerial(ge1):
+        raise RuntimeError("not a vertical aerial view; nothing to transfer")
+    # The shared library, so every family the Aires pack gained — hazard lines, obstacle
+    # circles, point markers, arrows — reaches the Pyrenees too.
+    drawn, ink_masks, _ = sh.extract(ge1, apvv=True)
+    shapes = drawn["polygons"] or extract_shapes(ge1)[0]
+    mask = ink_masks[0] if ink_masks else extract_shapes(ge1)[1]
+    extra = {k: drawn[k] for k in ("hazards", "circles", "markers", "arrows") if drawn[k]}
     vis = ge1.copy()
     cv2.polylines(vis, [s.astype(np.int32) for s in shapes], True, (255, 0, 255), 2)
     cv2.imwrite(str(OUT / f"trace_{slug}.jpg"), vis)
@@ -175,6 +184,15 @@ def transfer(entry):
            "orientation_stated": entry["orientation"], "longueur_stated": entry["longueur"],
            "shapes_m": polys_m, "shape_dims": dims,
            "registration": stats}
+    # Everything else the capture carries, in metres of the field datum, so the renderer
+    # can draw it without knowing which family it came from.
+    scale = float(np.hypot(M[0, 0], M[0, 1]))
+    for key in ("hazards", "arrows"):
+        doc[key] = [[px2m(p) for p in tc.apply_m(M, np.asarray(a, np.float32))]
+                    for a in extra.get(key, [])]
+    for key in ("circles", "markers"):
+        doc[key] = [list(px2m(tc.apply_m(M, [[cx, cy]])[0])) + [round(r * scale * MPP, 1)]
+                    for cx, cy, r in extra.get(key, [])]
     doc["length_check"] = length_check(dims, entry["longueur"])
     return doc
 
@@ -182,7 +200,11 @@ def transfer(entry):
 def render(doc):
     from PIL import Image, ImageDraw, ImageFont
     slug = f"{doc['id']}_{doc['name'].replace(' ', '_')}"
-    allpts = [p for poly in doc["shapes_m"] for p in poly]
+    # Everything drawn has to be inside the crop, not just the field outline — a cable
+    # crossing the approach is exactly the thing that must not be framed out.
+    allpts = [p for key in ("shapes_m", "hazards", "arrows")
+              for shape in doc.get(key, []) for p in shape]
+    allpts += [(c[0], c[1]) for key in ("markers", "circles") for c in doc.get(key, [])]
     ce = (min(p[0] for p in allpts) + max(p[0] for p in allpts)) / 2
     cn = (min(p[1] for p in allpts) + max(p[1] for p in allpts)) / 2
     clat = doc["lat"] + cn / 111320
@@ -201,6 +223,20 @@ def render(doc):
 
     for poly in doc["shapes_m"]:
         d.polygon([to_px(p) for p in poly], outline=RED + (255,), width=4)
+    for tail, head in doc.get("arrows", []):
+        draw_arrow(d, to_px, tail, head)
+    for tail, head in doc.get("hazards", []):
+        d.line([to_px(tail), to_px(head)], fill=RED + (255,), width=5)
+        d.line([to_px(tail), to_px(head)], fill=(255, 235, 120, 255), width=2)
+    for cx, cn_, radius in doc.get("circles", []):
+        rpx = max(radius / mpp, 6)
+        x, y = to_px((cx, cn_))
+        d.ellipse([x - rpx, y - rpx, x + rpx, y + rpx], outline=RED + (255,), width=4)
+    for cx, cn_, radius in doc.get("markers", []):
+        rpx = max(radius / mpp, 5)
+        x, y = to_px((cx, cn_))
+        d.ellipse([x - rpx, y - rpx, x + rpx, y + rpx], fill=(255, 176, 32, 235),
+                  outline=(60, 40, 10, 255), width=2)
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
         small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 15)
