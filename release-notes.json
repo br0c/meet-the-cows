@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.13-beta",
+    "date": "2026-07-31",
+    "en": [
+      "Fixed: after the app had been in the background, terrain routing could stay inactive until it was restarted"
+    ],
+    "fr": [
+      "Corrigé : après un passage en arrière-plan, le calcul autour du relief pouvait rester inactif jusqu’au redémarrage de l’application"
+    ],
+    "de": [
+      "Behoben: Nach einem Wechsel in den Hintergrund konnte die Geländeführung bis zum Neustart der App inaktiv bleiben"
+    ]
+  },
+  {
     "version": "0.8.12-beta",
     "date": "2026-07-30",
     "en": [

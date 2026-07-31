@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
-const APP_VERSION = '0.8.12-beta';
+const APP_VERSION = '0.8.13-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -167,6 +167,11 @@ const TERRAIN_STATUS_RETRY_MS = 6000;
 // advisory: a field with no route is reported as un-checked rather than as unreachable, because
 // the missing route may only mean missing ground data.
 const TERRAIN_TRUST_COVERAGE = 0.98;
+// How long a solve may go unanswered before the worker running it is presumed dead. The worker
+// answers every request it survives — both arms of its try/catch post a message — so silence is
+// not slowness, it is a worker that is no longer there. Generous enough that a phone grinding
+// through a 90 km grid is never mistaken for a corpse.
+const TERRAIN_SOLVE_TIMEOUT_MS = 30000;
 
 // Languages the app UI and pack notes are translated into. 'auto' follows the device.
 const SUPPORTED_LANGS = ['en', 'fr', 'de'];
@@ -1854,6 +1859,58 @@ function terrainInputsChanged(altitudeM) {
     >= TERRAIN_RESOLVE_DISTANCE_M;
 }
 
+// A solve that is never answered used to disable routing for the rest of the page's life.
+// refreshTerrainRoutes guards its own entry on terrain.status === 'solving' and sets that flag
+// itself, so nothing but a reply could clear it — and two things stop a reply from coming.
+//
+// The worker answers everything it survives, so silence means it died. terminate() is silent by
+// design: no 'error' event fires, and glideWorker keeps pointing at a dead-but-truthy object
+// that ensureGlideWorker hands straight back, so every later solve was posted into the void.
+// That is what an OS does to a backgrounded PWA's worker, which is why this showed up as
+// "terrain stopped working until I restarted it" and never reproduced on demand.
+//
+// postMessage can also throw outright — a DataCloneError on the transferred elevation buffer —
+// and the caller's .catch only logs, leaving the flag set with no solve running at all.
+//
+// So: time every solve, and on expiry throw the worker away rather than trust it. The next GPS
+// fix builds a fresh one. lastTerrainSolve is cleared too, or the "has the glider moved far
+// enough" throttle would swallow that retry.
+let glideWatchdog = null;
+
+function clearGlideWatchdog() {
+  if (glideWatchdog === null) return;
+  clearTimeout(glideWatchdog);
+  glideWatchdog = null;
+}
+
+// `retry` says whether the next GPS fix should try again straight away. A worker that was killed
+// under us was working, so it is worth another go at once; a worker that threw is broken, and
+// leaving the last-solve record in place makes the "has the glider moved 400 m" throttle hold the
+// retry back rather than respawning a doomed worker on every fix.
+function abandonSolve(reason, { retry = false } = {}) {
+  clearGlideWatchdog();
+  try { glideWorker?.terminate(); } catch { /* already gone */ }
+  glideWorker = null;
+  if (retry) lastTerrainSolve = null;
+  const terrain = state.terrain;
+  if (terrain.status !== 'unavailable') terrain.status = 'error';
+  terrain.error = reason;
+  terrain.routes = new Map();
+  terrain.solvedIds = new Set();
+  computeRows();
+  scheduleRender();
+}
+
+function startGlideWatchdog() {
+  clearGlideWatchdog();
+  glideWatchdog = window.setTimeout(() => {
+    glideWatchdog = null;
+    if (state.terrain.status !== 'solving') return;
+    console.warn('Glide solve went unanswered; discarding the worker');
+    abandonSolve('solve timed out', { retry: true });
+  }, TERRAIN_SOLVE_TIMEOUT_MS);
+}
+
 function ensureGlideWorker() {
   if (glideWorker) return glideWorker;
   try {
@@ -1861,15 +1918,10 @@ function ensureGlideWorker() {
     glideWorker.onmessage = onGlideResult;
     glideWorker.onerror = error => {
       console.warn('Glide worker failed', error);
-      // Drop it rather than retry in a loop: without routing the app is exactly what it was
-      // before this feature, which is a working app.
-      glideWorker?.terminate();
-      glideWorker = null;
-      state.terrain.status = 'error';
-      state.terrain.error = error.message || 'worker error';
-      state.terrain.routes = new Map();
-      computeRows();
-      scheduleRender();
+      // Same disposal as a timed-out solve, including cancelling its watchdog: an error that
+      // arrives while a solve is outstanding has already answered the question the watchdog was
+      // asking, and leaving the timer armed would fire it against whatever ran next.
+      abandonSolve(error.message || 'worker error');
     };
   } catch (error) {
     console.warn('Workers unavailable', error);
@@ -1882,8 +1934,10 @@ function ensureGlideWorker() {
 function onGlideResult(event) {
   const message = event.data;
   const terrain = state.terrain;
-  // A solve that finished after a newer one started is stale: the glider has moved on.
+  // A solve that finished after a newer one started is stale: the glider has moved on. Leave the
+  // watchdog alone here — it is timing the solve still outstanding, not this one.
   if (!message || message.id !== glideRequestId) return;
+  clearGlideWatchdog();
 
   if (message.type === 'error') {
     terrain.status = 'error';
@@ -2022,22 +2076,31 @@ async function refreshTerrainRoutes() {
   glideRequestId += 1;
 
   const payload = { ...grid, elevations: grid.elevations.buffer };
-  worker.postMessage({
-    type: 'solve',
-    id: glideRequestId,
-    grid: payload,
-    latitude: state.position.latitude,
-    longitude: state.position.longitude,
-    altitudeM,
-    clearanceM,
-    safetyMarginM,
-    targets: candidates.map(row => ({
-      id: row.field.id,
-      latitude: row.field.latitude,
-      longitude: row.field.longitude,
-      elevationM: row.field.elevationM,
-    })),
-  }, [payload.elevations]);
+  try {
+    worker.postMessage({
+      type: 'solve',
+      id: glideRequestId,
+      grid: payload,
+      latitude: state.position.latitude,
+      longitude: state.position.longitude,
+      altitudeM,
+      clearanceM,
+      safetyMarginM,
+      targets: candidates.map(row => ({
+        id: row.field.id,
+        latitude: row.field.latitude,
+        longitude: row.field.longitude,
+        elevationM: row.field.elevationM,
+      })),
+    }, [payload.elevations]);
+  } catch (error) {
+    // Nothing is running, so nothing will ever answer: unlatch now rather than wait out the
+    // watchdog with the list stuck on "checking".
+    console.warn('Could not hand the solve to the worker', error);
+    abandonSolve(String(error?.message || error));
+    return;
+  }
+  startGlideWatchdog();
 }
 
 function scheduleRender() {
