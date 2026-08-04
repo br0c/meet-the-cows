@@ -642,6 +642,31 @@ def main() -> None:
 # pack until the Sunday force-full. A 304 per rebuild is the cheap end of that trade.
 SOURCE_CACHE_TTL_S = float(os.environ.get("MTC_SOURCE_TTL_S", 20 * 3600))
 
+# Statuses that say "not now" rather than "no". A rate limit or a wobbling gateway is worth
+# another go; a 404 or a 401 is not, and retrying those only wastes the build's time.
+TRANSIENT_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+SOURCE_HTTP_ATTEMPTS = 4
+
+
+def _retry_delay_s(error: urllib.error.HTTPError, attempt: int) -> float:
+    """Honour Retry-After when the server names a delay, exponential backoff otherwise."""
+    retry_after = clean(error.headers.get("Retry-After")) if error.headers else ""
+    if retry_after.isdigit():
+        return min(float(retry_after), 60.0)
+    return float(min(2 ** attempt, 16))
+
+
+def _cache_age_text(meta: dict[str, Any]) -> str:
+    fetched = float(meta.get("fetched_at", 0) or 0)
+    if not fetched:
+        return "an earlier run"
+    hours = (time.time() - fetched) / 3600
+    if hours < 1:
+        return f"{hours * 60:.0f} min old"
+    if hours < 48:
+        return f"{hours:.0f} h old"
+    return f"{hours / 24:.0f} days old"
+
 
 def _cache_meta_path(cache_path: Path) -> Path:
     return cache_path.with_name(cache_path.name + ".meta.json")
@@ -706,21 +731,49 @@ def cached_http_get(
             request_headers["If-Modified-Since"] = meta["last_modified"]
 
     request = urllib.request.Request(url, headers=request_headers)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = _read_response(response, on_progress)
-            new_meta = {
-                "url": url,
-                "etag": response.headers.get("ETag", ""),
-                "last_modified": response.headers.get("Last-Modified", ""),
-                "fetched_at": time.time(),
-            }
-    except urllib.error.HTTPError as error:
-        if error.code == 304 and cache_path.is_file():
-            meta["fetched_at"] = time.time()
-            meta_path.write_text(json.dumps(meta))
+    data: bytes | None = None
+    new_meta: dict[str, Any] = {}
+    last_error: urllib.error.HTTPError | None = None
+    for attempt in range(SOURCE_HTTP_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                data = _read_response(response, on_progress)
+                new_meta = {
+                    "url": url,
+                    "etag": response.headers.get("ETag", ""),
+                    "last_modified": response.headers.get("Last-Modified", ""),
+                    "fetched_at": time.time(),
+                }
+            break
+        except urllib.error.HTTPError as error:
+            if error.code == 304 and cache_path.is_file():
+                meta["fetched_at"] = time.time()
+                meta_path.write_text(json.dumps(meta))
+                return cache_path.read_bytes()
+            if error.code not in TRANSIENT_HTTP_STATUS:
+                raise
+            last_error = error
+            if attempt == SOURCE_HTTP_ATTEMPTS - 1:
+                break
+            delay = _retry_delay_s(error, attempt)
+            print(f"{url}: HTTP {error.code}; retry {attempt + 1}/{SOURCE_HTTP_ATTEMPTS - 1} "
+                  f"in {delay:g}s", file=sys.stderr)
+            time.sleep(delay)
+
+    if data is None:
+        # Out of attempts against an upstream that is up but refusing. A cached copy is stale by
+        # definition here — the conditional GET never got its answer — but it is the same bytes
+        # the last successful build shipped, and stale beats losing the whole build to a rate
+        # limit. Loud, because a run that quietly keeps serving week-old data is its own problem.
+        if cache_path.is_file():
+            print(f"{url}: HTTP {last_error.code if last_error else '?'} after "
+                  f"{SOURCE_HTTP_ATTEMPTS} attempts; falling back to the cached copy "
+                  f"({_cache_age_text(meta)})", file=sys.stderr)
             return cache_path.read_bytes()
-        raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"{url}: no response and no cached copy to fall back on")
+
     cache_path.write_bytes(data)
     meta_path.write_text(json.dumps(new_meta))
     return data
@@ -1625,7 +1678,18 @@ def load_openaip_airfields(
         if not api_key:
             raise RuntimeError("OPENAIP_API_KEY is required for --airfield-source openaip unless --openaip-airports is supplied")
         for country in countries:
-            records_by_country[country] = fetch_openaip_airports_for_country(country, raw_dir, api_key, base_url)
+            records = fetch_openaip_airports_for_country(country, raw_dir, api_key, base_url)
+            if not records:
+                # Every country this pack covers has airfields, so zero records is a fetch that
+                # failed quietly, not a fact about the world. Unchecked it builds a pack whose
+                # airfields have lost their names, runways and frequencies, and says nothing —
+                # the one outcome worse than a red build.
+                raise RuntimeError(
+                    f"OpenAIP {country}: no records at all. That is a failed fetch, not an empty "
+                    f"country; refusing to build a pack that would silently drop its airfield "
+                    f"names, runways and frequencies."
+                )
+            records_by_country[country] = records
 
     for country, records in records_by_country.items():
         type_counts: Counter[str] = Counter()
@@ -1702,7 +1766,21 @@ def fetch_openaip_airports_for_country(country: str, raw_dir: Path, api_key: str
                 print(f"OpenAIP {country}: page {page} failed: {first_error}", file=sys.stderr)
                 break
             fallback_url = endpoint
-            data = read_json_url(fallback_url, raw_dir / "openaip_airports_all.json", api_key=api_key)
+            try:
+                data = read_json_url(fallback_url, raw_dir / "openaip_airports_all.json", api_key=api_key)
+            except Exception as fallback_error:
+                # This used to escape as a bare traceback and take the build with it. It still
+                # ends the build — an empty OpenAIP would strip every airfield's name, runway and
+                # frequencies from the pack without saying so, which is worse than not shipping —
+                # but it now says what happened. The retry-and-fall-back-to-cache in
+                # cached_http_get means getting here at all takes a real outage, not one refused
+                # request: the country query and the unfiltered fallback each had four goes and
+                # neither had anything cached to stand in.
+                raise RuntimeError(
+                    f"OpenAIP {country}: the country query failed ({first_error}) and so did the "
+                    f"unfiltered fallback ({fallback_error}), with no cached copy of either. "
+                    f"Refusing to build a pack with no OpenAIP airfields."
+                ) from fallback_error
         records = extract_openaip_records(data)
         country_records = [r for r in records if record_matches_country(r, country)]
         all_records.extend(country_records)
