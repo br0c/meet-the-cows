@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.12-beta",
+    "date": "2026-07-31",
+    "en": [
+      "Terrain calculation bug fixes"
+    ],
+    "fr": [
+      "Corrections du calcul autour du relief"
+    ],
+    "de": [
+      "Fehlerbehebungen bei der Geländeberechnung"
+    ]
+  },
+  {
     "version": "0.8.11-beta",
     "date": "2026-07-30",
     "en": [

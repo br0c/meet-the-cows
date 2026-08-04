@@ -74,6 +74,11 @@ jobs:
       - name: Unit tests (name/translation/incremental logic)
         run: python scripts/test_build_pack_fixes.py
 
+      # Offline, and worth its seconds: a rate-limited OpenAIP took a whole build down on
+      # 4 Aug 2026 because a 429 refused the cached copy sitting next to it.
+      - name: Unit tests (source fetch retry and cache fallback)
+        run: python scripts/test_source_fetch_retry.py
+
       # Same gate as deploy-app.yml: this workflow also ships the app shell, so it must not
       # deploy a version whose APP_VERSIONs drifted or whose release note is missing.
       - name: Check APP_VERSION consistency and release note
