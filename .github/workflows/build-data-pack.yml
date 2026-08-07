@@ -79,6 +79,11 @@ jobs:
       - name: Unit tests (source fetch retry and cache fallback)
         run: python scripts/test_source_fetch_retry.py
 
+      # Also offline: four VAC charts hitting R2 InternalError failed a whole publish on
+      # 7 Aug 2026, with 437 objects already up beside them.
+      - name: Unit tests (R2 publish retry)
+        run: python scripts/test_publish_retry.py
+
       # Same gate as deploy-app.yml: this workflow also ships the app shell, so it must not
       # deploy a version whose APP_VERSIONs drifted or whose release note is missing.
       - name: Check APP_VERSION consistency and release note
@@ -397,8 +402,13 @@ jobs:
       # a pilot mid-season should not lose charts because their phone has not relaunched the
       # app yet. Withdrawing them is a separate, deliberate step once shells have turned over —
       # drop `docs/vac` from the public upload and the public copies stop being refreshed.
+      #
+      # Runs even when the packs publish above failed: they are different buckets, and losing
+      # every chart update because a handful of pack objects wobbled is collateral damage. Still
+      # gated on the BUILD having succeeded — a failed build has no tree worth publishing — and
+      # the job's own failure still stands, so a red run stays red.
       - name: Publish charts to the private R2 bucket
-        if: steps.build.outputs.changed != 'false' && vars.CHARTS_BASE_URL != ''
+        if: ${{ !cancelled() && steps.build.conclusion == 'success' && steps.build.outputs.changed != 'false' && vars.CHARTS_BASE_URL != '' }}
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

@@ -26,8 +26,18 @@ import hashlib
 import mimetypes
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# R2 answers a PutObject with InternalError now and again, and Cloudflare's own guidance is to
+# try it again. boto3's retries all happen inside a single call, over a few seconds, so a wobble
+# lasting longer than that takes the object out for the whole run — which is how four German VAC
+# charts failed a build on 7 Aug 2026 while 437 other objects went up beside them. These passes
+# are the outer loop: wait, then re-upload only what failed, with less concurrency each time so a
+# struggling endpoint is asked more gently rather than harder.
+UPLOAD_RETRY_PASSES = 3
+UPLOAD_RETRY_DELAYS_S = (5, 15, 30)
 
 # Pack JSON changes every build and must never be served stale; media and documents are large,
 # effectively immutable for a given pack version, and are revalidated by the app's own
@@ -154,21 +164,38 @@ def main() -> None:
             )
         return key
 
-    failures = 0
-    if changed:
-        with ThreadPoolExecutor(max_workers=args.workers) as executor:
-            futures = {executor.submit(upload, item): item[0] for item in changed}
+    def upload_pass(items: list[tuple[str, Path]], workers: int, label: str = "") -> list[tuple[str, Path]]:
+        """Upload `items` in parallel; return the ones that did not make it."""
+        failed: list[tuple[str, Path]] = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(upload, item): item for item in items}
             done = 0
             for future in as_completed(futures):
-                key = futures[future]
+                item = futures[future]
                 try:
                     future.result()
-                except Exception as error:  # noqa: BLE001 - report every failure, fail at the end
-                    failures += 1
-                    print(f"  FAILED {key}: {error}", file=sys.stderr)
+                except Exception as error:  # noqa: BLE001 - collect them; the caller retries
+                    failed.append(item)
+                    print(f"  {label}failed {item[0]}: {error}", file=sys.stderr)
                 done += 1
-                if done % 100 == 0 or done == len(changed):
-                    print(f"  uploaded {done}/{len(changed)}", file=sys.stderr)
+                if done % 100 == 0 or done == len(items):
+                    print(f"  {label}uploaded {done}/{len(items)}", file=sys.stderr)
+        return failed
+
+    pending = list(changed)
+    if pending:
+        pending = upload_pass(pending, args.workers)
+        for attempt, delay in enumerate(UPLOAD_RETRY_DELAYS_S[:UPLOAD_RETRY_PASSES], start=1):
+            if not pending:
+                break
+            # Halve the concurrency each pass: whatever the endpoint was struggling with, asking
+            # for the same thing just as hard is not the way to find out if it has recovered.
+            workers = max(1, args.workers >> attempt)
+            print(f"retry {attempt}/{UPLOAD_RETRY_PASSES}: {len(pending)} object(s) in "
+                  f"{delay}s at {workers} worker(s)", file=sys.stderr)
+            time.sleep(delay)
+            pending = upload_pass(pending, workers, label=f"retry {attempt}: ")
+    failures = len(pending)
 
     if stale and args.delete:
         for start in range(0, len(stale), 1000):
@@ -179,7 +206,11 @@ def main() -> None:
         print(f"kept {len(stale)} stale objects (pass --delete to remove)", file=sys.stderr)
 
     if failures:
-        print(f"{failures} upload(s) failed", file=sys.stderr)
+        # Named, not just counted: which objects are missing decides whether the tree a pilot
+        # downloads is stale in a corner or broken in the middle.
+        print(f"{failures} upload(s) failed after {UPLOAD_RETRY_PASSES} retries:", file=sys.stderr)
+        for key, _ in sorted(pending):
+            print(f"  {key}", file=sys.stderr)
         sys.exit(1)
     print("R2 publish complete", file=sys.stderr)
 
