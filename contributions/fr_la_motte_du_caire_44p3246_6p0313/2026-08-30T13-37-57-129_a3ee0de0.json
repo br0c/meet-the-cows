@@ -1,0 +1,69 @@
+{
+  "schema": 3,
+  "type": "update",
+  "fieldId": "fr_la_motte_du_caire_44p3246_6p0313",
+  "fieldCode": "LF0431",
+  "fieldLat": 44.3245643,
+  "fieldLon": 6.0313223,
+  "fieldName": "La Motte du Caire",
+  "proposed": null,
+  "date": "2026-08-30",
+  "description": "",
+  "photoAssets": [
+    {
+      "storage": "r2",
+      "key": "originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_1.jpg",
+      "name": "fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_1.jpg",
+      "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_1.jpg",
+      "size": 2584165,
+      "geo": {
+        "verified": false,
+        "source": "none",
+        "distanceM": null
+      }
+    },
+    {
+      "storage": "r2",
+      "key": "originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_2.jpg",
+      "name": "fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_2.jpg",
+      "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_2.jpg",
+      "size": 3897937,
+      "geo": {
+        "verified": false,
+        "source": "none",
+        "distanceM": null
+      }
+    },
+    {
+      "storage": "r2",
+      "key": "originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_3.jpg",
+      "name": "fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_3.jpg",
+      "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_3.jpg",
+      "size": 3409340,
+      "geo": {
+        "verified": false,
+        "source": "none",
+        "distanceM": null
+      }
+    },
+    {
+      "storage": "r2",
+      "key": "originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_4.jpg",
+      "name": "fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_4.jpg",
+      "url": "https://mtc-contrib-intake.br0c.workers.dev/originals/fr_la_motte_du_caire_44p3246_6p0313_2026-08-30T13-37-57-129_a3ee0de0_4.jpg",
+      "size": 2546221,
+      "geo": {
+        "verified": false,
+        "source": "none",
+        "distanceM": null
+      }
+    }
+  ],
+  "submitter": null,
+  "geo": {
+    "verified": false,
+    "source": "none",
+    "distanceM": null
+  },
+  "submittedAt": "2026-08-30T13:37:58.062Z"
+}
