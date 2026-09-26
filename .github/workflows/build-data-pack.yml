@@ -69,6 +69,10 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
           # Ghostscript recompresses oversized chart/briefing PDFs (optimize_pdf_bytes).
+          # Update first: the runner image ships a package index frozen at image build time, and
+          # when Ubuntu supersedes a package the old .deb leaves the mirrors. Every build from
+          # 23 Sep 2026 died here on 404s for ghostscript 10.02.1~dfsg1-0ubuntu7.8.
+          sudo apt-get update
           sudo apt-get install -y --no-install-recommends ghostscript
 
       - name: Unit tests (name/translation/incremental logic)
