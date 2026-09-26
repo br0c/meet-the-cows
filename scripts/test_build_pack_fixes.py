@@ -821,6 +821,51 @@ def test_merging_a_strip_keeps_the_worse_rating_and_every_photo():
     assert merged[0]["difficulty"] == "C", merged[0]["difficulty"]
     assert len(merged[0]["media"]) == 2, merged[0]["media"]
 
+def test_current_airac_date_is_the_cycle_in_force():
+    import datetime as dt
+    d = dt.date
+    # AIRAC 2609 took effect 3 Sep 2026 and 2610 takes effect 1 Oct 2026.
+    assert bp.current_airac_date(d(2026, 9, 3)) == d(2026, 9, 3)
+    assert bp.current_airac_date(d(2026, 9, 26)) == d(2026, 9, 3)
+    assert bp.current_airac_date(d(2026, 9, 30)) == d(2026, 9, 3)
+    assert bp.current_airac_date(d(2026, 10, 1)) == d(2026, 10, 1)
+    assert bp.current_airac_date(d(2026, 7, 8)) == d(2026, 6, 11)
+
+
+def test_sia_detection_never_takes_the_next_cycle_early():
+    """2 Sep 2026: SIA had already posted eAIP_03_SEP_2026, and the old nearest-date search
+    shipped it a day before it took effect. Only the folder in force may be picked."""
+    import datetime as dt
+    probed = []
+    real_available, real_current = bp.url_looks_available, bp.current_airac_date
+    bp.url_looks_available = lambda url, attempts=1: probed.append(url) or True
+    bp.current_airac_date = lambda today=None: real_current(dt.date(2026, 9, 2))
+    try:
+        root, date = bp.resolve_vac_root("auto", Path("."))
+    finally:
+        bp.url_looks_available, bp.current_airac_date = real_available, real_current
+    assert date == "2026-08-06", date
+    assert "eAIP_06_AUG_2026" in root, root
+    assert all("SEP" not in url for url in probed), probed
+
+
+def test_sia_detection_fails_rather_than_serving_another_cycle():
+    """If the current folder cannot be reached, the build must stop, not fall back to last
+    cycle's charts (stale) or to none (every French field loses its chart)."""
+    probed = []
+    real_available = bp.url_looks_available
+    bp.url_looks_available = lambda url, attempts=1: probed.append((url, attempts)) and False
+    try:
+        bp.resolve_vac_root("auto", Path("."))
+    except SystemExit as stop:
+        assert "Refusing to fall back" in str(stop), stop
+    else:
+        raise AssertionError("resolve_vac_root returned instead of stopping the build")
+    finally:
+        bp.url_looks_available = real_available
+    assert len(probed) == 1 and probed[0][1] == 3, probed
+
+
 def main() -> None:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:

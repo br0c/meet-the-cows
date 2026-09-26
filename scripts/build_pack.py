@@ -2207,40 +2207,49 @@ def resolve_vac_root(vac_root: str, raw_dir: Path) -> tuple[str, str]:
         return value.rstrip("/"), infer_vac_date_from_root(value)
 
     print("Auto-detecting current SIA VAC eAIP root", file=sys.stderr)
-    for cycle_date in candidate_airac_dates():
-        folder = f"eAIP_{cycle_date.strftime('%d_%b_%Y').upper()}"
-        root = f"https://www.sia.aviation-civile.gouv.fr/media/dvd/{folder}/Atlas-VAC/PDF_AIPparSSection/VAC/AD"
-        test_url = f"{root}/AD-2.LFMR.pdf"
-        if url_looks_available(test_url):
-            inferred = cycle_date.isoformat()
-            print(f"Detected SIA VAC root: {root}", file=sys.stderr)
-            return root, inferred
-    print("Could not auto-detect SIA VAC root. Pass --vac-root explicitly.", file=sys.stderr)
-    return "", ""
+    cycle_date = current_airac_date()
+    root = sia_vac_root(cycle_date)
+    if url_looks_available(f"{root}/AD-2.LFMR.pdf", attempts=3):
+        print(f"Detected SIA VAC root: {root}", file=sys.stderr)
+        return root, cycle_date.isoformat()
+    # Only the cycle in force is acceptable. This used to try cycles by distance from today,
+    # which from mid-cycle put the NEXT one first: SIA posts its folder a day or two early, and
+    # the 9 Jul, 6 Aug and 3 Sep 2026 charts all reached pilots before they took effect. The
+    # same list also reached back a year, so a failed probe of the current folder would have
+    # published last cycle's charts without a word. Both are worse than a red build: this
+    # keeps the pack already deployed, and says why.
+    raise SystemExit(
+        f"ERROR: SIA VAC folder for the AIRAC cycle in force ({cycle_date.isoformat()}) is not "
+        f"reachable at {root}. Refusing to fall back to another cycle's charts; pass --vac-root "
+        "explicitly to override.")
 
 
-def candidate_airac_dates() -> list[dt.date]:
-    today = dt.date.today()
-    dates: list[dt.date] = []
-    d = BASE_AIRAC_DATE
-    while d < today - dt.timedelta(days=365):
-        d += dt.timedelta(days=28)
-    while d <= today + dt.timedelta(days=56):
-        dates.append(d)
-        d += dt.timedelta(days=28)
-    # Try most recent/current first, then the next cycle in case SIA pre-published it.
-    dates.sort(key=lambda x: abs((today - x).days))
-    return dates
+def sia_vac_root(cycle_date: dt.date) -> str:
+    folder = f"eAIP_{cycle_date.strftime('%d_%b_%Y').upper()}"
+    return f"https://www.sia.aviation-civile.gouv.fr/media/dvd/{folder}/Atlas-VAC/PDF_AIPparSSection/VAC/AD"
 
 
-def url_looks_available(url: str) -> bool:
-    try:
-        request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.3"})
-        with urllib.request.urlopen(request, timeout=20) as response:
-            content_type = response.headers.get("Content-Type", "").lower()
-            return response.status == 200 and ("pdf" in content_type or url.lower().endswith(".pdf"))
-    except Exception:
-        return False
+def current_airac_date(today: dt.date | None = None) -> dt.date:
+    """Effective date of the AIRAC cycle in force on `today` (cycles are every 28 days)."""
+    today = today or dt.date.today()
+    return BASE_AIRAC_DATE + dt.timedelta(days=(today - BASE_AIRAC_DATE).days // 28 * 28)
+
+
+def url_looks_available(url: str, attempts: int = 1) -> bool:
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(5 * attempt)
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "MeetTheCows/0.3"})
+            with urllib.request.urlopen(request, timeout=20) as response:
+                content_type = response.headers.get("Content-Type", "").lower()
+                return response.status == 200 and ("pdf" in content_type or url.lower().endswith(".pdf"))
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                return False  # definitive: retrying a missing folder only delays the build
+        except Exception:  # noqa: BLE001 - timeouts and resets are worth another try
+            pass
+    return False
 
 
 def infer_vac_date_from_root(vac_root: str) -> str:
