@@ -641,8 +641,8 @@ function sanitize(s) { return String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0
 
 // Echo the request Origin when it is one of the configured app origins or a localhost dev
 // server; anything else gets the first configured origin (and the browser blocks it).
-// ALLOWED_ORIGIN is a comma-separated list so the production app, experimental deployments and
-// the retired origin can all talk to one Worker during a migration. A bare "*" allows any.
+// ALLOWED_ORIGIN is a comma-separated list so the production app and experimental deployments
+// can all talk to one Worker. A bare "*" allows any.
 function allowedOrigins(env) {
   return String(env.ALLOWED_ORIGIN || '*').split(',').map(s => s.trim()).filter(Boolean);
 }

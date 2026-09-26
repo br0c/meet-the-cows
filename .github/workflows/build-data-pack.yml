@@ -26,8 +26,6 @@ on:
 
 permissions:
   contents: write  # push the updated translation cache back to main (see "Persist translation cache")
-  pages: write
-  id-token: write
   actions: write
 
 # Its own group, not one shared with deploy-app. They used to share `pages-deploy` because both
@@ -38,10 +36,8 @@ permissions:
 # terrain-clearance fix. Separate groups let the app ship in minutes while the data takes its
 # time; each still serialises against itself, which is the part that matters.
 #
-# The one assumption: with DEPLOY_TARGET=cloudflare the two write to different places —
-# this one to the R2 bucket, deploy-app to the Worker. Both still carry GitHub Pages steps
-# for the non-Cloudflare configuration, and under THAT setting they would both publish to
-# the repo's single Pages site. If DEPLOY_TARGET ever goes back, put them on one group again.
+# They write to different places — this one to the R2 buckets, deploy-app to the Worker. If
+# they ever publish to the same place again, put them back on one group.
 concurrency:
   group: data-pack-build
   cancel-in-progress: false
@@ -50,9 +46,6 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-
-    env:
-      PAGES_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
 
     steps:
       - name: Checkout
@@ -87,18 +80,6 @@ jobs:
       # 7 Aug 2026, with 437 objects already up beside them.
       - name: Unit tests (R2 publish retry)
         run: python scripts/test_publish_retry.py
-
-      # Same gate as deploy-app.yml: this workflow also ships the app shell, so it must not
-      # deploy a version whose APP_VERSIONs drifted or whose release note is missing.
-      - name: Check APP_VERSION consistency and release note
-        run: |
-          app=$(grep -o "APP_VERSION = '[^']*'" src/app.js | head -1)
-          sw=$(grep -o "APP_VERSION = '[^']*'" service-worker.js | head -1)
-          [ -n "${app}" ] && [ "${app}" = "${sw}" ] || { echo "ERROR: APP_VERSION mismatch"; exit 1; }
-          version=$(echo "${app}" | sed "s/.*'\(.*\)'/\1/")
-          jq -e --arg v "${version}" '.[] | select(.version == $v)' release-notes.json > /dev/null \
-            || { echo "ERROR: release-notes.json has no entry for ${version} — write the release note first"; exit 1; }
-          echo "release note present for ${version}"
 
       # Incremental by default: the build short-circuits when the source fingerprint AND
       # PACK_SCHEMA_VERSION match the published state.json, so pushes/crons that change nothing
@@ -147,8 +128,7 @@ jobs:
       # Persist translations so each build only pays DeepL for new/changed text. Three layers,
       # freshest first — the DeepL key is a capped lifetime quota, so losing this cache burns
       # quota that cannot be bought back:
-      #   1. Actions cache (below): fast path, but evictable (7-day idle / 10 GB repo cap, under
-      #      constant pressure from the multi-GB pages-pack-* entries saved each build).
+      #   1. Actions cache (below): fast path, but evictable (7-day idle / 10 GB repo cap).
       #   2. data/translation-cache.json in git: durable + versioned; committed back after each
       #      successful build ("Persist translation cache" step).
       #   3. translation-cache.json published next to each pack (self-heal in build_pack.py).
@@ -237,10 +217,9 @@ jobs:
           # is identical across packs, so any pack works. Use the France pack as the canonical one
           # (stable id — the Alps pack was split into alps-west/alps-east in schema 14).
           # Read from the live data origin, per channel. It pointed at the GitHub Pages copy
-          # before — frozen since the Cloudflare migration, so the URL 404s, every state
-          # comparison failed, and every nightly was silently a FULL rebuild. The Pages URL
-          # remains only as the fallback for a non-Cloudflare deployment, where it is live.
-          PACK_STATE_URL: ${{ vars.PACKS_BASE_URL != '' && format('{0}{1}/fr/state.json', vars.PACKS_BASE_URL, steps.channel.outputs.prefix) || format('{0}packs/fr/state.json', env.PAGES_BASE_URL) }}
+          # once — frozen since the Cloudflare migration, so the URL 404s, every state
+          # comparison failed, and every nightly was silently a FULL rebuild.
+          PACK_STATE_URL: ${{ vars.PACKS_BASE_URL != '' && format('{0}{1}/fr/state.json', vars.PACKS_BASE_URL, steps.channel.outputs.prefix) || '' }}
           # Dev channel: union-merge production's published translation cache (see
           # merge_translation_cache_from_url) — always from the PROD prefix, that is the point.
           TRANSLATION_MERGE_URL: ${{ steps.channel.outputs.prod != 'true' && vars.PACKS_BASE_URL != '' && format('{0}packs/fr/translation-cache.json', vars.PACKS_BASE_URL) || '' }}
@@ -256,8 +235,8 @@ jobs:
           MTC_SOURCE_TTL_S: "0"
         run: |
           # Keep .cache/_multi/raw (the restored source-download cache); only the pack output
-          # and the site staging are rebuilt from scratch each run.
-          rm -rf data/packs dist/site
+          # is rebuilt from scratch each run.
+          rm -rf data/packs
 
           # Multi-pack: one merged, translated build sliced into FR/CH/DE/IT/AT + Alps. Country
           # lists are forced to all build countries by --multi-pack, so they are not passed here.
@@ -334,56 +313,10 @@ jobs:
           done
           git push origin HEAD:main
 
-      - name: Cache generated data pack for app-only deploys
-        if: steps.build.outputs.changed != 'false' && steps.channel.outputs.prod == 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: data/packs
-          key: pages-pack-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Assemble Pages site
-        if: steps.build.outputs.changed != 'false'
-        run: |
-          mkdir -p dist/site/packs
-
-          cp index.html styles.css service-worker.js manifest.webmanifest release-notes.json config.js dist/site/
-          if [ -d icons ]; then cp -R icons dist/site/icons; fi
-          mkdir -p dist/site/src
-          cp src/app.js dist/site/src/app.js
-
-          # Every pack dir + the shared media tree (_shared) + packs.json (written by the build).
-          cp -R data/packs/. dist/site/packs/
-
-          find dist/site -maxdepth 3 -type f | sort | head -80
-          du -sh dist/site dist/site/packs
-
-      # See deploy-app.yml for what each repository variable means; the two workflows must emit
-      # the same config so the shell and the packs agree on where data lives.
-      - name: Write deployment config
-        if: steps.build.outputs.changed != 'false'
-        env:
-          PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
-          CHARTS_BASE_URL: ${{ vars.CHARTS_BASE_URL }}
-          # NB: `x == 'main' && '' || x` does NOT work — '' is falsy, so the || arm always
-          # wins and every deployment is labelled with its branch. Test the negative instead.
-          CHANNEL: ${{ github.ref_name != 'main' && github.ref_name || '' }}
-        run: |
-          python - <<'PY' > dist/site/config.js
-          import json, os
-          cfg = {
-              "packsBase": os.environ.get("PACKS_BASE_URL", ""),
-              "chartsBase": os.environ.get("CHARTS_BASE_URL", ""),
-              "channel": os.environ.get("CHANNEL", ""),
-          }
-          print("// Generated at deploy time — see config.js in the repo for the field docs.")
-          print(f"self.MTC_CONFIG = {json.dumps(cfg, indent=2)};")
-          PY
-          cat dist/site/config.js
-
       # --- Pack data to R2 (when PACKS_BASE_URL points at a data origin) ----------------------
       # The ~300 MB of packs is uploaded once to the bucket and read by every app deployment,
       # so experimental builds share production data instead of duplicating it. The bucket
-      # layout mirrors the site (packs/<id>/…), which is why no build output had to change.
+      # layout is the build output as-is (packs/<id>/…, _shared/, packs.json).
       # --remote writes to the real bucket; only changed objects are re-uploaded.
       - name: Publish packs to R2
         if: steps.build.outputs.changed != 'false' && vars.PACKS_BASE_URL != ''
@@ -394,7 +327,7 @@ jobs:
           BUCKET: ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }}
         run: |
           python -m pip install --quiet boto3
-          python scripts/publish_packs_r2.py --dir dist/site/packs --prefix "${{ steps.channel.outputs.prefix }}" --bucket "$BUCKET"
+          python scripts/publish_packs_r2.py --dir data/packs --prefix "${{ steps.channel.outputs.prefix }}" --bucket "$BUCKET"
 
       # --- Charts to the PRIVATE charts bucket ------------------------------------------------
       # Most charts carry no redistribution right (DFS, ENAV), so they are served by the Worker
@@ -419,33 +352,14 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           CHARTS_BUCKET: ${{ vars.R2_CHARTS_BUCKET || 'mtc-charts' }}
         run: |
-          if [ -d dist/site/packs/_shared/docs/vac ]; then
+          if [ -d data/packs/_shared/docs/vac ]; then
             python scripts/publish_packs_r2.py \
-              --dir dist/site/packs/_shared/docs/vac \
+              --dir data/packs/_shared/docs/vac \
               --prefix "${{ steps.channel.outputs.chart_prefix }}" \
               --bucket "$CHARTS_BUCKET"
           else
             echo "no charts in this build; nothing to publish"
           fi
-
-      # --- GitHub Pages (default) ------------------------------------------------------------
-      - name: Setup Pages
-        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare' && steps.channel.outputs.prod == 'true'
-        uses: actions/configure-pages@v6
-
-      - name: Upload Pages artifact
-        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare' && steps.channel.outputs.prod == 'true'
-        uses: actions/upload-pages-artifact@v5
-        with:
-          name: github-pages-${{ github.run_attempt }}
-          path: dist/site
-
-      - name: Deploy to GitHub Pages
-        if: steps.build.outputs.changed != 'false' && vars.DEPLOY_TARGET != 'cloudflare' && steps.channel.outputs.prod == 'true'
-        id: deployment
-        uses: actions/deploy-pages@v5
-        with:
-          artifact_name: github-pages-${{ github.run_attempt }}
 
       # No Cloudflare deploy here on purpose. This workflow used to push dist/site to a Cloudflare
       # PAGES project on every rebuild — 25 seconds a run, uploading an app shell that nothing
@@ -458,9 +372,5 @@ jobs:
       - name: Show URL
         if: steps.build.outputs.changed != 'false'
         run: |
-          if [ "${{ vars.DEPLOY_TARGET }}" = "cloudflare" ]; then
-            echo "Packs published to R2 (bucket ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }})."
-            echo "The app shell is deployed separately by deploy-app.yml."
-          else
-            echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
-          fi
+          echo "Packs published to R2 (bucket ${{ vars.R2_PACKS_BUCKET || 'mtc-packs' }})."
+          echo "The app shell is deployed separately by deploy-app.yml."

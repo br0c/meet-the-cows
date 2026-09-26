@@ -19,21 +19,11 @@ on:
       - "deploy/**"
       - "scripts/apply_channel_branding.py"
       - "scripts/hash_assets.py"
-      - "scripts/fetch_pages_pack.py"
-      - "scripts/make_pages_pack_index.py"
       - ".github/workflows/deploy-app.yml"
-      - ".github/workflows/build-data-pack.yml"
   workflow_dispatch:
-    inputs:
-      deploy_retired_origin:
-        description: "Also deploy to GitHub Pages (br0c.github.io), the retired origin, so its frozen copy learns the app has moved"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
   actions: read
 
 # Its own group, so an app deploy is never queued behind a data-pack rebuild. See the matching
@@ -46,9 +36,6 @@ jobs:
   deploy-app:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
-    env:
-      PAGES_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
 
     steps:
       - name: Checkout
@@ -79,30 +66,15 @@ jobs:
       # sources are unchanged, and the app shell never shipped (0.7.1-beta went out this way).
       # The two no longer serialise against each other and no longer need to: this one is the
       # only thing that publishes the shell, and build-data-pack publishes only the pack data.
-      # Packs only travel with the app shell while they are served from the same origin. Once
-      # PACKS_BASE_URL points at a data host, these two steps would download ~300 MB and upload
-      # it again for nothing, so they are skipped and an app deploy becomes a few hundred KB.
-      - name: Restore latest generated data pack cache
-        if: vars.PACKS_BASE_URL == ''
-        uses: actions/cache/restore@v6
-        with:
-          path: data/packs
-          key: pages-pack-${{ github.run_id }}
-          restore-keys: |
-            pages-pack-
-
-      - name: Restore packs from current Pages deployment when cache is unavailable
-        if: vars.PACKS_BASE_URL == ''
+      #
+      # The shell carries no packs: the app reads them from PACKS_BASE_URL. Packs used to travel
+      # inside the site while it was served from GitHub Pages; that path is gone, so a deploy
+      # with no data host configured would ship an app with nothing to show. Refuse it instead.
+      - name: Check a data host is configured
+        env:
+          PACKS_BASE_URL: ${{ vars.PACKS_BASE_URL }}
         run: |
-          if [ -f "data/packs/packs.json" ]; then
-            echo "Using cached data packs."
-            exit 0
-          fi
-
-          # Fetches every pack listed in packs.json plus the shared media tree.
-          python3 scripts/fetch_pages_pack.py \
-            --base-url "${PAGES_BASE_URL}" \
-            --output data/packs
+          [ -n "${PACKS_BASE_URL}" ] || { echo "ERROR: PACKS_BASE_URL is not set — the app would have no pack data"; exit 1; }
 
       - name: Assemble site
         run: |
@@ -113,19 +85,12 @@ jobs:
           mkdir -p dist/site/src
           cp src/app.js src/terrain.js src/glide-worker.js dist/site/src/
 
-          # All pack dirs + shared media (_shared) + packs.json — only when packs are served
-          # from this origin; otherwise the app reads them from the data host.
-          if [ -d data/packs ]; then mkdir -p dist/site/packs && cp -R data/packs/. dist/site/packs/; fi
-
           find dist/site -maxdepth 3 -type f | sort | head -80
           du -sh dist/site
 
       # Deployment config is written per environment, overwriting the committed defaults (which
       # stay empty so a local checkout behaves like a plain single-origin site).
       #   PACKS_BASE_URL      data origin for packs, e.g. https://data.meetthecows.org/ ('' = self)
-      # The app's own address and the landing site are NOT here — they are constants in
-      # src/app.js. A retired origin stops being deployed to, so anything it needs in order to
-      # know it is retired has to already be in the shell it is serving.
       - name: Write deployment config
         env:
           # Non-main deployments read the DEV data channel (published under dev/ by a
@@ -226,8 +191,8 @@ jobs:
             printf '/*\n  X-Robots-Tag: noindex, nofollow\n' >> dist/site/_headers
             echo "channel '${CHANNEL}': marked noindex"
             # The dev branch has its own origin, so it calls itself "next" on the
-            # home screen. The internal channel value stays the branch name — that is what
-            # suppresses the migration notice and what Settings shows a tester.
+            # home screen. The internal channel value stays the branch name — that is
+            # what Settings shows a tester.
             LABEL="${CHANNEL}"
             [ "${CHANNEL}" = "dev" ] && LABEL="next"
             python3 scripts/apply_channel_branding.py --dir dist/site --channel "${LABEL}"
@@ -249,33 +214,6 @@ jobs:
           # runtime. Content-addressed names make that combination unaskable rather than unlikely.
           python3 scripts/hash_assets.py --dir dist/site
 
-      # --- GitHub Pages ------------------------------------------------------------------------
-      # The default target, and — once DEPLOY_TARGET is 'cloudflare' — also the retired origin.
-      # A retired origin still needs one last deploy: its copy of the shell is frozen at whatever
-      # was published when the move happened, so it can only learn that the app has moved by being
-      # handed a shell that already knows. deploy_retired_origin does exactly that, once, without
-      # touching DEPLOY_TARGET and risking it being left pointed at the wrong host.
-      # This replaces the whole site there, dropping any packs it still carries. That is intended:
-      # the app reads packs from PACKS_BASE_URL now, and a retired origin should stop serving
-      # 300 MB it no longer owns.
-      - name: Setup Pages
-        if: vars.DEPLOY_TARGET != 'cloudflare' || inputs.deploy_retired_origin
-        uses: actions/configure-pages@v6
-
-      - name: Upload Pages artifact
-        if: vars.DEPLOY_TARGET != 'cloudflare' || inputs.deploy_retired_origin
-        uses: actions/upload-pages-artifact@v5
-        with:
-          name: github-pages-${{ github.run_attempt }}
-          path: dist/site
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        if: vars.DEPLOY_TARGET != 'cloudflare' || inputs.deploy_retired_origin
-        uses: actions/deploy-pages@v5
-        with:
-          artifact_name: github-pages-${{ github.run_attempt }}
-
       # --- Cloudflare Workers (static assets) --------------------------------------------------
       # Both branches, one config, name chosen per branch — see deploy/wrangler.toml for why they
       # must not diverge. main -> meet-the-cows-app (app.meetthecows.org),
@@ -286,7 +224,6 @@ jobs:
       # worker would then cache as though it were packs.json. not_found_handling in
       # deploy/wrangler.toml gives a 404 instead. Do not reintroduce a Pages deploy here.
       - name: Deploy to Cloudflare Workers
-        if: vars.DEPLOY_TARGET == 'cloudflare'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -301,13 +238,9 @@ jobs:
 
       - name: Show URL
         run: |
-          if [ "${{ vars.DEPLOY_TARGET }}" = "cloudflare" ]; then
-            if [ "${{ github.ref_name }}" = "main" ]; then
-              echo "Worker meet-the-cows-app  -> app.meetthecows.org"
-            else
-              echo "Worker meet-the-cows-next (experimental channel)"
-            fi
-            echo "Attach the custom domain in: Cloudflare -> Compute (Workers) -> <worker> -> Settings -> Domains & Routes"
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "Worker meet-the-cows-app  -> app.meetthecows.org"
           else
-            echo "Deployed to ${{ steps.deployment.outputs.page_url }}"
+            echo "Worker meet-the-cows-next (experimental channel)"
           fi
+          echo "Attach the custom domain in: Cloudflare -> Compute (Workers) -> <worker> -> Settings -> Domains & Routes"

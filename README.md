@@ -315,40 +315,31 @@ carries the few things that differ per deployment:
 | Field | Meaning |
 |---|---|
 | `packsBase` | Base that `packs/…` paths resolve against. Empty = same origin as the app; set it to serve pack data from a separate host so the shell and the ~300 MB of packs deploy independently. |
-| `channel` | Label for a non-production deployment. Any non-empty value also suppresses the migration notice, because an experimental build is a deliberate destination, not a retired one. |
+| `channel` | Label for a non-production deployment, shown in Settings and beside the version. |
 
-The committed values are all empty, so a plain checkout behaves exactly like the original
-single-origin site. Both workflows overwrite the file at deploy time from the `PACKS_BASE_URL`
-repository variable.
-
-The app's own address and the landing site are deliberately *not* config: they are constants at
-the top of `src/app.js`. A copy served from any other origin understands itself to be retired and
-offers a guided move — silent on the canonical origin, on a labelled channel, and on localhost.
-They live in the shell rather than in deploy-time config because the copy that most needs them is
-the retired one, which by definition stops being deployed to and would never receive them. Once a
-retired origin has been handed a shell that knows this, it keeps saying so with nothing left
-switched on anywhere; `deploy-app.yml`'s `deploy_retired_origin` input does that one deploy.
+The committed values are all empty, so a plain checkout behaves like a single-origin site.
+`deploy-app.yml` overwrites the file at deploy time from the `PACKS_BASE_URL` repository variable,
+and refuses to deploy when it is unset: the shell carries no packs of its own.
 
 ### Deploy target
 
-`DEPLOY_TARGET` (repository variable) selects where the assembled site goes — `cloudflare` for the
-Workers deploy that serves the live app, unset for GitHub Pages. The Cloudflare path is a direct
-upload rather than a git-connected build, so the heavy pack build stays in Actions with its caches
-and secrets and Cloudflare only receives the finished directory. `main` deploys to the production Worker;
-every other branch deploys to the channel Worker under its own name.
+The app is a Cloudflare Worker serving static assets. The deploy is a direct upload rather than a
+git-connected build, so the heavy pack build stays in Actions with its caches and secrets and
+Cloudflare only receives the finished directory. `main` deploys to the production Worker; every
+other branch deploys to the channel Worker under its own name. The pack data goes separately, from
+`build-data-pack.yml` to an R2 bucket.
 
-The GitHub Pages path is now only the retired origin, `br0c.github.io/meet-the-cows`. It runs on a
-manual dispatch with the `deploy_retired_origin` input, whose one job is to hand that frozen copy a
-shell that knows the app has moved.
+GitHub Pages is no longer deployed to. `br0c.github.io/meet-the-cows`, the app's first address,
+has been unpublished; installed copies from there keep running from their own cache but never
+update.
 
 Nothing deploys to Cloudflare **Pages**. Both custom domains are Workers, and a Pages project
 answered unknown paths with the shell and a `200`, which the service worker would cache as though
 it were pack data; the Worker's `not_found_handling` returns a `404`.
 
-When `PACKS_BASE_URL` is set, `scripts/publish_packs_r2.py` uploads the pack tree to an R2
-bucket (S3 API, hash-compared so only changed objects move) and the packs are then left out of
-the site upload — a deployment becomes a few hundred KB instead of 300 MB, and every app
-deployment reads the same pack data.
+`scripts/publish_packs_r2.py` uploads the pack tree to that bucket (S3 API, hash-compared so only
+changed objects move). The packs never travel with the app, so a deployment is a few hundred KB
+instead of 300 MB, and every app deployment reads the same pack data.
 
 Major commercial/controlled airports and active military bases — where a glider must not land — are excluded from the pack so they never appear as landing options. They otherwise leak in from the landout sources and dominate the pinned "best options". The rule is source-agnostic: any airfield with a paved runway of 2000 m or more, plus a short explicit ICAO list for the major/military fields with shorter runways (both in `scripts/build_pack.py`). Real gliding aerodromes in this dataset top out around 1300 m, so this does not touch soaring sites.
 

@@ -1,6 +1,6 @@
 import { TerrainStore, terrainSupported, terrainPaths, tileKeyFor, tileKeysForBounds, NODATA as TERRAIN_NODATA } from './terrain.js';
 
-const APP_VERSION = '0.8.12-beta';
+const APP_VERSION = '0.8.13-beta';
 // Stable data cache (media/docs/pack JSON); matches service-worker.js so app updates don't
 // wipe a downloaded pack. (Old versioned caches are dropped by the service worker on activate.)
 const DATA_CACHE = 'mtc-data';
@@ -76,42 +76,6 @@ async function ensureChartToken() {
   await chartTokenPending;
   return chartToken.value;
 }
-// The app's permanent addresses. Hardcoded rather than configured, because moving house is a
-// one-way trip and not a setting — and because the copy that most needs to know it has been
-// retired is the frozen one on the old origin, which by definition stops receiving deploy-time
-// configuration. Baking it into the shell means a single deploy to that origin is enough,
-// forever, with no variable left switched on somewhere waiting to be forgotten.
-const CANONICAL_APP_URL = 'https://app.meetthecows.org/';
-const SITE_URL = 'https://meetthecows.org/';
-
-// A copy served from anywhere other than CANONICAL_APP_URL understands itself to be a retired
-// deployment and offers a guided move. null = say nothing.
-const MIGRATION = (() => {
-  try {
-    const url = new URL(CANONICAL_APP_URL);
-    if (url.origin === self.location.origin) return null;
-    // A labelled channel (next, a branch preview) is a deliberate alternate deployment, not a
-    // retired one: testers are there on purpose and must not be told the app has moved.
-    if (String(CONFIG.channel || '').trim()) return null;
-    // Nor is somebody's own machine. Without this every local checkout would nag its developer
-    // to go and use production instead.
-    if (isLocalOrigin(self.location)) return null;
-    return { url: url.toString(), host: url.host, site: SITE_URL };
-  } catch {
-    return null;  // a malformed constant must never break the app
-  }
-})();
-
-function isLocalOrigin(location) {
-  const host = location.hostname;
-  return location.protocol === 'file:'
-    || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
-    || host.endsWith('.local') || host.endsWith('.localhost');
-}
-const MIGRATION_SNOOZE_KEY = 'mtc-migration-snoozed-until';
-// Deliberately short: the user base is small, so a daily reminder moves everyone across in
-// days rather than months. Long enough that it never nags twice in one flying day.
-const MIGRATION_SNOOZE_MS = 24 * 60 * 60 * 1000;
 const SETTINGS_KEY = 'mtc-settings-v2';
 const syncedVersionKey = packId => `mtc-synced-version-${packId}`;
 const syncedManifestKey = packId => `mtc-synced-manifest-${packId}`;
@@ -389,16 +353,6 @@ const STRINGS = {
     searchResults: 'Search results', noMatches: q => `No fields match “${q}”.`,
     whatsNew: 'What’s new', updatedTo: v => `🆕 Updated to ${v}`,
     updateReady: '🆕 A new version is ready.', reloadNow: 'Reload',
-    migBanner: 'Meet the Cows has a new home. Same app, new address — move when you’re on Wi-Fi.',
-    migDetails: 'Details', migTitle: 'The app is moving',
-    migIntro: 'Meet the Cows now lives on its own address. This one keeps working for now, but updates and new features land on the new one.',
-    migStep1: 'Open the new address', migStep1Note: 'tap the button below, or type it in.',
-    migStep2: 'Install it', migStep2Note: '“Add to Home Screen”, exactly as you did before.',
-    migStep3: 'Download your packs again', migStep3Note: 'your offline maps and charts can’t follow the move, so pick your regions and download once.',
-    migStep4: 'Delete the old icon', migStep4Note: 'once the new one works offline.',
-    migWarnLead: 'Do this at home, on Wi-Fi.', migWarnBody: 'Re-downloading your packs uses a few hundred MB. Don’t start it at the airfield or before a flight.',
-    migOpen: h => `Open ${h}`, migSnooze: 'Remind me tomorrow', migWhy: 'Why the move?',
-    migSettingsAction: 'How to move',
     licenceLabel: 'Licence', licenceValue: 'Personal use · data reuse on request',
     noNotesFile: 'Release notes are unavailable offline.',
     contribute: 'Contribute an update', contribTitle: 'Contribute an update',
@@ -549,16 +503,6 @@ const STRINGS = {
     searchResults: 'Résultats de recherche', noMatches: q => `Aucun terrain ne correspond à « ${q} ».`,
     whatsNew: 'Nouveautés', updatedTo: v => `🆕 Mise à jour ${v}`,
     updateReady: '🆕 Une nouvelle version est prête.', reloadNow: 'Recharger',
-    migBanner: 'Meet the Cows a une nouvelle adresse. Même application — déménagez en Wi-Fi.',
-    migDetails: 'Détails', migTitle: 'L’application déménage',
-    migIntro: 'Meet the Cows a désormais sa propre adresse. Celle-ci continue de fonctionner, mais les mises à jour et les nouveautés arrivent sur la nouvelle.',
-    migStep1: 'Ouvrez la nouvelle adresse', migStep1Note: 'touchez le bouton ci-dessous, ou saisissez-la.',
-    migStep2: 'Installez-la', migStep2Note: '« Ajouter à l’écran d’accueil », comme la première fois.',
-    migStep3: 'Retéléchargez vos packs', migStep3Note: 'vos cartes et fiches hors ligne ne peuvent pas suivre le déménagement : choisissez vos régions et téléchargez une fois.',
-    migStep4: 'Supprimez l’ancienne icône', migStep4Note: 'une fois que la nouvelle fonctionne hors ligne.',
-    migWarnLead: 'Faites-le chez vous, en Wi-Fi.', migWarnBody: 'Retélécharger vos packs représente quelques centaines de Mo. Ne le lancez pas sur le terrain ni avant un vol.',
-    migOpen: h => `Ouvrir ${h}`, migSnooze: 'Me le rappeler demain', migWhy: 'Pourquoi ce changement ?',
-    migSettingsAction: 'Comment déménager',
     licenceLabel: 'Licence', licenceValue: 'Usage personnel · réutilisation des données sur demande',
     noNotesFile: 'Notes de version indisponibles hors ligne.',
     contribute: 'Proposer une mise à jour', contribTitle: 'Proposer une mise à jour',
@@ -709,16 +653,6 @@ const STRINGS = {
     searchResults: 'Suchergebnisse', noMatches: q => `Keine Felder für „${q}“.`,
     whatsNew: 'Neuigkeiten', updatedTo: v => `🆕 Aktualisiert auf ${v}`,
     updateReady: '🆕 Eine neue Version ist bereit.', reloadNow: 'Neu laden',
-    migBanner: 'Meet the Cows hat eine neue Adresse. Gleiche App — wechsle im WLAN.',
-    migDetails: 'Details', migTitle: 'Die App zieht um',
-    migIntro: 'Meet the Cows hat jetzt eine eigene Adresse. Diese hier funktioniert vorerst weiter, aber Updates und neue Funktionen kommen auf der neuen.',
-    migStep1: 'Neue Adresse öffnen', migStep1Note: 'unten tippen oder die Adresse eingeben.',
-    migStep2: 'Installieren', migStep2Note: '„Zum Startbildschirm hinzufügen“, genau wie beim ersten Mal.',
-    migStep3: 'Pakete erneut laden', migStep3Note: 'deine Offline-Karten und -Blätter können nicht mitziehen: Regionen wählen und einmal herunterladen.',
-    migStep4: 'Altes Symbol löschen', migStep4Note: 'sobald das neue offline funktioniert.',
-    migWarnLead: 'Mach das zu Hause, im WLAN.', migWarnBody: 'Das erneute Laden der Pakete kostet einige hundert MB. Nicht am Flugplatz oder vor dem Start starten.',
-    migOpen: h => `${h} öffnen`, migSnooze: 'Morgen erinnern', migWhy: 'Warum der Umzug?',
-    migSettingsAction: 'Wie du umziehst',
     licenceLabel: 'Lizenz', licenceValue: 'Private Nutzung · Datenweiterverwendung auf Anfrage',
     noNotesFile: 'Versionshinweise offline nicht verfügbar.',
     contribute: 'Update beitragen', contribTitle: 'Update beitragen',
@@ -2214,14 +2148,13 @@ function render() {
       ${state.contribFor ? renderContribute(state.fields.find(f => f.id === state.contribFor)) : ''}
       ${renderNewField()}
       ${state.showReleaseNotes ? renderReleaseNotes() : ''}
-      ${renderMigrationSheet()}
       ${renderBugReport()}
       ${renderOfflineBar()}
     </div>
   `;
   // Lock background scroll while an overlay is open, so scrolling a short bottom-sheet doesn't
   // fall through to the list behind it.
-  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport || state.showMigrationSheet));
+  document.body.classList.toggle('modal-open', !!(selected || state.contribFor || state.showNewField || state.showReleaseNotes || state.showBugReport));
   attachEvents();
   requestAnimationFrame(() => {
     const detail = document.querySelector('.detail');
@@ -2289,7 +2222,6 @@ function renderWarnings() {
 function renderMainPage() {
   return `
     ${renderSearchBox()}
-    ${renderMigrationBanner()}
     ${renderReloadBanner()}
     ${renderReleaseBanner()}
     ${renderUpdateBanner()}
@@ -2302,90 +2234,6 @@ function renderMainPage() {
 /** True when the glide numbers on screen are actually coming from routed paths. */
 function terrainRoutingLive() {
   return state.settings.terrainRouting && state.terrain.routes.size > 0;
-}
-
-// Shown only on a retired deployment (see MIGRATION). Amber rather than the teal used by the
-// update banners, so it reads as "something different", without the red that means danger.
-// Never blocks the app: a pilot at the airfield must always reach their fields.
-function migrationSnoozed() {
-  try {
-    return Number(localStorage.getItem(MIGRATION_SNOOZE_KEY) || 0) > Date.now();
-  } catch {
-    return false;  // private mode / storage disabled: show the notice rather than hide it
-  }
-}
-
-/**
- * The permanent way back to the move instructions, in Settings.
- *
- * Dismissing the banner used to close the only door to them: a pilot who reads "the app has
- * moved", thinks "not now", and comes back an hour later ready to do it found nothing at all,
- * and had to wait for the reminder to come round again. A move is exactly the kind of thing
- * people choose their own moment for, so the instructions have to keep still.
- *
- * Only exists on a retired deployment — MIGRATION is null on the canonical origin, on a labelled
- * channel and on localhost, and this renders nothing there.
- */
-function renderMigrationCard() {
-  if (!MIGRATION) return '';
-  return `
-      <div class="settings-card">
-        <h3>${escapeHtml(t('migTitle'))}</h3>
-        <p class="settings-note">${escapeHtml(t('migIntro'))}</p>
-        <div class="button-row single">
-          <button class="primary" id="migrationSettingsBtn">${escapeHtml(t('migSettingsAction'))}</button>
-        </div>
-      </div>`;
-}
-
-function renderMigrationBanner() {
-  if (!MIGRATION || migrationSnoozed()) return '';
-  return `
-    <div class="migration-banner">
-      <span>${escapeHtml(t('migBanner'))}</span>
-      <button id="migrationBannerBtn">${escapeHtml(t('migDetails'))}</button>
-    </div>
-  `;
-}
-
-/**
- * The terms of switching terrain routing on, shown every time it is switched on.
- *
- * Not a one-off dismissal stored on the device: this feature changes which fields the app calls
- * reachable, and the moment a pilot chooses to trust it is the moment worth interrupting. Turning
- * it off is never gated — only turning it on.
- */
-function renderMigrationSheet() {
-  if (!MIGRATION || !state.showMigrationSheet) return '';
-  const step = (n, title, note) => `
-    <div class="mig-step"><span class="mig-step-n">${n}</span>
-      <span><strong>${escapeHtml(title)}</strong> <span class="mig-step-note">— ${escapeHtml(note)}</span></span>
-    </div>`;
-  const why = MIGRATION.site
-    ? `<a class="mig-why" href="${escapeHtml(MIGRATION.site)}" target="_blank" rel="noopener">${escapeHtml(t('migWhy'))}</a>`
-    : '';
-  return `
-    <div class="detail-backdrop" id="migrationBackdrop">
-      <article class="detail" role="dialog" aria-modal="true" aria-label="${escapeHtml(t('migTitle'))}">
-        <button id="closeMigration">${t('close')}</button>
-        <div class="detail-title-row"><h2>${escapeHtml(t('migTitle'))}</h2></div>
-        <p class="detail-meta">${escapeHtml(t('migIntro'))}</p>
-        <div class="mig-url">🐄 ${escapeHtml(MIGRATION.host)}</div>
-        <div class="mig-steps">
-          ${step(1, t('migStep1'), t('migStep1Note'))}
-          ${step(2, t('migStep2'), t('migStep2Note'))}
-          ${step(3, t('migStep3'), t('migStep3Note'))}
-          ${step(4, t('migStep4'), t('migStep4Note'))}
-        </div>
-        <div class="mig-warn">⚠️ <span><strong>${escapeHtml(t('migWarnLead'))}</strong> ${escapeHtml(t('migWarnBody'))}</span></div>
-        <div class="button-row single">
-          <a class="mig-go" href="${escapeHtml(MIGRATION.url)}">${escapeHtml(t('migOpen', MIGRATION.host))}</a>
-          <button id="migrationSnooze">${escapeHtml(t('migSnooze'))}</button>
-          ${why}
-        </div>
-      </article>
-    </div>
-  `;
 }
 
 // One-time banner after an app-shell update; opening the notes (or any later visit after
@@ -2502,8 +2350,6 @@ function renderSettingsPage() {
         <h2>${t('settings')}</h2>
         <button id="closeSettings">${t('done')}</button>
       </div>
-
-      ${renderMigrationCard()}
 
       <div class="settings-card">
         <h3>${t('app')}</h3>
@@ -3779,17 +3625,6 @@ function attachEvents() {
   document.querySelector('#closeNotes')?.addEventListener('click', () => { state.showReleaseNotes = false; render(); });
   document.querySelector('#notesBackdrop')?.addEventListener('click', e => {
     if (e.target.id === 'notesBackdrop') { state.showReleaseNotes = false; render(); }
-  });
-  document.querySelector('#migrationBannerBtn')?.addEventListener('click', () => { state.showMigrationSheet = true; render(); });
-  document.querySelector('#migrationSettingsBtn')?.addEventListener('click', () => { state.showMigrationSheet = true; render(); });
-  document.querySelector('#closeMigration')?.addEventListener('click', () => { state.showMigrationSheet = false; render(); });
-  document.querySelector('#migrationBackdrop')?.addEventListener('click', e => {
-    if (e.target.id === 'migrationBackdrop') { state.showMigrationSheet = false; render(); }
-  });
-  document.querySelector('#migrationSnooze')?.addEventListener('click', () => {
-    try { localStorage.setItem(MIGRATION_SNOOZE_KEY, String(Date.now() + MIGRATION_SNOOZE_MS)); } catch { /* storage disabled */ }
-    state.showMigrationSheet = false;
-    render();
   });
   document.querySelector('#settingsToggle')?.addEventListener('click', () => { state.view = state.view === 'settings' ? 'main' : 'settings'; if (state.view === 'settings') terrainSyncRetriedThisVisit = false; render(); });
   // The terrain card needs the published tile index and a cache count, neither of which is worth

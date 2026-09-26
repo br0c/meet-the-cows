@@ -5,8 +5,8 @@
 //   - service-worker.js importScripts() it at install time     -> self.MTC_CONFIG
 // It must therefore stay a classic script (no import/export) and set a global.
 //
-// Every field is optional. With the defaults below the app behaves exactly like the
-// original single-origin GitHub Pages deployment, so an unconfigured build is never broken.
+// Every field is optional. With the defaults below the app behaves like a plain single-origin
+// site, which is what a local checkout needs.
 self.MTC_CONFIG = {
   // Absolute base that pack paths resolve against. Pack URLs are always of the form
   // "packs/<id>/manifest.json", so this is the ROOT above them — a bucket whose layout mirrors
@@ -25,11 +25,6 @@ self.MTC_CONFIG = {
   // Worker configured": the app then falls back to each chart's published URL, which is what
   // every deployment did before the charts moved.
   chartsBase: '',
-
-  // The app's own address and the landing site are NOT here: they are constants in src/app.js
-  // (CANONICAL_APP_URL, SITE_URL). They belong in the shell rather than in deploy-time config
-  // because the copy that needs them most is the retired one on the old origin, which stops
-  // being deployed to and would therefore never receive them.
 
   // Label for non-production deployments, shown in Settings and beside the version so a
   // tester can never confuse an experimental build with the real one. '' = production.

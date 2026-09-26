@@ -16,7 +16,7 @@ Credentials (R2 -> Manage API tokens -> S3 credentials), passed as env vars:
   R2_SECRET_ACCESS_KEY   its secret
 
 Example:
-  python scripts/publish_packs_r2.py --dir dist/site/packs --prefix packs --bucket mtc-packs
+  python scripts/publish_packs_r2.py --dir data/packs --prefix packs --bucket mtc-packs
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def list_remote(client, bucket: str, prefix: str) -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dir", required=True, help="Local pack directory (e.g. dist/site/packs)")
+    parser.add_argument("--dir", required=True, help="Local pack directory (e.g. data/packs)")
     parser.add_argument("--bucket", required=True, help="R2 bucket name")
     parser.add_argument("--prefix", default="packs", help="Key prefix in the bucket, default 'packs'")
     parser.add_argument("--workers", type=int, default=16, help="Parallel uploads, default 16")
