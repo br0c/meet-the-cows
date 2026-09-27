@@ -39,6 +39,13 @@ from pathlib import Path
 UPLOAD_RETRY_PASSES = 3
 UPLOAD_RETRY_DELAYS_S = (5, 15, 30)
 
+# Folders under the prefix that another workflow owns. They share the pack tree on the bucket but
+# never exist in this publish's local directory, so without this they read as stale — and --delete
+# would remove them. _terrain/ is build-terrain-tiles.yml's: the terrain tiles, index and cols the
+# app routes over. That workflow publishes with the folder itself as its prefix, so its own keys
+# are relative to it and this rule never touches them there.
+FOREIGN_FOLDERS = ("_terrain/",)
+
 # Pack JSON changes every build and must never be served stale; media and documents are large,
 # effectively immutable for a given pack version, and are revalidated by the app's own
 # media-manifest, so they can sit in the browser/edge cache for a long time.
@@ -165,7 +172,9 @@ def main() -> None:
     print(f"remote objects: {len(remote)}", file=sys.stderr)
 
     changed = [(key, path) for key, path in local.items() if remote.get(key) != md5_hex(path)]
-    stale = sorted(set(remote) - set(local))
+    base = f"{prefix}/" if prefix else ""
+    stale = sorted(key for key in set(remote) - set(local)
+                   if not key[len(base):].startswith(FOREIGN_FOLDERS))
     total_bytes = sum(path.stat().st_size for _, path in changed)
     print(f"to upload: {len(changed)} ({total_bytes / 1e6:.1f} MB); "
           f"unchanged: {len(local) - len(changed)}; stale remote: {len(stale)}", file=sys.stderr)

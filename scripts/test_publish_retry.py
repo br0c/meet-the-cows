@@ -156,6 +156,8 @@ def _stale_client(source: Path) -> FakeClient:
         "packs/alps/manifest.json": "x",
         "packs/alps/fields.json": "x",
         "packs/_shared/media/old.jpg": "x",
+        "packs/_terrain/N45E006.terr": "x",
+        "packs/_terrain/index.json": "x",
     })
 
 
@@ -183,6 +185,52 @@ def test_stale_objects_are_named_and_kept(tmp_path: Path):
     for key in ("packs/alps/manifest.json", "packs/alps/fields.json", "packs/_shared/media/old.jpg"):
         assert f"  {key}" in log, f"{key} not named:\n{log}"
     assert "    2  alps/" in log and "    1  _shared/media/" in log, log
+
+
+class DeletingClient(FakeClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.deleted: list[str] = []
+
+    def delete_objects(self, Bucket=None, Delete=None):  # noqa: N803 - boto3 spelling
+        self.deleted += [item["Key"] for item in Delete["Objects"]]
+
+
+def test_delete_never_touches_terrain(tmp_path: Path):
+    """The terrain tiles live in the pack tree but come from another workflow. --delete must
+    remove the genuinely stale media and leave every _terrain/ object where it is."""
+    source = build_tree(tmp_path, ["A.pdf"])
+    remote = _stale_client(source).remote
+    client = DeletingClient({}, remote=remote)
+    module = load_publisher(client)
+    codes = []
+    log = _capture_stderr(lambda: codes.append(run(module, source, client, "--delete")))
+    assert codes == [0], codes
+    assert sorted(client.deleted) == ["packs/_shared/media/old.jpg", "packs/alps/fields.json",
+                                      "packs/alps/manifest.json"], client.deleted
+    assert "_terrain" not in log, f"terrain reported as stale:\n{log}"
+
+
+def test_terrain_own_publish_can_still_prune_its_tiles(tmp_path: Path):
+    """build-terrain-tiles.yml publishes with packs/_terrain as its prefix. There the rule must not
+    apply: a tile it no longer builds is its own stale object."""
+    tiles = tmp_path / "_terrain"
+    tiles.mkdir()
+    (tiles / "index.json").write_text("{}")
+    client = DeletingClient({}, remote={"packs/_terrain/index.json": "x", "packs/_terrain/OLD.terr": "x"})
+    module = load_publisher(client)
+    argv = sys.argv
+    sys.argv = ["publish_packs_r2.py", "--dir", str(tiles), "--bucket", "b",
+                "--prefix", "packs/_terrain", "--delete"]
+    environ_backup = dict(module.os.environ)
+    module.os.environ.update({"R2_ACCOUNT_ID": "a", "R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s"})
+    try:
+        _capture_stderr(module.main)
+    finally:
+        sys.argv = argv
+        module.os.environ.clear()
+        module.os.environ.update(environ_backup)
+    assert client.deleted == ["packs/_terrain/OLD.terr"], client.deleted
 
 
 def test_dry_run_names_stale_objects_and_changes_nothing(tmp_path: Path):
