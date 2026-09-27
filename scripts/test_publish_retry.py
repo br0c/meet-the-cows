@@ -77,11 +77,11 @@ def build_tree(tmp: Path, names: list[str]) -> Path:
     return packs
 
 
-def run(module, source: Path, client: FakeClient) -> int:
+def run(module, source: Path, client: FakeClient, *extra: str) -> int:
     """Run main() with argv set; return the exit code (0 when it does not call sys.exit)."""
     argv = sys.argv
     sys.argv = ["publish_packs_r2.py", "--dir", str(source), "--bucket", "b",
-                "--prefix", "packs", "--workers", "4"]
+                "--prefix", "packs", "--workers", "4", *extra]
     os_environ_backup = dict(module.os.environ)
     module.os.environ.update({"R2_ACCOUNT_ID": "a", "R2_ACCESS_KEY_ID": "k",
                               "R2_SECRET_ACCESS_KEY": "s"})
@@ -146,6 +146,54 @@ def test_unchanged_objects_are_not_reuploaded(tmp_path: Path):
     assert code == 0, code
     assert "packs/_shared/docs/vac/A.pdf" not in client.attempts, "unchanged object was re-uploaded"
     assert "packs/_shared/docs/vac/B.pdf" in client.stored
+
+
+def _stale_client(source: Path) -> FakeClient:
+    import hashlib
+    same = hashlib.md5((source / "_shared" / "docs" / "vac" / "A.pdf").read_bytes()).hexdigest()  # noqa: S324
+    return FakeClient({}, remote={
+        "packs/_shared/docs/vac/A.pdf": same,
+        "packs/alps/manifest.json": "x",
+        "packs/alps/fields.json": "x",
+        "packs/_shared/media/old.jpg": "x",
+    })
+
+
+def _capture_stderr(fn) -> str:
+    import contextlib
+    import io
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        fn()
+    return buffer.getvalue()
+
+
+def test_stale_objects_are_named_and_kept(tmp_path: Path):
+    """Without --delete every stale key is listed by name and grouped, and none is deleted.
+
+    FakeClient has no delete_objects, so any attempt to delete fails this test outright.
+    """
+    source = build_tree(tmp_path, ["A.pdf"])
+    client = _stale_client(source)
+    module = load_publisher(client)
+    codes = []
+    log = _capture_stderr(lambda: codes.append(run(module, source, client)))
+    assert codes == [0], codes
+    assert "stale remote: 3" in log, log
+    for key in ("packs/alps/manifest.json", "packs/alps/fields.json", "packs/_shared/media/old.jpg"):
+        assert f"  {key}" in log, f"{key} not named:\n{log}"
+    assert "    2  alps/" in log and "    1  _shared/media/" in log, log
+
+
+def test_dry_run_names_stale_objects_and_changes_nothing(tmp_path: Path):
+    source = build_tree(tmp_path, ["A.pdf", "B.pdf"])
+    client = _stale_client(source)
+    module = load_publisher(client)
+    codes = []
+    log = _capture_stderr(lambda: codes.append(run(module, source, client, "--dry-run")))
+    assert codes == [0], codes
+    assert "  packs/alps/manifest.json" in log, log
+    assert not client.attempts, f"dry run uploaded: {client.attempts}"
 
 
 def main() -> None:

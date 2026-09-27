@@ -92,6 +92,26 @@ def list_remote(client, bucket: str, prefix: str) -> dict[str, str]:
     return remote
 
 
+def report_stale(stale: list[str], prefix: str) -> None:
+    """Name every stale object, grouped by folder, so a log shows exactly what --delete removes.
+
+    A count alone cannot answer the question that matters before deleting: is this debris from a
+    retired pack or media name, or something a pilot's cached app still asks for?
+    """
+    base = f"{prefix}/" if prefix else ""
+    groups: dict[str, int] = {}
+    for key in stale:
+        parts = key[len(base):].split("/")
+        folder = "/".join(parts[:2]) + "/" if len(parts) > 2 else (parts[0] + "/" if len(parts) > 1 else "(root)")
+        groups[folder] = groups.get(folder, 0) + 1
+    print(f"stale objects by folder (under {base or 'bucket root'}):", file=sys.stderr)
+    for folder, count in sorted(groups.items()):
+        print(f"  {count:5d}  {folder}", file=sys.stderr)
+    print("stale objects:", file=sys.stderr)
+    for key in stale:
+        print(f"  {key}", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dir", required=True, help="Local pack directory (e.g. data/packs)")
@@ -153,6 +173,8 @@ def main() -> None:
     if args.dry_run:
         for key, _ in changed[:20]:
             print(f"  would upload {key}", file=sys.stderr)
+        if stale:
+            report_stale(stale, prefix)
         return
 
     def upload(item: tuple[str, Path]) -> str:
@@ -204,6 +226,7 @@ def main() -> None:
         print(f"deleted {len(stale)} stale objects", file=sys.stderr)
     elif stale:
         print(f"kept {len(stale)} stale objects (pass --delete to remove)", file=sys.stderr)
+        report_stale(stale, prefix)
 
     if failures:
         # Named, not just counted: which objects are missing decides whether the tree a pilot
